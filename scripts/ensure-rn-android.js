@@ -6,7 +6,10 @@
 //    throws unless this local maven-repo path exists; RN 0.86+ no longer ships it.
 // 2. ffmpeg-kit-react-native still points at the DEAD com.arthenica artifacts
 //    (FFmpegKit retired Jan 2025; binaries removed from Maven Central Apr 2025).
-//    Repoint to the maintained dev.ffmpegkit-maintained group + a real version.
+//    Repoint to the maintained dev.ffmpegkit-maintained group + a real version,
+//    and re-add the missing smart-exception dependency (the maintained AAR
+//    dropped it; without it the app crashes at startup with
+//    NoClassDefFoundError: com.arthenica.smartexception.java.Exceptions).
 const fs = require('fs');
 const path = require('path');
 
@@ -25,11 +28,18 @@ const fkGradle = path.join(fkDir, 'build.gradle');
 const fkProps = path.join(fkDir, 'gradle.properties');
 
 if (fs.existsSync(fkGradle)) {
-  const before = fs.readFileSync(fkGradle, 'utf8');
-  const after = before.replace(/'com\.arthenica:ffmpeg-kit-'/g, "'dev.ffmpegkit-maintained:ffmpeg-kit-'");
+  let before = fs.readFileSync(fkGradle, 'utf8');
+  let after = before.replace(/'com\.arthenica:ffmpeg-kit-'/g, "'dev.ffmpegkit-maintained:ffmpeg-kit-'");
+  // re-add smart-exception (dropped from the maintained AAR) — idempotent
+  if (!after.includes("'com.arthenica:smart-exception-java:0.2.1'")) {
+    after = after.replace(
+      "api 'com.facebook.react:react-native:+'",
+      "api 'com.facebook.react:react-native:+'\n    implementation 'com.arthenica:smart-exception-java:0.2.1'"
+    );
+  }
   if (after !== before) {
     fs.writeFileSync(fkGradle, after);
-    console.log('[postinstall] ffmpeg-kit gradle: com.arthenica -> dev.ffmpegkit-maintained');
+    console.log('[postinstall] ffmpeg-kit gradle: -> dev.ffmpegkit-maintained + smart-exception-java');
   }
 }
 
