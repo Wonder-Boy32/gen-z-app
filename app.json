@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "Gen Z",
+    "slug": "gen-z-app",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "icon": "./assets/icon.png",
+    "plugins": [
+      "expo-image-picker",
+      "expo-video",
+      "expo-audio",
+      "expo-dev-client"
+    ],
+    "android": {
+      "package": "com.genz.app"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.genz.app"
+    }
+  }
+}

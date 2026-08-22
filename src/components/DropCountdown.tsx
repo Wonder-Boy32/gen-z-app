@@ -1,0 +1,89 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { Animated, StyleSheet, Text } from 'react-native';
+import { colors } from '../theme';
+
+type Props = {
+  endsAt: string;
+  mode: 'live' | 'voting' | 'closed';
+  big?: boolean;
+};
+
+export default function DropCountdown({ endsAt, mode, big }: Props) {
+  const [now, setNow] = useState(Date.now());
+  const pulse = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    if (mode !== 'live') return;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1.07, duration: 600, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1, duration: 600, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [mode]);
+
+  const ms = new Date(endsAt).getTime() - now;
+  if (ms <= 0) {
+    return <Text style={[styles.closed, big && styles.closedBig]}>💨 DROP CLOSED</Text>;
+  }
+
+  const totalMins = Math.floor(ms / 60000);
+  const secs = Math.floor((ms % 60000) / 1000);
+  const h = Math.floor(totalMins / 60);
+  const m = totalMins % 60;
+  const urgent = totalMins < 10;
+
+  const text = totalMins < 60 ? `🔥 LAST ${totalMins} MIN` : `⏳ ${h}H ${m}M LEFT`;
+
+  return (
+    <Animated.View style={{ transform: [{ scale: pulse }], alignItems: 'center' }}>
+      <Text style={[styles.text, big && styles.textBig, urgent && styles.textUrgent]}>{text}</Text>
+      {urgent && (
+        <Text style={[styles.seconds, big && styles.secondsBig]}>
+          {String(totalMins).padStart(2, '0')}:{String(secs).padStart(2, '0')}
+        </Text>
+      )}
+    </Animated.View>
+  );
+}
+
+const styles = StyleSheet.create({
+  text: {
+    color: colors.accent,
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  textBig: {
+    fontSize: 26,
+  },
+  textUrgent: {
+    color: colors.danger,
+  },
+  seconds: {
+    color: colors.danger,
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 2,
+    fontVariant: ['tabular-nums'],
+  },
+  secondsBig: {
+    fontSize: 18,
+  },
+  closed: {
+    color: colors.textFaint,
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  closedBig: {
+    fontSize: 24,
+  },
+});
