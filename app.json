@@ -14,11 +14,22 @@
       "expo-dev-client"
     ],
     "android": {
-      "package": "com.genz.app"
+      "package": "com.genz.app",
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+      ]
     },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.genz.app"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "c61c8219-5801-4e40-81c0-4ca2f0ba13b0"
+      }
     }
   }
 }

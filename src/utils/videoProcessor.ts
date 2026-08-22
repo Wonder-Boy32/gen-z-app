@@ -1,7 +1,7 @@
 // ============================================================
 // Native video processing via ffmpeg.
 // Available ONLY in dev/production builds that include
-// @spreen/ffmpeg-kit-react-native (i.e. NOT in Expo Go).
+// ffmpeg-kit-react-native (i.e. NOT in Expo Go).
 // Everything here degrades gracefully: hasNativeFFmpeg() is
 // false in Expo Go, and processDropVideo throws → the create
 // flow falls back to the metadata-only path (playback-time
@@ -15,7 +15,7 @@ export function hasNativeFFmpeg(): boolean {
   if (!checked) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      nativeFFmpeg = require('@spreen/ffmpeg-kit-react-native');
+      nativeFFmpeg = require('ffmpeg-kit-react-native');
     } catch {
       nativeFFmpeg = null;
     }
