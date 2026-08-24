@@ -28,7 +28,7 @@ export default function TabBar({ tab, onChange }: { tab: Tab; onChange: (t: Tab)
   }, [activeIndex]);
 
   return (
-    <View style={[styles.bar, { paddingBottom: insets.bottom + 6 }]}>
+    <View style={[styles.bar, { paddingBottom: insets.bottom > 0 ? insets.bottom + 6 : 22 }]}>
       {ITEMS.map((item, index) => {
         const active = item.key === tab;
         return (

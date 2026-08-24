@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, AppState, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, AppState, NativeModules, StyleSheet, UIManager, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from './src/supabase/client';
@@ -12,11 +12,27 @@ import { colors } from './src/theme';
 // picks their own in onboarding, we show onboarding.
 const TEMP_USERNAME = /^[a-z0-9._-]+-[0-9a-f]{6}$/;
 
+// Old dev-client builds don't ship the RNCSafeAreaProvider native view
+// manager — using it there crashes with "Can't find ViewManager
+// 'RNCSafeAreaProvider'". Fall back to plain rendering (insets = 0) until
+// the APK is rebuilt with react-native-safe-area-context included.
+function hasSafeAreaNative(): boolean {
+  try {
+    return !!(NativeModules?.RNCSafeAreaProvider || UIManager?.getViewManagerConfig?.('RNCSafeAreaProvider'));
+  } catch {
+    return false;
+  }
+}
+
+const HAS_SAFE_AREA = hasSafeAreaNative();
+
 export default function App() {
-  return (
+  return HAS_SAFE_AREA ? (
     <SafeAreaProvider>
       <AppInner />
     </SafeAreaProvider>
+  ) : (
+    <AppInner />
   );
 }
 
