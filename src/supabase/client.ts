@@ -57,3 +57,28 @@ function wrapFilterBuilder(method: 'update' | 'delete', table: string, builder: 
   q.delete = (opts?: any) => wrapFilterBuilder('delete', table, origDelete(opts));
   return q;
 };
+
+// ------------------------------------------------------------------
+// Request logger (diagnostic). Prints every Supabase REST/storage call
+// with its method, URL and response status so a failing request can be
+// identified from the Metro terminal in one reproduction.
+// ------------------------------------------------------------------
+const _fetch = globalThis.fetch?.bind(globalThis);
+if (_fetch) {
+  (globalThis as any).fetch = async (input: any, init?: any) => {
+    const url = typeof input === 'string' ? input : input?.url ?? '';
+    const method = (init?.method ?? 'GET').toUpperCase();
+    const res: any = await _fetch(input, init);
+    if (typeof url === 'string' && (url.includes('/rest/v1/') || url.includes('/storage/v1/'))) {
+      let body = '';
+      try {
+        const c = res.clone();
+        body = (await c.text()).slice(0, 220);
+      } catch {
+        // body not readable — fine
+      }
+      console.log(`[genz-net] ${method} ${url.replace(/key=.*/g, 'key=***')} -> ${res.status} ${body.slice(0, 140)}`);
+    }
+    return res;
+  };
+}

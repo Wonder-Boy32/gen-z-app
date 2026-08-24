@@ -471,7 +471,8 @@ export default function CreateDropScreen({ onPosted }: { onPosted: () => void })
         ])
       ).start();
     } catch (e: any) {
-      setError(e?.message ?? 'Drop failed — try again.');
+      console.error('[publish] drop failed:', e?.code, e?.message, e?.stack);
+      setError(e?.code ? `[${e.code}] ${e.message}` : (e?.message ?? 'Drop failed — try again.'));
       setUploading(false);
     }
   };
