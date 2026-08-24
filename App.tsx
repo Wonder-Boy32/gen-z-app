@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, AppState, StyleSheet, View } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from './src/supabase/client';
 import AuthScreen from './src/screens/AuthScreen';
@@ -12,6 +13,14 @@ import { colors } from './src/theme';
 const TEMP_USERNAME = /^[a-z0-9._-]+-[0-9a-f]{6}$/;
 
 export default function App() {
+  return (
+    <SafeAreaProvider>
+      <AppInner />
+    </SafeAreaProvider>
+  );
+}
+
+function AppInner() {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<{ username: string; avatar_url: string | null } | null>(null);
   const [loading, setLoading] = useState(true);

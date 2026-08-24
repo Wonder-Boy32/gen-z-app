@@ -9,6 +9,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 
@@ -26,6 +27,7 @@ type Props = {
 };
 
 export default function CommentsModal({ post, onClose, onPosted }: Props) {
+  const insets = useSafeAreaInsets();
   const [comments, setComments] = useState<CommentRow[]>([]);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -69,7 +71,7 @@ export default function CommentsModal({ post, onClose, onPosted }: Props) {
   return (
     <Modal visible={!!post} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.overlay}>
-        <View style={styles.sheet}>
+        <View style={[styles.sheet, { paddingBottom: 30 + insets.bottom }]}>
           <View style={styles.handle} />
           <Text style={styles.title}>Comments</Text>
           {loading ? (
