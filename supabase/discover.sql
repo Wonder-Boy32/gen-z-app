@@ -42,7 +42,8 @@ begin
   end loop;
   update public.hashtags h
     set count = (select count(*) from public.post_hashtags ph where ph.tag = h.tag),
-        updated_at = now();
+        updated_at = now()
+    where h.tag in (select tag from public.post_hashtags where post_id = coalesce(new.id, old.id));
   return new;
 end;
 $$;
