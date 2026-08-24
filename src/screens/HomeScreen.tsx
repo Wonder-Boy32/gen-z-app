@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import TabBar, { Tab } from '../components/TabBar';
 import FeedScreen from './FeedScreen';
 import CreateDropScreen from './CreateDropScreen';
@@ -55,9 +55,6 @@ export default function HomeScreen() {
         {tab === 'profile' && <ProfileScreen />}
       </View>
       <TabBar tab={tab} onChange={setTab} />
-      <Text style={styles.devTag} pointerEvents="none">
-        v4fe1b45-guard
-      </Text>
     </View>
   );
 }
@@ -69,17 +66,5 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-  },
-  devTag: {
-    position: 'absolute',
-    top: 34,
-    left: 10,
-    fontSize: 9,
-    color: 'rgba(255,255,255,0.35)',
-    backgroundColor: 'rgba(0,0,0,0.35)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    overflow: 'hidden',
   },
 });
