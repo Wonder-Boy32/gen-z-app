@@ -122,7 +122,7 @@ export default function ChatThread({
     setLoading(false);
 
     // mark read
-    if (uid) {
+    if (uid && conversationId) {
       await supabase
         .from('conversation_participants')
         .update({ last_read_at: new Date().toISOString() })
@@ -146,7 +146,7 @@ export default function ChatThread({
           setMessages((prev) => (prev.some((m) => m.id === payload.new.id) ? prev : [...prev, payload.new as Message]));
           // mark read on incoming
           const uid = myIdRef.current;
-          if (uid && payload.new.sender_id !== uid) {
+          if (uid && conversationId && payload.new.sender_id !== uid) {
             supabase
               .from('conversation_participants')
               .update({ last_read_at: new Date().toISOString() })
