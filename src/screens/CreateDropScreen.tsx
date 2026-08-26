@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -1096,7 +1096,7 @@ export default function CreateDropScreen({
           style={styles.coverCapture}
           pointerEvents="none"
         >
-          <VideoView player={capturePlayer} style={styles.coverCaptureVideo} surfaceType="textureview" />
+          <VideoView player={capturePlayer} style={styles.coverCaptureVideo} surfaceType="textureView" />
         </View>
       )}
 
