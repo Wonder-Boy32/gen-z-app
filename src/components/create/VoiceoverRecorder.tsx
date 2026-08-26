@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 import { AudioModule, RecordingPresets, useAudioPlayer, useAudioRecorder } from 'expo-audio';
 import { supabase } from '../../supabase/client';
 import { colors, radius, shadows } from '../../theme';
+import Icon from '../ui/Icon';
 import { uploadMedia } from '../../utils/upload';
 
 // Hold-to-record voiceover. Records with expo-audio, uploads the clip to the
@@ -86,7 +87,7 @@ export default function VoiceoverRecorder({ url, durationMs, onRecorded, onRemov
     return (
       <View style={styles.row}>
         <View style={styles.recorded}>
-          <Text style={styles.recordedIcon}>🎙</Text>
+          <Icon name="mic" size={18} color={colors.cyan} />
           <Text style={styles.recordedText}>Voiceover · {fmt(Math.round(durationMs / 1000))}</Text>
           <Pressable
             style={styles.playBtn}
@@ -96,7 +97,7 @@ export default function VoiceoverRecorder({ url, durationMs, onRecorded, onRemov
               playback?.play();
             }}
           >
-            <Text style={styles.playText}>{playback?.playing ? '⏸' : '▶'}</Text>
+            <Icon name={playback?.playing ? 'pause' : 'play'} size={15} color={colors.bg} />
           </Pressable>
         </View>
         <Pressable style={styles.removeBtn} onPress={onRemove} hitSlop={8}>
@@ -117,7 +118,11 @@ export default function VoiceoverRecorder({ url, durationMs, onRecorded, onRemov
         {busy ? (
           <ActivityIndicator color={colors.bg} size="small" />
         ) : (
-          <Text style={styles.holdText}>{recording ? `🔴 Recording ${fmt(elapsed)}` : '🎙 Hold to record'}</Text>
+          <View style={styles.holdRow}>
+            {recording && <View style={styles.recDot} />}
+            <Icon name="mic" size={15} color={colors.bg} />
+            <Text style={styles.holdText}>{recording ? `Recording ${fmt(elapsed)}` : 'Hold to record'}</Text>
+          </View>
         )}
       </Pressable>
       {!!error && <Text style={styles.error}>{error}</Text>}
@@ -142,6 +147,8 @@ const styles = StyleSheet.create({
   holdBtnActive: {
     backgroundColor: colors.danger,
   },
+  holdRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  recDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.danger },
   holdText: {
     color: colors.bg,
     fontSize: 14,

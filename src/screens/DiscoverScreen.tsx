@@ -218,8 +218,10 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
           <Text style={styles.empty}>Nothing trending yet — post something.</Text>
         )}
 
-        {/* 🚨 Live Drops */}
-        <Text style={styles.sectionTitle}>🚨 Live Drops</Text>
+        <View style={styles.sectionTitleRow}>
+          <Icon name="radio" size={16} color={colors.danger} />
+          <Text style={styles.sectionTitle}>Live Drops</Text>
+        </View>
         {drops.length ? (
           <FlatList
             data={drops}
@@ -261,8 +263,10 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
           ))}
         </View>
 
-        {/* ✨ New Creators */}
-        <Text style={styles.sectionTitle}>✨ New Creators</Text>
+        <View style={styles.sectionTitleRow}>
+          <Icon name="sparkles" size={16} color={colors.violet} />
+          <Text style={styles.sectionTitle}>New Creators</Text>
+        </View>
         <FlatList
           data={creators}
           horizontal
@@ -295,8 +299,10 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
           {!sounds.length && <Text style={styles.empty}>No sounds yet — add one to your post.</Text>}
         </View>
 
-        {/* #️⃣ Trending Tags */}
-        <Text style={styles.sectionTitle}>#️⃣ Trending Tags</Text>
+        <View style={styles.sectionTitleRow}>
+          <Icon name="pricetags" size={16} color={colors.cyan} />
+          <Text style={styles.sectionTitle}>Trending Tags</Text>
+        </View>
         <View style={styles.chipWrap}>
           {tags.map((t) => (
             <Pressable key={t.tag} style={styles.chip} onPress={() => onOpenTag(t.tag)}>
@@ -342,7 +348,10 @@ function CardMedia({ post }: { post: P }) {
   if (post.media_type === 'video') {
     return (
       <View style={[styles.cardMedia, styles.videoPh]}>
-        <Text style={styles.videoPhText}>▶ {post.views_count}</Text>
+        <View style={styles.videoPhRow}>
+          <Icon name="play" size={11} color={colors.logoWhite} />
+          <Text style={styles.videoPhText}>{post.views_count}</Text>
+        </View>
       </View>
     );
   }
@@ -502,6 +511,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceAlt,
   },
   videoPh: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#0A1220' },
+  videoPhRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   videoPhText: { color: colors.textMuted, fontSize: 20, fontWeight: '800' },
   cardTextBg: {
     backgroundColor: colors.surfaceAlt,

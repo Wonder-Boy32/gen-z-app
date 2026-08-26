@@ -2,6 +2,7 @@ import React from 'react';
 import { Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { colors, radius } from '../../theme';
+import Icon from '../ui/Icon';
 
 type Props = {
   visible: boolean;
@@ -61,7 +62,7 @@ export default function MediaPickerSheet({ visible, assets, onClose, onPicked }:
 
           {assets.length > 0 && (
             <>
-              <Text style={styles.subTitle}>Selected ({assets.length}/6) — tap to remove, ◀ ▶ to reorder</Text>
+              <Text style={styles.subTitle}>Selected ({assets.length}/6) — tap to remove, use the arrows to reorder</Text>
               <View style={styles.thumbRow}>
                 {assets.map((a, i) => (
                   <View key={i} style={styles.thumbWrap}>
@@ -73,10 +74,10 @@ export default function MediaPickerSheet({ visible, assets, onClose, onPicked }:
                     </Pressable>
                     <View style={styles.moveRow}>
                       <Pressable onPress={() => move(i, -1)} hitSlop={6}>
-                        <Text style={styles.moveText}>◀</Text>
+                        <Icon name="chevron-back" size={16} color={colors.textMuted} />
                       </Pressable>
                       <Pressable onPress={() => move(i, 1)} hitSlop={6}>
-                        <Text style={styles.moveText}>▶</Text>
+                        <Icon name="chevron-forward" size={16} color={colors.textMuted} />
                       </Pressable>
                     </View>
                   </View>

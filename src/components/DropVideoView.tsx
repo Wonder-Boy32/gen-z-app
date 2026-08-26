@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { colors } from '../theme';
+import Icon from './ui/Icon';
 import { getFilterTint } from './create/FilterCarousel';
 
 // ============================================================
@@ -142,7 +143,7 @@ export default function DropVideoView({
 
       {showMute && (
         <Pressable style={styles.muteBtn} onPress={toggleMute} hitSlop={10}>
-          <Text style={styles.muteText}>{muted ? '🔇' : '🔊'}</Text>
+          <Icon name={muted ? 'volume-mute' : 'volume-high'} size={20} color={colors.logoWhite} />
         </Pressable>
       )}
 

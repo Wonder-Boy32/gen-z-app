@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
+import Icon from '../components/ui/Icon';
 import { TOP_INSET } from '../utils/useInsets';
 import Button from '../components/Button';
 import Avatar from '../components/Avatar';
@@ -206,7 +207,8 @@ export default function PublicProfileScreen({
                 )}
                 {item.media_type === 'video' && (
                   <View style={styles.tileBadge}>
-                    <Text style={styles.tileBadgeText}>▶ {item.views_count}</Text>
+                    <Icon name="play" size={10} color={colors.logoWhite} />
+                    <Text style={styles.tileBadgeText}>{item.views_count}</Text>
                   </View>
                 )}
               </View>

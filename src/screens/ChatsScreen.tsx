@@ -12,6 +12,7 @@ import {
 import { supabase } from '../supabase/client';
 import ChatThread from './ChatThread';
 import { colors, radius } from '../theme';
+import Icon from '../components/ui/Icon';
 import { TOP_INSET } from '../utils/useInsets';
 import LogoHeader from '../components/LogoHeader';
 import Button from '../components/Button';
@@ -205,10 +206,12 @@ function ConversationList({ onOpen }: { onOpen: (id: string) => void }) {
       <View style={styles.header}>
         <LogoHeader />
         <Pressable style={styles.newBtn} onPress={() => setNewChatOpen(true)}>
-          <Text style={styles.newBtnText}>✚ New chat</Text>
+          <Icon name="add" size={14} color={colors.bg} />
+          <Text style={styles.newBtnText}>New chat</Text>
         </Pressable>
         <Pressable style={[styles.newBtn, styles.newGroupBtn]} onPress={() => setGroupModal(true)}>
-          <Text style={styles.newBtnText}>👥 New group</Text>
+          <Icon name="people" size={14} color={colors.bg} />
+          <Text style={styles.newBtnText}>New group</Text>
         </Pressable>
       </View>
 
@@ -274,13 +277,13 @@ function previewOf(m: { content: string | null; msg_type: string }): string {
   if (m.content) return m.content;
   switch (m.msg_type) {
     case 'image':
-      return '🖼 Image';
+      return 'Image';
     case 'video':
-      return '🎬 Video';
+      return 'Video';
     case 'voice':
-      return '🎙 Voice message';
+      return 'Voice message';
     case 'gif':
-      return '🎞 GIF';
+      return 'GIF';
     default:
       return '';
   }

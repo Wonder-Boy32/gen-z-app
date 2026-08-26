@@ -321,7 +321,7 @@ export default function SearchResults({ query, onPickQuery, onOpenUser, onOpenAu
                   <Image source={{ uri: p.cover_url ?? p.media_url! }} style={styles.tileImage} resizeMode="cover" />
                 ) : p.media_type === 'video' ? (
                   <View style={[styles.tileImage, styles.videoPh]}>
-                    <Text style={styles.videoPhText}>▶</Text>
+                    <Icon name="play" size={16} color={colors.logoWhite} />
                   </View>
                 ) : (
                   <View style={[styles.tileImage, styles.tileTextBg, p.text_bg ? { backgroundColor: p.text_bg } : null]}>

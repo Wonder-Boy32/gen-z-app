@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { supabase } from '../../supabase/client';
 import { colors, radius } from '../../theme';
+import Icon from '../ui/Icon';
 
 type Sound = { id: string; name: string; artist: string | null; category: string; usage_count: number };
 
@@ -45,7 +46,10 @@ export default function SoundPickerModal({ visible, onClose, onSelect }: Props) 
       <View style={styles.overlay}>
         <View style={styles.sheet}>
           <View style={styles.header}>
-            <Text style={styles.title}>🎵 Add Sound</Text>
+            <View style={styles.titleRow}>
+              <Icon name="musical-note" size={17} color={colors.cyan} />
+              <Text style={styles.title}>Add Sound</Text>
+            </View>
             <Pressable onPress={onClose} hitSlop={8}>
               <Text style={styles.close}>✕</Text>
             </Pressable>
@@ -125,6 +129,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 12,
   },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   title: {
     color: colors.text,
     fontSize: 18,

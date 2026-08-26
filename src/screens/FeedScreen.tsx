@@ -16,7 +16,7 @@ import { colors, radius, shadows } from '../theme';
 import LogoHeader from '../components/LogoHeader';
 import { useInsets } from '../utils/useInsets';
 import DropCountdown from '../components/DropCountdown';
-import Icon from '../components/ui/Icon';
+import Icon, { IconName } from '../components/ui/Icon';
 import FeedPost, { setFeedUserId } from '../components/FeedPost';
 import CommentsModal from '../components/CommentsModal';
 import ChainModal from '../components/ChainModal';
@@ -88,12 +88,12 @@ export type FeedPostFull = FeedPostRow & {
 
 type FeedMode = 'following' | 'foryou' | 'live' | 'expiring' | 'around';
 
-const MODES: { key: FeedMode; label: string }[] = [
-  { key: 'following', label: 'Following' },
-  { key: 'foryou', label: 'For You' },
-  { key: 'live', label: 'Live' },
-  { key: 'expiring', label: '⏳ Expiring' },
-  { key: 'around', label: '📍 Around You' },
+const MODES: { key: FeedMode; label: string; icon: IconName }[] = [
+  { key: 'following', label: 'Following', icon: 'people-outline' },
+  { key: 'foryou', label: 'For You', icon: 'play-circle-outline' },
+  { key: 'live', label: 'Live', icon: 'radio' },
+  { key: 'expiring', label: 'Expiring', icon: 'hourglass-outline' },
+  { key: 'around', label: 'Around You', icon: 'location-outline' },
 ];
 
 const PAGE_SIZE = 50;
@@ -699,7 +699,7 @@ export default function FeedScreen({
       text: 'The drops of people you follow appear here for 48 hours.',
     },
     foryou: {
-      title: 'Your Feed is warming up… 🔥',
+      title: 'Your Feed is warming up…',
       text: 'Post your first Drop or check out the creators below.',
     },
     live: {
@@ -741,6 +741,7 @@ export default function FeedScreen({
               setDropMode(null);
             }}
           >
+            <Icon name={m.icon} size={13} color={mode === m.key ? colors.accent : colors.textMuted} />
             <Text style={[styles.modeChipText, mode === m.key && styles.modeChipTextActive]}>{m.label}</Text>
           </Pressable>
         ))}
@@ -856,10 +857,17 @@ export default function FeedScreen({
           }}
         >
           <View style={styles.dropBannerInner}>
-            <Text style={styles.dropBannerTitle} numberOfLines={1}>
-              ◉ VIEWING{' '}
-              {userMode ? `@${userModeName ?? 'user'}` : audioMode ? `♪ ${audioMode}` : `#${hashtagMode}`}
-            </Text>
+            <View style={styles.dropBannerTitleRow}>
+              <Icon
+                name={userMode ? 'person' : audioMode ? 'musical-note' : 'pricetag'}
+                size={13}
+                color={colors.accent}
+              />
+              <Text style={styles.dropBannerTitle} numberOfLines={1}>
+                VIEWING{' '}
+                {userMode ? `@${userModeName ?? 'user'}` : audioMode ? audioMode : `#${hashtagMode}`}
+              </Text>
+            </View>
             <Text style={styles.dropBannerPrompt} numberOfLines={1}>
               {userMode ? 'Their drops, last 48 hours' : 'Matching drops — last 48 hours'}
             </Text>
@@ -1054,6 +1062,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
   },
   modeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
     backgroundColor: 'rgba(13,20,38,0.82)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.14)',

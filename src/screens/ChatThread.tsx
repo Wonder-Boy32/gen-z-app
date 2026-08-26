@@ -17,6 +17,7 @@ import { VideoView, useVideoPlayer } from 'expo-video';
 import { useAudioPlayer, useAudioRecorder, AudioModule, RecordingPresets, setAudioModeAsync } from 'expo-audio';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
+import Icon from '../components/ui/Icon';
 import { TOP_INSET } from '../utils/useInsets';
 import LogoHeader from '../components/LogoHeader';
 import GifPicker from '../components/GifPicker';
@@ -468,7 +469,7 @@ export default function ChatThread({
             onPress={toggleRecord}
             hitSlop={6}
           >
-            <Text style={styles.attachText}>🎙</Text>
+            <Icon name={recording ? 'stop-circle' : 'mic'} size={22} color={recording ? colors.danger : colors.textMuted} />
           </Pressable>
           <Pressable
             style={[styles.emojiToggle, showEmoji && styles.emojiToggleActive]}
@@ -523,7 +524,11 @@ function VoiceBubble({ uri, mine }: { uri: string; mine: boolean }) {
 
   return (
     <Pressable style={styles.voiceRow} onPress={toggle}>
-      <Text style={[styles.voiceIcon, mine && styles.voiceIconMine]}>{playing ? '⏸' : '▶'}</Text>
+      <Icon
+        name={playing ? 'pause' : 'play'}
+        size={16}
+        color={mine ? colors.bg : colors.cyan}
+      />
       <View style={styles.voiceBar}>
         <View
           style={[

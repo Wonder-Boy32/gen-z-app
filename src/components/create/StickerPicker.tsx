@@ -1,6 +1,7 @@
 import React from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, radius } from '../../theme';
+import Icon from '../ui/Icon';
 
 export const STICKERS = ['🔥', '💀', '😭', '✨', '👀', '🚀', '💯', '🎯', '👑', '🧠', '🫶', '🤪', '🥶', '😤', '🙏', '🕶'];
 
@@ -16,7 +17,10 @@ export default function StickerPicker({ visible, onClose, onPick }: Props) {
       <View style={styles.overlay}>
         <View style={styles.sheet}>
           <View style={styles.header}>
-            <Text style={styles.title}>🏷 Stickers</Text>
+            <View style={styles.titleRow}>
+              <Icon name="pricetag" size={17} color={colors.accent} />
+              <Text style={styles.title}>Stickers</Text>
+            </View>
             <Pressable onPress={onClose} hitSlop={8}>
               <Text style={styles.close}>✕</Text>
             </Pressable>
@@ -63,6 +67,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 6,
   },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   title: {
     color: colors.text,
     fontSize: 18,

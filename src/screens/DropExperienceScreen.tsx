@@ -306,7 +306,7 @@ function TileMedia({ sub, small }: { sub: Sub; small?: boolean }) {
       <View style={styles.tileImage}>
         <Image source={{ uri: sub.media_url }} style={styles.tileImage} resizeMode="cover" />
         <View style={styles.tileVideoBadge}>
-          <Text style={styles.tileVideoIcon}>▶</Text>
+          <Icon name="play" size={14} color={colors.logoWhite} />
         </View>
       </View>
     );

@@ -683,7 +683,10 @@ export default function CreateDropScreen({
                     value={content}
                     onChangeText={setContent}
                   />
-                  <Text style={styles.textDropHint}>⏳ This text drop vanishes in 48 hours</Text>
+                  <View style={[styles.statRow, { marginTop: 10 }]}>
+                    <Icon name="hourglass-outline" size={13} color={colors.accent} />
+                    <Text style={[styles.textDropHint, { marginTop: 0 }]}>This text drop vanishes in 48 hours</Text>
+                  </View>
                 </View>
                 <View style={styles.chipRow}>
                   {TEXT_DROP_COLORS.map((c) => (
@@ -701,7 +704,10 @@ export default function CreateDropScreen({
             )}
 
             {!!error && <Text style={styles.error}>{error}</Text>}
-            <Text style={styles.footer48}>⏳ Gone in 48 hours. Make it count.</Text>
+            <View style={styles.footer48Row}>
+              <Icon name="hourglass-outline" size={12} color={colors.textMuted} />
+              <Text style={styles.footer48}>Gone in 48 hours. Make it count.</Text>
+            </View>
           </ScrollView>
         </KeyboardAvoidingView>
       )}
@@ -1331,7 +1337,8 @@ const styles = StyleSheet.create({
   colorSwatch: { width: 38, height: 38, borderRadius: 19, borderWidth: 2, borderColor: 'transparent' },
   colorSwatchActive: { borderColor: colors.accent },
   error: { color: colors.danger, fontSize: 13, marginTop: 10 },
-  footer48: { color: colors.textFaint, fontSize: 12, textAlign: 'center', marginTop: 22, fontWeight: '600' },
+  footer48Row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 22 },
+  footer48: { color: colors.textFaint, fontSize: 12, textAlign: 'center', fontWeight: '600' },
   editorTop: {
     flexDirection: 'row',
     alignItems: 'center',

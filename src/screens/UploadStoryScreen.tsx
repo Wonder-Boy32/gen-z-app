@@ -162,9 +162,12 @@ export default function UploadStoryScreen({ onPosted }: { onPosted: () => void }
             style={[styles.segmentBtn, mode === m && styles.segmentBtnActive]}
             onPress={() => setMode(m)}
           >
-            <Text style={[styles.segmentText, mode === m && styles.segmentTextActive]}>
-              {m === 'media' ? '📹 Media' : '✍️ Text'}
-            </Text>
+            <View style={styles.segmentRow}>
+              <Icon name={m === 'media' ? 'videocam-outline' : 'create-outline'} size={15} color={mode === m ? colors.accent : colors.textMuted} />
+              <Text style={[styles.segmentText, mode === m && styles.segmentTextActive]}>
+                {m === 'media' ? 'Media' : 'Text'}
+              </Text>
+            </View>
           </Pressable>
         ))}
       </View>
@@ -305,6 +308,7 @@ const styles = StyleSheet.create({
   segmentBtnActive: {
     backgroundColor: colors.accent,
   },
+  segmentRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   segmentText: {
     color: colors.textMuted,
     fontSize: 14,

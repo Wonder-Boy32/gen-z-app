@@ -265,7 +265,10 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
                           />
                         ) : item.media_type === 'video' ? (
                           <View style={[styles.dropMedia, styles.dropVideoPh]}>
-                            <Text style={styles.dropVideoPhText}>▶ {item.views_count}</Text>
+                            <View style={styles.statRow}>
+                              <Icon name="play" size={11} color={colors.logoWhite} />
+                              <Text style={styles.dropVideoPhText}>{item.views_count}</Text>
+                            </View>
                           </View>
                         ) : (
                           <View style={[styles.dropMedia, styles.dropTextBg, item.text_bg ? { backgroundColor: item.text_bg } : null]}>
@@ -302,7 +305,10 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
                 <Image source={{ uri: item.cover_url ?? item.media_url! }} style={styles.tileImage} />
               ) : item.media_type === 'video' ? (
                 <View style={[styles.tileImage, styles.tileVideoPh]}>
-                  <Text style={styles.tileVideoPhText}>▶ {item.views_count}</Text>
+                  <View style={styles.statRow}>
+                    <Icon name="play" size={11} color={colors.logoWhite} />
+                    <Text style={styles.tileVideoPhText}>{item.views_count}</Text>
+                  </View>
                 </View>
               ) : (
                 <View style={[styles.tileImage, styles.tileTextBg, item.text_bg ? { backgroundColor: item.text_bg } : null]}>

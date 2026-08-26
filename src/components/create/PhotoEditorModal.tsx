@@ -83,7 +83,7 @@ export default function PhotoEditorModal({ visible, images, value, onChange, onC
               </Pressable>
             ))}
           </View>
-          <Text style={styles.reorderHint}>Tip: reorder photos with ◀ ▶ in the media sheet.</Text>
+          <Text style={styles.reorderHint}>Tip: reorder photos from the media sheet.</Text>
         </View>
       </View>
     </Modal>
