@@ -42,6 +42,7 @@ const COPY: Record<NotifyType, (u: string) => string> = {
   reply: (u) => `${u} replied to your comment`,
   reaction: (u) => `${u} reacted to your drop`,
   repost: (u) => `${u} reposted your drop`,
+  comment_like: (u) => `${u} liked your comment`,
 };
 
 const ICONS: Record<NotifyType, { icon: 'person-add' | 'heart' | 'chatbubble' | 'repeat' | 'sparkles'; color: string }> = {
@@ -51,6 +52,7 @@ const ICONS: Record<NotifyType, { icon: 'person-add' | 'heart' | 'chatbubble' | 
   reply: { icon: 'chatbubble', color: '#8B7BFF' },
   reaction: { icon: 'sparkles', color: '#FF7A00' },
   repost: { icon: 'repeat', color: '#34C759' },
+  comment_like: { icon: 'heart', color: '#FF3B5C' },
 };
 
 export default function NotificationsModal({

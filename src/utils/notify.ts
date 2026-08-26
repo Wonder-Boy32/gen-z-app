@@ -1,6 +1,6 @@
 import { supabase } from '../supabase/client';
 
-export type NotifyType = 'follow' | 'like' | 'comment' | 'reply' | 'reaction' | 'repost';
+export type NotifyType = 'follow' | 'like' | 'comment' | 'reply' | 'reaction' | 'repost' | 'comment_like';
 
 type NotifyOpts = {
   /** recipient of the notification */

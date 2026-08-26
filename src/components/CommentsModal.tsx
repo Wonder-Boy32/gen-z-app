@@ -12,6 +12,7 @@ import {
 import { useInsets } from '../utils/useInsets';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
+import Icon from './ui/Icon';
 import { notifyUser } from '../utils/notify';
 
 type CommentRow = {
@@ -19,6 +20,9 @@ type CommentRow = {
   content: string;
   created_at: string;
   parent_id: string | null;
+  user_id?: string;
+  likes_count?: number;
+  liked_by_me?: boolean;
   profile: { username: string } | null;
 };
 
@@ -65,13 +69,13 @@ export default function CommentsModal({ post, onClose, onPosted, onReplyWithDrop
     setLoading(true);
     const { data } = await supabase
       .from('comments')
-      .select('id, content, created_at, parent_id, profile:profiles(username)')
+      .select('id, content, created_at, parent_id, user_id, profile:profiles(username)')
       .eq('post_id', post.id)
       .limit(500);
     const rows = (data ?? []) as unknown as CommentRow[];
     // build thread tree
     const byId = new Map<string, CommentNode>();
-    rows.forEach((r) => byId.set(r.id, { ...r, replies: [], reply_count: 0 }));
+    rows.forEach((r) => byId.set(r.id, { ...r, replies: [], reply_count: 0, likes_count: 0, liked_by_me: false }));
     const rootList: CommentNode[] = [];
     rows.forEach((r) => {
       const node = byId.get(r.id)!;
@@ -85,6 +89,27 @@ export default function CommentsModal({ post, onClose, onPosted, onReplyWithDrop
         }
       } else {
         rootList.push(node);
+      }
+    });
+    // like counts + which ones I liked
+    const ids = rows.map((r) => r.id);
+    const me = (await supabase.auth.getUser()).data.user;
+    const [lk, myLk] = await Promise.all([
+      ids.length
+        ? supabase.from('comment_likes').select('comment_id').in('comment_id', ids)
+        : Promise.resolve({ data: [] as any[] }),
+      ids.length && me
+        ? supabase.from('comment_likes').select('comment_id').in('comment_id', ids).eq('user_id', me.id)
+        : Promise.resolve({ data: [] as any[] }),
+    ]);
+    const likeCounts = new Map<string, number>();
+    (lk.data ?? []).forEach((x: any) => likeCounts.set(x.comment_id, (likeCounts.get(x.comment_id) ?? 0) + 1));
+    const mySet = new Set<string>((myLk.data ?? []).map((x: any) => x.comment_id));
+    rows.forEach((r) => {
+      const node = byId.get(r.id);
+      if (node) {
+        node.likes_count = likeCounts.get(r.id) ?? 0;
+        node.liked_by_me = mySet.has(r.id);
       }
     });
     setRoots(rootList);
@@ -137,7 +162,10 @@ export default function CommentsModal({ post, onClose, onPosted, onReplyWithDrop
         }
         load();
       } else {
-        setRoots((prev) => [...prev, { ...inserted, replies: [], reply_count: 0 }]);
+        setRoots((prev) => [
+          ...prev,
+          { ...inserted, replies: [], reply_count: 0, user_id: user.id, likes_count: 0, liked_by_me: false },
+        ]);
         // notify the post owner (fetch owner id if the caller didn't pass it)
         const ownerId = post.user_id ?? (await fetchPostOwner(post.id));
         if (ownerId) {
@@ -146,6 +174,27 @@ export default function CommentsModal({ post, onClose, onPosted, onReplyWithDrop
       }
     }
     setSending(false);
+  };
+
+  const mapNode = (n: CommentNode, id: string, fn: (c: CommentNode) => CommentNode): CommentNode =>
+    n.id === id ? fn(n) : { ...n, replies: n.replies.map((r) => mapNode(r, id, fn)) };
+
+  const updateNode = (id: string, fn: (n: CommentNode) => CommentNode) =>
+    setRoots((prev) => prev.map((n) => mapNode(n, id, fn)));
+
+  const toggleCommentLike = async (node: CommentNode) => {
+    const me = (await supabase.auth.getUser()).data.user;
+    if (!me) return;
+    if (node.liked_by_me) {
+      await supabase.from('comment_likes').delete().eq('comment_id', node.id).eq('user_id', me.id);
+      updateNode(node.id, (n) => ({ ...n, liked_by_me: false, likes_count: Math.max(0, (n.likes_count ?? 1) - 1) }));
+    } else {
+      await supabase.from('comment_likes').insert({ comment_id: node.id, user_id: me.id });
+      updateNode(node.id, (n) => ({ ...n, liked_by_me: true, likes_count: (n.likes_count ?? 0) + 1 }));
+      if (node.user_id && post) {
+        notifyUser({ userId: node.user_id, actorId: me.id, type: 'comment_like', postId: post.id, commentId: node.id });
+      }
+    }
   };
 
   const renderNode = (node: CommentNode, depth: number) => (
@@ -161,6 +210,18 @@ export default function CommentsModal({ post, onClose, onPosted, onReplyWithDrop
           hitSlop={6}
         >
           <Text style={styles.replyAction}>Reply</Text>
+        </Pressable>
+        <Pressable onPress={() => toggleCommentLike(node)} hitSlop={8} style={styles.likeBtn}>
+          <Icon
+            name={node.liked_by_me ? 'heart' : 'heart-outline'}
+            size={15}
+            color={node.liked_by_me ? colors.danger : colors.textMuted}
+          />
+          {(node.likes_count ?? 0) > 0 && (
+            <Text style={[styles.likeCount, node.liked_by_me && styles.likeCountActive]}>
+              {node.likes_count}
+            </Text>
+          )}
         </Pressable>
       </View>
       {node.replies.map((r) => renderNode(r, depth + 1))}
@@ -336,12 +397,28 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
   rowActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
     marginTop: 6,
   },
   replyAction: {
     color: colors.cyan,
     fontSize: 12,
     fontWeight: '600',
+  },
+  likeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  likeCount: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  likeCountActive: {
+    color: colors.danger,
   },
   empty: {
     color: colors.textMuted,
