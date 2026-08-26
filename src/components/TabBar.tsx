@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useInsets } from '../utils/useInsets';
 import { colors } from '../theme';
 
 export type Tab = 'feed' | 'discover' | 'post' | 'chat' | 'profile';
@@ -14,7 +14,7 @@ const ITEMS: { key: Tab; label: string; glyph: string }[] = [
 ];
 
 export default function TabBar({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
-  const insets = useSafeAreaInsets();
+  const insets = useInsets();
   const activeIndex = Math.max(0, ITEMS.findIndex((i) => i.key === tab));
   const glow = useRef(new Animated.Value(0)).current;
 

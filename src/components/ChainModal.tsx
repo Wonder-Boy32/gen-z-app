@@ -9,7 +9,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useInsets } from '../utils/useInsets';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import Avatar from './Avatar';
@@ -49,7 +49,7 @@ export default function ChainModal({
   onClose: () => void;
   onReplyWithDrop: () => void;
 }) {
-  const insets = useSafeAreaInsets();
+  const insets = useInsets();
   const [children, setChildren] = useState<ChainPost[]>([]);
   const [loading, setLoading] = useState(true);
 

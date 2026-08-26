@@ -9,7 +9,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useInsets } from '../utils/useInsets';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 
@@ -42,7 +42,7 @@ type Props = {
 };
 
 export default function CommentsModal({ post, onClose, onPosted, onReplyWithDrop }: Props) {
-  const insets = useSafeAreaInsets();
+  const insets = useInsets();
   const [roots, setRoots] = useState<CommentNode[]>([]);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);

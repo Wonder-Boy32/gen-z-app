@@ -9,7 +9,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useInsets } from '../utils/useInsets';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import { fmtCount } from './FeedPost';
@@ -42,7 +42,7 @@ export default function SoundPage({
   onClose: () => void;
   onUseSound: () => void;
 }) {
-  const insets = useSafeAreaInsets();
+  const insets = useInsets();
   const [sound, setSound] = useState<SoundRow | null>(null);
   const [posts, setPosts] = useState<PostRow[]>([]);
   const [loading, setLoading] = useState(true);

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, AppState, NativeModules, StyleSheet, UIManager, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import Constants from 'expo-constants';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from './src/supabase/client';
 import AuthScreen from './src/screens/AuthScreen';
@@ -17,6 +18,10 @@ const TEMP_USERNAME = /^[a-z0-9._-]+-[0-9a-f]{6}$/;
 // 'RNCSafeAreaProvider'". Fall back to plain rendering (insets = 0) until
 // the APK is rebuilt with react-native-safe-area-context included.
 function hasSafeAreaNative(): boolean {
+  // Expo Go always bundles react-native-safe-area-context, but on the new
+  // architecture its view manager is not visible via NativeModules — check
+  // the runtime environment first.
+  if (Constants?.executionEnvironment === 'storeClient') return true;
   try {
     return !!(NativeModules?.RNCSafeAreaProvider || UIManager?.getViewManagerConfig?.('RNCSafeAreaProvider'));
   } catch {
