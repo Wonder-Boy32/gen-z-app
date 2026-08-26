@@ -70,7 +70,7 @@ type Props = {
   onRepost: () => void;
   onOpenProfile: () => void;
   onReact: (r: string) => void;
-  onMenuAction: (action: 'hide' | 'mute' | 'block' | 'notinterested' | 'report') => void;
+  onMenuAction: (action: 'hide' | 'mute' | 'block' | 'notinterested' | 'report' | 'delete') => void;
   onOpenSound: () => void;
   onOpenChain: () => void;
   onExpired: () => void;
@@ -324,6 +324,7 @@ export default function FeedPost({
           if (a === 'replydrop') onReplyWithDrop();
           else onMenuAction(a);
         }}
+        isOwner={post.user_id === currentUserId}
       />
     </View>
   );
@@ -404,6 +405,7 @@ function DropMenu({
   setShowReasons,
   reasons,
   onAction,
+  isOwner,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -438,7 +440,7 @@ function DropMenu({
           ) : (
             <>
               <Text style={styles.menuTitle}>Drop options</Text>
-              {(post.user_id === currentUserId ? OWN_MENU_ITEMS : MENU_ITEMS).map((it) => (
+              {(isOwner ? OWN_MENU_ITEMS : MENU_ITEMS).map((it) => (
                 <Pressable
                   key={it.key}
                   style={styles.menuItem}

@@ -649,6 +649,8 @@ export default function FeedScreen({
     }
   };
 
+  const removePost = (id: string) => setPosts((prev) => prev.filter((p) => p.id !== id));
+
   // personalization actions — all real, all persisted
   const personalize = async (post: FeedPostFull, action: 'hide' | 'mute' | 'block' | 'notinterested' | 'report' | 'delete') => {
     const me = myIdRef.current;
