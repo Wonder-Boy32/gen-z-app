@@ -547,11 +547,13 @@ function CarouselMedia({ items }: { items: { url: string; type: string }[] }) {
         horizontal
         pagingEnabled
         showsHorizontalScrollIndicator={false}
+        style={styles.carousel}
+        getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
         onMomentumScrollEnd={(e) =>
           setIndex(Math.round(e.nativeEvent.contentOffset.x / width))
         }
         renderItem={({ item }) => (
-          <Image source={{ uri: item.url }} style={[styles.fill, { width }]} resizeMode="cover" />
+          <Image source={{ uri: item.url }} style={[styles.fill, { width, height: '100%' }]} resizeMode="cover" />
         )}
       />
       {items.length > 1 && (
@@ -589,6 +591,9 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
+  },
+  carousel: {
+    height: '100%',
   },
   textPostBg: {
     backgroundColor: '#101A33',
