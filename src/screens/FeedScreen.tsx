@@ -199,7 +199,7 @@ export default function FeedScreen({
       const cap = m === 'live' ? 2 : 3;
       const out: FeedPostFull[] = [];
       for (const { r, pulse } of scored) {
-        const mine = r.user_id === currentUserId;
+        const mine = r.user_id === myIdRef.current;
         const c = perCreator.get(r.user_id) ?? 0;
         if (!mine && c >= cap) continue;
         perCreator.set(r.user_id, c + 1);
