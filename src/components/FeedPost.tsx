@@ -413,6 +413,7 @@ function DropMenu({
   setShowReasons: (v: boolean) => void;
   reasons: string[];
   onAction: (a: Exclude<MenuAction, 'why'>) => void;
+  isOwner?: boolean;
 }) {
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
