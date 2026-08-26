@@ -138,7 +138,7 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
     setSaved(((savedRows ?? []).map((s: any) => s.post).filter(Boolean)) as unknown as Post[]);
     setFollowing(fw.count ?? 0);
     setFollowers(fl.count ?? 0);
-    setTotalLikes(((myPosts ?? []) as Post[]).reduce((sum, p) => sum + (p.likes_count ?? 0), 0));
+    setTotalLikes(((myPosts ?? []) as unknown as Post[]).reduce((sum, p) => sum + (p.likes_count ?? 0), 0));
     setLoading(false);
   }, []);
 
