@@ -7,7 +7,7 @@ import Icon, { IconName } from './ui/Icon';
 export type Tab = 'feed' | 'discover' | 'post' | 'chat' | 'profile';
 
 const ITEMS: { key: Tab; label: string; icon: IconName; iconActive: IconName }[] = [
-  { key: 'feed', label: 'Feed', icon: 'play-outline', iconActive: 'play' },
+  { key: 'feed', label: 'Home', icon: 'home-outline', iconActive: 'home' },
   { key: 'discover', label: 'Discover', icon: 'compass-outline', iconActive: 'compass' },
   { key: 'post', label: '', icon: 'add-circle-outline', iconActive: 'add-circle' },
   { key: 'chat', label: 'Chat', icon: 'chatbubble-ellipses-outline', iconActive: 'chatbubble-ellipses' },

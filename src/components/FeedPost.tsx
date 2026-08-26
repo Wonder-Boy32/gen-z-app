@@ -144,7 +144,14 @@ export default function FeedPost({
         onLongPress={() => setHoldPause(true)}
         onPressOut={() => setHoldPause(false)}
       >
-        <MediaArea post={post} isActive={isActive} paused={holdPause} />
+        <MediaArea
+          post={post}
+          isActive={isActive}
+          paused={holdPause}
+          onTap={handleTap}
+          onHoldStart={() => setHoldPause(true)}
+          onHoldEnd={() => setHoldPause(false)}
+        />
       </Pressable>
 
       <Animated.View
@@ -422,13 +429,19 @@ function MediaArea({
   post,
   isActive,
   paused,
+  onTap,
+  onHoldStart,
+  onHoldEnd,
 }: {
   post: FeedPost;
   isActive: boolean;
   paused: boolean;
+  onTap?: () => void;
+  onHoldStart?: () => void;
+  onHoldEnd?: () => void;
 }) {
   if (post.media_type === 'video' && post.media_url) {
-    return <VideoMedia post={post} isActive={isActive} paused={paused} />;
+    return <VideoMedia post={post} isActive={isActive} paused={paused} onTap={onTap} onHoldStart={onHoldStart} onHoldEnd={onHoldEnd} />;
   }
   if (post.media_items && post.media_items.length > 1) {
     return <CarouselMedia items={post.media_items} />;
@@ -444,7 +457,21 @@ function MediaArea({
   );
 }
 
-function VideoMedia({ post, isActive, paused }: { post: FeedPost; isActive: boolean; paused: boolean }) {
+function VideoMedia({
+  post,
+  isActive,
+  paused,
+  onTap,
+  onHoldStart,
+  onHoldEnd,
+}: {
+  post: FeedPost;
+  isActive: boolean;
+  paused: boolean;
+  onTap?: () => void;
+  onHoldStart?: () => void;
+  onHoldEnd?: () => void;
+}) {
   return (
     <DropVideoView
       url={post.media_url!}
@@ -456,6 +483,9 @@ function VideoMedia({ post, isActive, paused }: { post: FeedPost; isActive: bool
       paused={paused}
       showProgress
       showMute
+      onTap={onTap}
+      onHoldStart={onHoldStart}
+      onHoldEnd={onHoldEnd}
     />
   );
 }

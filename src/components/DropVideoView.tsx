@@ -62,6 +62,11 @@ type Props = {
   showMute?: boolean;
   contentFit?: 'cover' | 'contain';
   style?: any;
+  /** tap layer above the video (double-tap to like etc.) — the native
+   *  player surface swallows touches, so callers pass handlers here */
+  onTap?: () => void;
+  onHoldStart?: () => void;
+  onHoldEnd?: () => void;
 };
 
 export default function DropVideoView({
@@ -76,6 +81,9 @@ export default function DropVideoView({
   showMute = true,
   contentFit = 'cover',
   style,
+  onTap,
+  onHoldStart,
+  onHoldEnd,
 }: Props) {
   const [muted, setMuted] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -139,6 +147,16 @@ export default function DropVideoView({
         {filterTint && <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: filterTint }]} />}
       </View>
 
+      {onTap && (
+        <Pressable
+          style={styles.tapCatcher}
+          onPress={onTap}
+          delayLongPress={350}
+          onLongPress={onHoldStart}
+          onPressOut={onHoldEnd}
+        />
+      )}
+
       {showProgress && <View style={[styles.progressBar, { width: `${progress * 100}%` }]} />}
 
       {showMute && (
@@ -186,6 +204,15 @@ const styles = StyleSheet.create({
   overlayItem: {
     position: 'absolute',
     maxWidth: '80%',
+  },
+  tapCatcher: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 3,
+    backgroundColor: 'transparent',
   },
   progressBar: {
     position: 'absolute',
