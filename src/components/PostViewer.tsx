@@ -155,6 +155,8 @@ export default function PostViewer({ posts, index, onClose }: Props) {
         post={item}
         isActive={i === current}
         height={height}
+        contentTop={insets.top}
+        contentBottom={insets.bottom + 24}
         onLike={() => toggleLike(item)}
         onFollow={() => toggleFollow(item)}
         onComment={() => setCommentPost(item)}

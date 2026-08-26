@@ -632,13 +632,48 @@ export default function FeedScreen({
   };
 
   const storiesVisible = storyUsers.length > 0 && !dropMode && !userMode && !audioMode && !hashtagMode && mode === 'foryou';
-  const userModeName = storyUsers.find((u) => u.id === userMode)?.username;
+
+  // real dropper's name for the VIEWING banner — resolve from posts, then fetch profile
+  const [userModeProfile, setUserModeProfile] = useState<{ username: string } | null>(null);
+  useEffect(() => {
+    if (!userMode) {
+      setUserModeProfile(null);
+      return;
+    }
+    let on = true;
+    supabase
+      .from('profiles')
+      .select('username')
+      .eq('id', userMode)
+      .maybeSingle()
+      .then(
+        ({ data }) => {
+          if (on && data) setUserModeProfile(data as { username: string });
+        },
+        () => {}
+      );
+    return () => {
+      on = false;
+    };
+  }, [userMode]);
+
+  const userModeName =
+    posts.find((p) => p.user_id === userMode)?.profile?.username ??
+    userModeProfile?.username ??
+    storyUsers.find((u) => u.id === userMode)?.username ??
+    null;
+
+  // keep the video inside the frame: below the mode chips, above the tab bar
+  const feedTop = insets.top + 80;
+  const feedBottom = insets.bottom > 0 ? 60 + insets.bottom : 76;
 
   const renderItem = ({ item, index }: { item: FeedPostFull; index: number }) => (
     <FeedPost
       post={item}
       isActive={index === activeIndex}
       height={height}
+      contentTop={feedTop}
+      contentBottom={feedBottom}
       onLike={() => toggleLike(item)}
       onFollow={() => toggleFollow(item)}
       onComment={() => setCommentPost(item)}
@@ -812,14 +847,16 @@ export default function FeedScreen({
             setHashtagMode(null);
           }}
         >
-          <Text style={styles.dropBannerTitle}>
-            ◉ VIEWING{' '}
-            {userMode ? `@${userModeName ?? 'user'}` : audioMode ? `♪ ${audioMode}` : `#${hashtagMode}`}
-          </Text>
-          <Text style={styles.dropBannerPrompt} numberOfLines={1}>
-            {userMode ? 'Their drops, last 48 hours' : 'Matching drops — last 48 hours'}
-          </Text>
-          <Text style={styles.dropBannerAction}>← Back to general feed</Text>
+          <View style={styles.dropBannerInner}>
+            <Text style={styles.dropBannerTitle} numberOfLines={1}>
+              ◉ VIEWING{' '}
+              {userMode ? `@${userModeName ?? 'user'}` : audioMode ? `♪ ${audioMode}` : `#${hashtagMode}`}
+            </Text>
+            <Text style={styles.dropBannerPrompt} numberOfLines={1}>
+              {userMode ? 'Their drops, last 48 hours' : 'Matching drops — last 48 hours'}
+            </Text>
+            <Text style={styles.dropBannerAction}>← Back to general feed</Text>
+          </View>
         </Pressable>
       )}
 
@@ -1061,7 +1098,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     ...shadows.glow,
   },
-  dropBannerInner: { paddingHorizontal: 14, paddingVertical: 10 },
+  dropBannerInner: { paddingHorizontal: 14, paddingVertical: 10, alignItems: 'center' },
   liveHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   liveBadge: {
     flexDirection: 'row',
@@ -1104,10 +1141,10 @@ const styles = StyleSheet.create({
   },
   joinPillText: { color: colors.bg, fontSize: 12, fontWeight: '800', letterSpacing: 0.5 },
   bannerBack: { color: colors.cyan, fontSize: 12, fontWeight: '600' },
-  dropBannerTitle: { color: colors.accent, fontSize: 11, fontWeight: '800', letterSpacing: 1 },
-  dropBannerPrompt: { color: colors.text, fontSize: 14, fontWeight: '600', marginTop: 3 },
+  dropBannerTitle: { color: colors.accent, fontSize: 11, fontWeight: '800', letterSpacing: 1, textAlign: 'center' },
+  dropBannerPrompt: { color: colors.text, fontSize: 14, fontWeight: '600', marginTop: 3, textAlign: 'center' },
   dropBannerTime: { marginTop: 4 },
-  dropBannerAction: { color: colors.cyan, fontSize: 12, marginTop: 4, fontWeight: '600' },
+  dropBannerAction: { color: colors.cyan, fontSize: 12, marginTop: 4, fontWeight: '600', textAlign: 'center' },
   skeletonWrap: { flex: 1 },
   skeletonBlock: {
     backgroundColor: colors.surface,

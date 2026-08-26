@@ -12,7 +12,6 @@ import {
 } from 'react-native';
 import DropVideoView, { DropEffects, DropSticker, DropTextLayer } from './DropVideoView';
 import { colors, shadows } from '../theme';
-import Countdown from './Countdown';
 import Avatar from './Avatar';
 
 export type FeedPost = {
@@ -55,6 +54,8 @@ type Props = {
   post: FeedPost;
   isActive: boolean;
   height: number;
+  contentTop?: number;
+  contentBottom?: number;
   onLike: () => void;
   onFollow: () => void;
   onComment: () => void;
@@ -79,6 +80,8 @@ export default function FeedPost({
   post,
   isActive,
   height,
+  contentTop = 0,
+  contentBottom = 0,
   onLike,
   onFollow,
   onComment,
@@ -134,7 +137,7 @@ export default function FeedPost({
   return (
     <View style={[styles.post, { height }]}>
       <Pressable
-        style={styles.media}
+        style={[styles.media, { top: contentTop, bottom: contentBottom }]}
         onPress={handleTap}
         delayLongPress={350}
         onLongPress={() => setHoldPause(true)}
@@ -153,7 +156,7 @@ export default function FeedPost({
         <Text style={styles.heartBurstIcon}>♥</Text>
       </Animated.View>
 
-      <View style={styles.overlay} pointerEvents="box-none">
+      <View style={[styles.overlay, { top: contentTop, bottom: contentBottom }]} pointerEvents="box-none">
         <View style={styles.rail}>
           <Pressable onPress={() => setMenuOpen(true)} style={styles.railBtn} hitSlop={6}>
             <Text style={styles.railIcon}>•••</Text>
@@ -214,7 +217,6 @@ export default function FeedPost({
                 </Text>
               </Pressable>
             )}
-            <TimeLeft expiresAt={post.expires_at} onExpired={onExpired} />
           </View>
 
           {!!post.caption && (
@@ -222,6 +224,10 @@ export default function FeedPost({
               {post.caption}
             </Text>
           )}
+
+          <View style={styles.timeRow}>
+            <TimeLeft expiresAt={post.expires_at} onExpired={onExpired} />
+          </View>
 
           {!!post.audio && (
             <Pressable style={styles.audioChip} onPress={onOpenSound}>
@@ -243,8 +249,6 @@ export default function FeedPost({
           )}
 
           <PulseRow pulse={post.pulse} comments={post.comments_count} />
-
-          <Countdown expiresAt={post.expires_at} style={styles.countdown} />
         </View>
       </View>
 
@@ -522,7 +526,7 @@ const styles = StyleSheet.create({
   rail: {
     position: 'absolute',
     right: 14,
-    bottom: 118,
+    bottom: 26,
     alignItems: 'center',
   },
   railBtn: {
@@ -567,7 +571,7 @@ const styles = StyleSheet.create({
   },
   bottomLeft: {
     padding: 16,
-    paddingBottom: 120,
+    paddingBottom: 22,
     maxWidth: '78%',
   },
   userRow: {
@@ -671,14 +675,15 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
   },
-  countdown: {
-    marginTop: 6,
+  timeRow: {
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   timeLeft: {
     color: colors.accent,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '800',
-    marginLeft: 10,
     textShadowColor: 'rgba(0,0,0,0.7)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 4,
