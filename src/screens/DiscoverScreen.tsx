@@ -35,6 +35,7 @@ type P = {
   user_id: string;
   media_url: string | null;
   media_type: 'video' | 'image' | null;
+  cover_url: string | null;
   media_items: { url: string; type: string }[] | null;
   content: string | null;
   caption: string | null;
@@ -318,6 +319,17 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
 }
 
 function CardMedia({ post }: { post: P }) {
+  const src = post.cover_url || (post.media_type === 'image' ? post.media_url : null);
+  if (src) {
+    return <Image source={{ uri: src }} style={styles.cardMedia} resizeMode="cover" />;
+  }
+  if (post.media_type === 'video') {
+    return (
+      <View style={[styles.cardMedia, styles.videoPh]}>
+        <Text style={styles.videoPhText}>▶ {post.views_count}</Text>
+      </View>
+    );
+  }
   if (post.media_url) {
     return <Image source={{ uri: post.media_url }} style={styles.cardMedia} resizeMode="cover" />;
   }
@@ -445,8 +457,12 @@ const styles = StyleSheet.create({
   },
   cardMedia: {
     width: '100%',
-    height: '100%',
+    height: 170,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
   },
+  videoPh: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#0A1220' },
+  videoPhText: { color: colors.textMuted, fontSize: 20, fontWeight: '800' },
   cardTextBg: {
     backgroundColor: colors.surfaceAlt,
     padding: 8,

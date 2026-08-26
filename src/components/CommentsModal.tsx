@@ -38,7 +38,7 @@ type Props = {
   post: { id: string } | null;
   onClose: () => void;
   onPosted: () => void;
-  onReplyWithDrop: () => void;
+  onReplyWithDrop?: () => void;
 };
 
 export default function CommentsModal({ post, onClose, onPosted, onReplyWithDrop }: Props) {
@@ -150,7 +150,7 @@ export default function CommentsModal({ post, onClose, onPosted, onReplyWithDrop
           <View style={styles.handle} />
           <View style={styles.headerRow}>
             <Text style={styles.title}>Comments</Text>
-            <Pressable style={styles.dropReplyBtn} onPress={onReplyWithDrop}>
+            <Pressable style={styles.dropReplyBtn} onPress={() => onReplyWithDrop?.()}>
               <Text style={styles.dropReplyText}>🎥 Reply with Drop</Text>
             </Pressable>
           </View>

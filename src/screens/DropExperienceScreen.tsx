@@ -31,6 +31,7 @@ type Sub = {
   user_id: string;
   media_url: string | null;
   media_type: 'video' | 'image' | null;
+  cover_url: string | null;
   media_items: { url: string; type: string }[] | null;
   content: string | null;
   caption: string | null;
@@ -305,6 +306,17 @@ function TileMedia({ sub, small }: { sub: Sub; small?: boolean }) {
       </View>
     );
   }
+  const src = sub.cover_url || (sub.media_type === 'image' ? sub.media_url : null);
+  if (src) {
+    return <Image source={{ uri: src }} style={styles.tileImage} resizeMode="cover" />;
+  }
+  if (sub.media_type === 'video') {
+    return (
+      <View style={[styles.tileImage, styles.videoPh]}>
+        <Text style={styles.videoPhText}>▶ {sub.views_count}</Text>
+      </View>
+    );
+  }
   if (sub.media_url) {
     return <Image source={{ uri: sub.media_url }} style={styles.tileImage} resizeMode="cover" />;
   }
@@ -533,9 +545,12 @@ const styles = StyleSheet.create({
   },
   tileTextBg: {
     backgroundColor: colors.surfaceAlt,
-    padding: 6,
     justifyContent: 'center',
+    alignItems: 'center',
+    padding: 8,
   },
+  videoPh: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#0A1220' },
+  videoPhText: { color: colors.textMuted, fontSize: 18, fontWeight: '800' },
   tileText: {
     color: colors.text,
     fontSize: 11,

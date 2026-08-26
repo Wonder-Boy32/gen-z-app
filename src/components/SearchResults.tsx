@@ -23,6 +23,7 @@ type P = {
   user_id: string;
   media_url: string | null;
   media_type: 'video' | 'image' | null;
+  cover_url: string | null;
   content: string | null;
   caption: string | null;
   audio: string | null;
@@ -312,8 +313,12 @@ export default function SearchResults({ query, onPickQuery, onOpenUser, onOpenAu
                   setSelected(p);
                 }}
               >
-                {p.media_url ? (
-                  <Image source={{ uri: p.media_url }} style={styles.tileImage} resizeMode="cover" />
+                {p.cover_url || (p.media_type === 'image' && p.media_url) ? (
+                  <Image source={{ uri: p.cover_url ?? p.media_url! }} style={styles.tileImage} resizeMode="cover" />
+                ) : p.media_type === 'video' ? (
+                  <View style={[styles.tileImage, styles.videoPh]}>
+                    <Text style={styles.videoPhText}>▶</Text>
+                  </View>
                 ) : (
                   <View style={[styles.tileImage, styles.tileTextBg]}>
                     <Text style={styles.tileText} numberOfLines={3}>{p.content}</Text>
@@ -620,9 +625,12 @@ const styles = StyleSheet.create({
   },
   tileTextBg: {
     backgroundColor: colors.surfaceAlt,
-    padding: 6,
     justifyContent: 'center',
+    alignItems: 'center',
+    padding: 8,
   },
+  videoPh: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#0A1220' },
+  videoPhText: { color: colors.textMuted, fontSize: 18, fontWeight: '800' },
   tileText: {
     color: colors.text,
     fontSize: 10,

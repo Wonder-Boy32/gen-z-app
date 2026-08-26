@@ -28,7 +28,7 @@ import TextLayerEditor, { TextLayer } from '../components/create/TextLayerEditor
 import VoiceoverRecorder from '../components/create/VoiceoverRecorder';
 import PhotoEditorModal from '../components/create/PhotoEditorModal';
 import { uploadMedia } from '../utils/upload';
-import { hasNativeFFmpeg, processDropVideo } from '../utils/videoProcessor';
+import { extractVideoCover, hasNativeFFmpeg, processDropVideo } from '../utils/videoProcessor';
 
 // ============================================================
 // GEN Z — ADVANCED UPLOAD / CREATE
@@ -71,6 +71,7 @@ type EditorOverlay =
   | 'text'
   | 'stickers'
   | 'filters'
+  | 'cover'
   | 'voiceover'
   | 'speed'
   | 'crop'
@@ -84,6 +85,7 @@ const TOOLS: { id: EditorOverlay; icon: string; label: string }[] = [
   { id: 'text', icon: 'Aa', label: 'Text' },
   { id: 'stickers', icon: '🏷', label: 'Stickers' },
   { id: 'filters', icon: '🎨', label: 'Filters' },
+  { id: 'cover', icon: '🎞', label: 'Cover' },
   { id: 'voiceover', icon: '🎙', label: 'Voiceover' },
   { id: 'speed', icon: '⚡', label: 'Speed' },
   { id: 'crop', icon: '⛶', label: 'Crop' },
@@ -117,6 +119,8 @@ export default function CreateDropScreen({
   const [trimStart, setTrimStart] = useState(0);
   const [trimEnd, setTrimEnd] = useState(0);
   const [trimActive, setTrimActive] = useState(false);
+  const [coverUri, setCoverUri] = useState<string | null>(null);
+  const [coverBusy, setCoverBusy] = useState(false);
   const [textLayers, setTextLayers] = useState<TextLayer[]>([]);
   const [stickers, setStickers] = useState<Sticker[]>([]);
   const [collage, setCollage] = useState('single');
@@ -238,6 +242,7 @@ export default function CreateDropScreen({
     setAssets([]);
     setCaption('');
     setContent('');
+    setCoverUri(null);
     setSound(null);
     setFilter('original');
     setEffect('none');
@@ -305,6 +310,7 @@ export default function CreateDropScreen({
     content,
     textColor,
     sound,
+    coverUri,
     filter,
     effect,
     speed,
@@ -352,6 +358,7 @@ export default function CreateDropScreen({
     setContent(p.content ?? '');
     setTextColor(p.textColor ?? TEXT_DROP_COLORS[0]);
     setSound(p.sound ?? null);
+    setCoverUri(p.coverUri ?? null);
     setFilter(p.filter ?? 'original');
     setEffect(p.effect ?? 'none');
     setSpeed(p.speed ?? 1);
@@ -443,6 +450,21 @@ export default function CreateDropScreen({
             asset.mimeType ?? (isVideo ? 'video/mp4' : 'image/jpeg')
           );
           items.push({ url: publicUrl, type: isVideo ? 'video' : 'image' });
+
+          // cover: user-picked, else auto-extract the first frame (native builds)
+          if (isVideo && i === 0) {
+            let coverSrc: string | null = coverUri;
+            if (!coverSrc && hasNativeFFmpeg()) {
+              try {
+                coverSrc = await extractVideoCover(asset.uri);
+              } catch {}
+            }
+            if (coverSrc) {
+              try {
+                row.cover_url = await uploadMedia(`${user.id}/cover-${Date.now()}.jpg`, coverSrc, 'image/jpeg');
+              } catch {}
+            }
+          }
         }
         row.media_url = items[0].url;
         row.media_type = items[0].type;
@@ -758,6 +780,58 @@ export default function CreateDropScreen({
               </View>
             )}
             {overlay === 'filters' && <FilterCarousel value={filter} onChange={setFilter} />}
+            {overlay === 'cover' && (
+              <View style={styles.panelColumn}>
+                <Text style={styles.panelHint}>
+                  Pick a photo as this video's cover — it shows on your profile grid and everywhere the Drop is listed.
+                </Text>
+                {coverUri ? (
+                  <View style={styles.coverPreviewRow}>
+                    <Image source={{ uri: coverUri }} style={styles.coverPreview} />
+                    <Pressable onPress={() => setCoverUri(null)} hitSlop={8}>
+                      <Text style={styles.coverRemove}>✕ Remove cover</Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <View style={styles.panelRow}>
+                    <Button
+                      variant="secondary"
+                      title="📁 Pick from gallery"
+                      disabled={coverBusy}
+                      onPress={async () => {
+                        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+                        if (!perm.granted) return;
+                        const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8 });
+                        if (res.canceled || !res.assets[0]) return;
+                        setCoverUri(res.assets[0].uri);
+                      }}
+                    />
+                    <Button
+                      variant="secondary"
+                      title={coverBusy ? 'Extracting…' : '⚡ Auto (first frame)'}
+                      disabled={coverBusy || !hasNativeFFmpeg()}
+                      onPress={async () => {
+                        if (!assets[0]) return;
+                        setCoverBusy(true);
+                        try {
+                          const local = await extractVideoCover(assets[0].uri);
+                          setCoverUri(local);
+                        } catch {
+                          // dev-build only — fall back to placeholder cover
+                        } finally {
+                          setCoverBusy(false);
+                        }
+                      }}
+                    />
+                  </View>
+                )}
+                {!hasNativeFFmpeg() && !coverUri && (
+                  <Text style={styles.panelHint}>
+                    ⚡ Auto cover needs the dev build (ffmpeg). Until then pick one — otherwise a ▶ placeholder shows.
+                  </Text>
+                )}
+              </View>
+            )}
             {overlay === 'voiceover' && (
               <VoiceoverRecorder url={voiceoverUrl} durationMs={voiceoverMs} onRecorded={(u, ms) => { setVoiceoverUrl(u); setVoiceoverMs(ms); }} onRemove={() => { setVoiceoverUrl(null); setVoiceoverMs(0); }} />
             )}
@@ -1066,6 +1140,31 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     padding: 4,
     marginBottom: 16,
+  },
+  panelColumn: {
+    gap: 10,
+    paddingVertical: 4,
+  },
+  panelHint: {
+    color: colors.textMuted,
+    fontSize: 11.5,
+    lineHeight: 16,
+  },
+  coverPreviewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  coverPreview: {
+    width: 72,
+    height: 100,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
+  },
+  coverRemove: {
+    color: colors.danger,
+    fontSize: 13,
+    fontWeight: '700',
   },
   replyBanner: {
     backgroundColor: 'rgba(139,123,255,0.14)',

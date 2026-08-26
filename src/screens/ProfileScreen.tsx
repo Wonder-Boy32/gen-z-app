@@ -37,6 +37,7 @@ type Post = {
   id: string;
   media_url: string | null;
   media_type: 'video' | 'image' | null;
+  cover_url: string | null;
   content: string | null;
   drop_id: string | null;
   views_count: number;
@@ -82,7 +83,7 @@ export default function ProfileScreen() {
           .maybeSingle(),
         supabase
           .from('posts')
-          .select('id, media_url, media_type, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at')
+          .select('id, media_url, media_type, cover_url, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false }),
         supabase
@@ -216,8 +217,15 @@ export default function ProfileScreen() {
                     showsHorizontalScrollIndicator={false}
                     renderItem={({ item }) => (
                       <View style={styles.dropCard}>
-                        {item.media_url ? (
-                          <Image source={{ uri: item.media_url }} style={styles.dropMedia} />
+                        {item.cover_url || (item.media_type === 'image' && item.media_url) ? (
+                          <Image
+                            source={{ uri: item.cover_url ?? item.media_url! }}
+                            style={styles.dropMedia}
+                          />
+                        ) : item.media_type === 'video' ? (
+                          <View style={[styles.dropMedia, styles.dropVideoPh]}>
+                            <Text style={styles.dropVideoPhText}>▶ {item.views_count}</Text>
+                          </View>
                         ) : (
                           <View style={[styles.dropMedia, styles.dropTextBg]}>
                             <Text style={styles.dropText} numberOfLines={3}>{item.content}</Text>
@@ -246,8 +254,12 @@ export default function ProfileScreen() {
           }
           renderItem={({ item }) => (
             <View style={styles.tile}>
-              {item.media_url ? (
-                <Image source={{ uri: item.media_url }} style={styles.tileImage} />
+              {item.cover_url || (item.media_type === 'image' && item.media_url) ? (
+                <Image source={{ uri: item.cover_url ?? item.media_url! }} style={styles.tileImage} />
+              ) : item.media_type === 'video' ? (
+                <View style={[styles.tileImage, styles.tileVideoPh]}>
+                  <Text style={styles.tileVideoPhText}>▶ {item.views_count}</Text>
+                </View>
               ) : (
                 <View style={[styles.tileImage, styles.tileTextBg]}>
                   <Text style={styles.tileText} numberOfLines={3}>{item.content}</Text>
@@ -592,8 +604,29 @@ const styles = StyleSheet.create({
   },
   dropMedia: {
     width: '100%',
-    height: 110,
+    height: 150,
+    borderRadius: radius.md,
     backgroundColor: colors.surfaceAlt,
+  },
+  dropVideoPh: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0A1220',
+  },
+  dropVideoPhText: {
+    color: colors.textMuted,
+    fontSize: 22,
+    fontWeight: '800',
+  },
+  tileVideoPh: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0A1220',
+  },
+  tileVideoPhText: {
+    color: colors.textMuted,
+    fontSize: 18,
+    fontWeight: '800',
   },
   dropTextBg: {
     justifyContent: 'center',

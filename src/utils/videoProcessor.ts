@@ -66,6 +66,37 @@ async function run(args: string[], out: string): Promise<string> {
   throw new Error(`ffmpeg failed (code ${returnCode})`);
 }
 
+// Extracts a cover frame (0.5s in) from a local video — used to auto-fill
+// the profile tile when the creator didn't pick a cover. Native builds only.
+export async function extractVideoCover(uri: string, outputName = 'cover'): Promise<string> {
+  if (!hasNativeFFmpeg()) throw new Error('ffmpeg unavailable');
+  const ff = nativeFFmpeg;
+  const fs: any = await import('expo-file-system');
+  const dir = `${fs.cacheDirectory}drop-edit/`;
+  try {
+    await fs.makeDirectoryAsync(dir, { intermediates: true });
+  } catch {}
+  const out = `${dir}${outputName}-${Date.now()}.jpg`;
+  const ok = await new Promise<boolean>((resolve) => {
+    try {
+      ff.FFmpegKit.execute(
+        `-y -ss 0.5 -i "${cleanPath(uri)}" -frames:v 1 -q:v 3 "${cleanPath(out)}"`,
+        (session: any) => {
+          try {
+            resolve(ff.ReturnCode.isSuccess(session.getReturnCode()));
+          } catch {
+            resolve(false);
+          }
+        }
+      );
+    } catch {
+      resolve(false);
+    }
+  });
+  if (!ok) throw new Error('cover extraction failed');
+  return out;
+}
+
 // Processes a video file into a NEW file that has trim/speed/rotation/
 // filter/voiceover BAKED IN. Returns the output file uri.
 // Throws if ffmpeg is unavailable or the command fails.

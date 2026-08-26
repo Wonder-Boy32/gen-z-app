@@ -72,3 +72,6 @@ create policy post_views_owner_update on public.post_views
 -- ---- 7) Region pulse (privacy-safe): broad user-set region only, no
 -- coordinates, never auto-located. Optional field set in Edit Profile.
 alter table public.profiles add column if not exists region text;
+
+-- ---- 8) Video drop cover image (user-picked or auto-extracted frame)
+alter table public.posts add column if not exists cover_url text;
