@@ -72,6 +72,7 @@ export default function ProfilePeekModal({
           .from('posts')
           .select('id, media_url, media_type, content, expires_at, likes_count')
           .eq('user_id', user.id)
+          .is('parent_drop_id', null)
           .order('created_at', { ascending: false })
           .limit(6),
         me ? supabase.from('follows').select('status').eq('follower_id', me.id).eq('following_id', user.id).maybeSingle() : null,

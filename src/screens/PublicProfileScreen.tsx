@@ -85,6 +85,7 @@ export default function PublicProfileScreen({
       .from('posts')
       .select('id, media_url, media_type, content, views_count, expires_at')
       .eq('user_id', userId)
+      .is('parent_drop_id', null)
       .order('created_at', { ascending: false });
     setPosts(((postRows ?? []) as Post[]).filter((p) => new Date(p.expires_at) > new Date()));
     setLoading(false);

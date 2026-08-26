@@ -86,6 +86,7 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
         supabase
           .from('posts')
           .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url)')
+          .is('parent_drop_id', null)
           .order('created_at', { ascending: false })
           .limit(200),
         supabase

@@ -158,6 +158,7 @@ export default function SearchResults({ query, onPickQuery, onOpenUser, onOpenAu
           .from('posts')
           .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url)')
           .or(`caption.ilike.%${q}%,content.ilike.%${q}%,audio.ilike.%${q}%`)
+          .is('parent_drop_id', null)
           .order('created_at', { ascending: false })
           .limit(20),
         supabase.from('hashtags').select('tag, count').ilike('tag', `%${q}%`).order('count', { ascending: false }).limit(10),

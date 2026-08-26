@@ -113,6 +113,7 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
             'id, user_id, media_url, media_type, media_items, cover_url, text_bg, text_color, caption, audio, effects, filters, text_layers, stickers, parent_drop_id, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region)'
           )
           .eq('user_id', user.id)
+          .is('parent_drop_id', null) // reply-with-drop posts are comments, not grid content
           .order('created_at', { ascending: false }),
         supabase
           .from('reposts')
