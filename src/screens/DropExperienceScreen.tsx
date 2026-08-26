@@ -13,6 +13,7 @@ import {
 import DropVideoView from '../components/DropVideoView';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
+import { TOP_INSET } from '../utils/useInsets';
 import DropCountdown from '../components/DropCountdown';
 import CommentsModal from '../components/CommentsModal';
 import { fmtCount } from '../components/FeedPost';
@@ -411,7 +412,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
-    paddingTop: 50,
+    paddingTop: TOP_INSET + 10,
     paddingBottom: 10,
     backgroundColor: colors.glass,
     borderBottomWidth: 1,

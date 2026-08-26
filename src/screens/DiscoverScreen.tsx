@@ -14,6 +14,7 @@ import {
 import DropVideoView from '../components/DropVideoView';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
+import { TOP_INSET } from '../utils/useInsets';
 import DropCountdown from '../components/DropCountdown';
 import DropExperienceScreen from './DropExperienceScreen';
 import PublicProfileScreen from './PublicProfileScreen';
@@ -399,7 +400,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
   },
   searchHeader: {
-    paddingTop: 50,
+    paddingTop: TOP_INSET + 12,
     paddingHorizontal: 16,
     paddingBottom: 8,
     backgroundColor: colors.bg,
@@ -429,7 +430,7 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   content: {
-    paddingTop: 54,
+    paddingTop: TOP_INSET + 16,
     paddingBottom: 40,
   },
   sectionTitle: {

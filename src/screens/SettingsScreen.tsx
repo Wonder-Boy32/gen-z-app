@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { supabase } from '../supabase/client';
 import { colors, radius } from '../theme';
+import { TOP_INSET } from '../utils/useInsets';
 import Button from '../components/Button';
 import Avatar from '../components/Avatar';
 import AvatarPickerModal from '../components/AvatarPickerModal';
@@ -548,7 +549,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
-    paddingTop: 50,
+    paddingTop: TOP_INSET + 10,
     paddingBottom: 10,
     backgroundColor: colors.glass,
     borderBottomWidth: 1,

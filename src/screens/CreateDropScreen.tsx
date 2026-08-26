@@ -18,6 +18,7 @@ import { VideoView, useVideoPlayer } from 'expo-video';
 import { captureRef } from 'react-native-view-shot';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
+import { TOP_INSET } from '../utils/useInsets';
 import LogoHeader from '../components/LogoHeader';
 import Button from '../components/Button';
 import Draggable from '../components/create/Draggable';
@@ -1192,7 +1193,7 @@ function ToggleRow({ label, value, onChange }: { label: string; value: boolean; 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   flex: { flex: 1 },
-  createContent: { padding: 22, paddingTop: 54, paddingBottom: 40 },
+  createContent: { padding: 22, paddingTop: TOP_INSET + 16, paddingBottom: 40 },
   segment: {
     flexDirection: 'row',
     backgroundColor: colors.surface,
@@ -1317,7 +1318,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 18,
-    paddingVertical: 12,
+    paddingTop: TOP_INSET + 10,
+    paddingBottom: 12,
   },
   editorTopBtn: { padding: 6 },
   editorTopText: { color: colors.text, fontSize: 18 },
@@ -1380,7 +1382,7 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: colors.accent, borderColor: colors.accent },
   chipText: { color: colors.text, fontSize: 13, fontWeight: '600' },
   chipTextActive: { color: colors.bg },
-  previewContent: { padding: 22, paddingTop: 20, paddingBottom: 48 },
+  previewContent: { padding: 22, paddingTop: TOP_INSET + 10, paddingBottom: 48 },
   previewTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
   previewBack: { color: colors.text, fontSize: 18 },
   previewTitle: { color: colors.text, fontSize: 16, fontWeight: '800' },

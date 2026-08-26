@@ -17,6 +17,7 @@ import { VideoView, useVideoPlayer } from 'expo-video';
 import { useAudioPlayer, useAudioRecorder, AudioModule, RecordingPresets, setAudioModeAsync } from 'expo-audio';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
+import { TOP_INSET } from '../utils/useInsets';
 import LogoHeader from '../components/LogoHeader';
 import GifPicker from '../components/GifPicker';
 import { uploadMedia } from '../utils/upload';
@@ -665,7 +666,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
-    paddingTop: 48,
+    paddingTop: TOP_INSET + 10,
     paddingBottom: 10,
     backgroundColor: colors.glass,
     borderBottomWidth: 1,

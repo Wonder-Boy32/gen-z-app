@@ -12,6 +12,7 @@ import {
 import { supabase } from '../supabase/client';
 import ChatThread from './ChatThread';
 import { colors, radius } from '../theme';
+import { TOP_INSET } from '../utils/useInsets';
 import LogoHeader from '../components/LogoHeader';
 import Button from '../components/Button';
 import NewChatModal from '../components/NewChatModal';
@@ -392,7 +393,7 @@ const styles = StyleSheet.create({
   header: {
     position: 'relative',
     alignItems: 'center',
-    paddingTop: 48,
+    paddingTop: TOP_INSET + 10,
     paddingBottom: 10,
   },
   newBtn: {

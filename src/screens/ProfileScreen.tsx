@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
+import { TOP_INSET } from '../utils/useInsets';
 import LogoHeader from '../components/LogoHeader';
 import Button from '../components/Button';
 import Avatar from '../components/Avatar';
@@ -430,7 +431,7 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
-    paddingTop: 44,
+    paddingTop: TOP_INSET + 8,
     paddingBottom: 40,
   },
   header: {
