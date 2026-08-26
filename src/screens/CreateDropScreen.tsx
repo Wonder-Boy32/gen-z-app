@@ -1479,7 +1479,7 @@ const styles = StyleSheet.create({
     ...shadows.glow,
   },
   dropBtnDisabled: { opacity: 0.6 },
-  dropBtnText: { color: colors.bg, fontSize: 18, fontWeight: '900', letterSpacing: 0.5, lineHeight: 24 },
+  dropBtnText: { color: colors.bg, fontSize: 18, fontWeight: '900', letterSpacing: 0.5 },
   statRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   liveWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bgDeep, padding: 24 },
   liveFlame: { padding: 8 },
