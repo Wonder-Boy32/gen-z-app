@@ -21,6 +21,7 @@ import ChainModal from '../components/ChainModal';
 import SoundPage from '../components/SoundPage';
 import DropExperienceScreen from './DropExperienceScreen';
 import PublicProfileScreen from './PublicProfileScreen';
+import ProfilePeekModal from '../components/ProfilePeekModal';
 
 type Drop = {
   id: string;
@@ -57,7 +58,7 @@ type FeedPostRow = {
   expires_at: string;
   drop_id: string | null;
   parent_drop_id: string | null;
-  profile: { username: string; avatar_url: string | null; is_private: boolean } | null;
+  profile: { username: string; avatar_url: string | null; is_private: boolean; region: string | null } | null;
 };
 
 export type Pulse = {
@@ -81,13 +82,14 @@ export type FeedPostFull = FeedPostRow & {
   reasons: string[];
 };
 
-type FeedMode = 'following' | 'foryou' | 'live' | 'expiring';
+type FeedMode = 'following' | 'foryou' | 'live' | 'expiring' | 'around';
 
 const MODES: { key: FeedMode; label: string }[] = [
   { key: 'following', label: 'Following' },
   { key: 'foryou', label: 'For You' },
   { key: 'live', label: 'Live' },
   { key: 'expiring', label: '⏳ Expiring' },
+  { key: 'around', label: '📍 Around You' },
 ];
 
 const PAGE_SIZE = 50;
@@ -125,6 +127,8 @@ export default function FeedScreen({
   const [hashtagMode, setHashtagMode] = useState<string | null>(initialHashtagMode);
   const [showDrop, setShowDrop] = useState(false);
   const [publicProfile, setPublicProfile] = useState<{ id: string; username: string } | null>(null);
+  const [peek, setPeek] = useState<{ id: string; username: string } | null>(null);
+  const [myRegion, setMyRegion] = useState<string | null>(null);
   const [storyUsers, setStoryUsers] = useState<StoryUser[]>([]);
   const myIdRef = useRef<string | null>(null);
   const watchRef = useRef<Map<string, { start: number; reported: boolean }>>(new Map());
@@ -252,9 +256,10 @@ export default function FeedScreen({
       following = new Set((f ?? []).map((x) => x.following_id));
     }
 
+    let aroundRegion: string | null = null;
     let query = supabase
       .from('posts')
-      .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private)')
+      .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region)')
       .order('created_at', { ascending: false })
       .limit(90);
     if (dropMode) query = query.eq('drop_id', dropMode);
@@ -286,11 +291,23 @@ export default function FeedScreen({
       const soon = new Date(Date.now() + 3 * H).toISOString();
       query = supabase
         .from('posts')
-        .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private)')
+        .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region)')
         .gte('expires_at', nowIso)
         .lte('expires_at', soon)
         .order('expires_at', { ascending: true })
         .limit(60);
+    } else if (mode === 'around') {
+      // broad region discovery — only the user-set region string, no location data
+      if (user) {
+        const { data: mep } = await supabase.from('profiles').select('region').eq('id', user.id).maybeSingle();
+        aroundRegion = (mep as any)?.region ?? null;
+      }
+      setMyRegion(aroundRegion);
+      if (!aroundRegion) {
+        setPosts([]);
+        setLoading(false);
+        return;
+      }
     }
 
     const { data, error } = await query;
@@ -302,6 +319,9 @@ export default function FeedScreen({
     let rows = ((data ?? []) as FeedPostRow[]).filter(
       (p) => !hidden.has(p.id) && !muted.has(p.user_id) && !blocked.has(p.user_id) && p.id !== user?.id
     );
+    if (mode === 'around' && aroundRegion) {
+      rows = rows.filter((p) => (p.profile?.region ?? '').toLowerCase() === aroundRegion.toLowerCase());
+    }
     const ids = rows.map((p) => p.id);
 
     // real velocity counters (privacy-safe views)
@@ -622,7 +642,7 @@ export default function FeedScreen({
       onSave={() => toggleSave(item)}
       onRepost={() => toggleRepost(item)}
       onOpenProfile={() =>
-        setPublicProfile({ id: item.user_id, username: item.profile?.username ?? 'unknown' })
+        setPeek({ id: item.user_id, username: item.profile?.username ?? 'unknown' })
       }
       onReact={(r) => toggleReaction(item, r)}
       onMenuAction={(a) => personalize(item, a)}
@@ -649,6 +669,14 @@ export default function FeedScreen({
     expiring: {
       title: 'No Drops ending soon',
       text: 'Everything on Gen Z is fresh — check back in a few hours.',
+    },
+    around: {
+      title: myRegion
+        ? 'No Drops from your region yet'
+        : 'Set your region to discover nearby Drops',
+      text: myRegion
+        ? 'Drops from people in your region appear here for 48 hours.'
+        : 'Edit your profile → Region (e.g. Nigeria) to unlock 📍 Around You. Only the region you choose is shown — never an exact location.',
     },
   }[mode];
 
@@ -909,6 +937,15 @@ export default function FeedScreen({
           onClose={() => setPublicProfile(null)}
         />
       )}
+
+      <ProfilePeekModal
+        user={peek}
+        onClose={() => setPeek(null)}
+        onOpenFull={(id, username) => {
+          setPeek(null);
+          setPublicProfile({ id, username });
+        }}
+      />
     </View>
   );
 }

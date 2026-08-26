@@ -25,6 +25,7 @@ type Profile = {
   bio: string | null;
   avatar_url: string | null;
   location: string | null;
+  region: string | null;
   pronouns: string | null;
   verified: boolean;
   streak_count: number;
@@ -76,7 +77,7 @@ export default function ProfileScreen() {
       await Promise.all([
         supabase
           .from('profiles')
-          .select('username, display_name, bio, avatar_url, location, pronouns, verified, streak_count, created_at, is_private')
+          .select('username, display_name, bio, avatar_url, location, region, pronouns, verified, streak_count, created_at, is_private')
           .eq('id', user.id)
           .maybeSingle(),
         supabase
@@ -315,6 +316,7 @@ function EditProfileModal({ visible, profile, onClose, onSaved }: any) {
   const [displayName, setDisplayName] = useState('');
   const [bio, setBio] = useState('');
   const [location, setLocation] = useState('');
+  const [region, setRegion] = useState('');
   const [pronouns, setPronouns] = useState('');
   const [localAvatar, setLocalAvatar] = useState<string | null | undefined>(undefined);
   const [avatarPicker, setAvatarPicker] = useState(false);
@@ -324,6 +326,7 @@ function EditProfileModal({ visible, profile, onClose, onSaved }: any) {
       setDisplayName(profile.display_name ?? '');
       setBio(profile.bio ?? '');
       setLocation(profile.location ?? '');
+      setRegion(profile.region ?? '');
       setPronouns(profile.pronouns ?? '');
       setLocalAvatar(undefined);
     }
@@ -340,6 +343,7 @@ function EditProfileModal({ visible, profile, onClose, onSaved }: any) {
         display_name: displayName.trim() || null,
         bio: bio.trim() || null,
         location: location.trim() || null,
+        region: region.trim() || null,
         pronouns: pronouns.trim() || null,
       })
       .eq('id', user.id);
@@ -363,6 +367,7 @@ function EditProfileModal({ visible, profile, onClose, onSaved }: any) {
           <TextInput style={styles.modalInput} placeholder="Display name" placeholderTextColor={colors.textFaint} value={displayName} onChangeText={setDisplayName} />
           <TextInput style={[styles.modalInput, styles.modalBio]} placeholder="Bio" placeholderTextColor={colors.textFaint} multiline value={bio} onChangeText={setBio} />
           <TextInput style={styles.modalInput} placeholder="Location (optional)" placeholderTextColor={colors.textFaint} value={location} onChangeText={setLocation} />
+          <TextInput style={styles.modalInput} placeholder="Region for discovery (e.g. Nigeria) — never exact" placeholderTextColor={colors.textFaint} value={region} onChangeText={setRegion} />
           <TextInput style={styles.modalInput} placeholder="Pronouns (e.g. he/him)" placeholderTextColor={colors.textFaint} value={pronouns} onChangeText={setPronouns} />
           <AvatarPickerModal
             visible={avatarPicker}

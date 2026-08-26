@@ -68,3 +68,7 @@ create or replace view public.comment_counts as
 drop policy if exists post_views_owner_update on public.post_views;
 create policy post_views_owner_update on public.post_views
   for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- ---- 7) Region pulse (privacy-safe): broad user-set region only, no
+-- coordinates, never auto-located. Optional field set in Edit Profile.
+alter table public.profiles add column if not exists region text;
