@@ -15,6 +15,7 @@ import { colors, radius, shadows } from '../theme';
 import { TOP_INSET } from '../utils/useInsets';
 import LogoHeader from '../components/LogoHeader';
 import Button from '../components/Button';
+import Icon, { IconName } from '../components/ui/Icon';
 import Avatar from '../components/Avatar';
 import AvatarPickerModal from '../components/AvatarPickerModal';
 import PostViewer from '../components/PostViewer';
@@ -234,7 +235,7 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
                 <View style={styles.achievements}>
                   {achievements.map((a) => (
                     <View key={a.label} style={styles.achievement}>
-                      <Text style={styles.achievementIcon}>{a.icon}</Text>
+                      <Icon name={a.icon} size={15} color={a.color} />
                       <Text style={styles.achievementLabel}>{a.label}</Text>
                     </View>
                   ))}
@@ -243,7 +244,10 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
 
               {activePosts.length > 0 && (
                 <View style={styles.dropsSection}>
-                  <Text style={styles.dropsTitle}>🔥 Active Drops</Text>
+                  <View style={styles.sectionTitleRow}>
+                    <Icon name="flame" size={16} color={colors.accent} />
+                    <Text style={styles.dropsTitle}>Active Drops</Text>
+                  </View>
                   <FlatList
                     data={activePosts}
                     horizontal
@@ -269,7 +273,10 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
                           </View>
                         )}
                         <View style={styles.dropInfo}>
-                          <Text style={styles.dropTime}>🔥 {hoursLeft(item.expires_at)}</Text>
+                          <View style={styles.statRow}>
+                            <Icon name="flame" size={12} color={colors.accent} />
+                            <Text style={styles.dropTime}>{hoursLeft(item.expires_at)}</Text>
+                          </View>
                           <View style={styles.progressTrack}>
                             <View style={[styles.progressFill, { width: `${progressOf(item.created_at, item.expires_at)}%` }]} />
                           </View>
@@ -304,17 +311,19 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
               )}
               {item.media_type === 'video' && (
                 <View style={styles.tileBadge}>
-                  <Text style={styles.tileBadgeText}>▶ {item.views_count}</Text>
+                  <Icon name="play" size={10} color={colors.logoWhite} />
+                  <Text style={styles.tileBadgeText}>{item.views_count}</Text>
                 </View>
               )}
               {!!item.drop_id && (
                 <View style={styles.tileDrop}>
-                  <Text style={styles.tileDropText}>📦</Text>
+                  <Icon name="cube" size={13} color={colors.accent} />
                 </View>
               )}
               {'profile' in item && item.profile && tab === 'reposts' && (
                 <View style={styles.tileRepost}>
-                  <Text style={styles.tileRepostText} numberOfLines={1}>↻ @{item.profile.username}</Text>
+                  <Icon name="repeat" size={11} color={colors.cyan} />
+                  <Text style={styles.tileRepostText} numberOfLines={1}>@{item.profile.username}</Text>
                 </View>
               )}
             </Pressable>
@@ -353,7 +362,8 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
                 setAvatarFull(true);
               }}
             >
-              <Text style={styles.avatarSheetItemText}>👤 Check profile pic</Text>
+              <Icon name="person-outline" size={19} color={colors.cyan} />
+              <Text style={styles.avatarSheetItemText}>Check profile pic</Text>
             </Pressable>
             <Pressable
               style={styles.avatarSheetItem}
@@ -362,7 +372,8 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
                 if (myId) onOpenDropsFeed?.(myId);
               }}
             >
-              <Text style={styles.avatarSheetItemText}>🔥 Check active drops</Text>
+              <Icon name="flame" size={18} color={colors.accent} />
+              <Text style={styles.avatarSheetItemText}>Check active drops</Text>
             </Pressable>
           </Pressable>
         </Pressable>
@@ -396,13 +407,13 @@ function progressOf(createdAt: string, expiresAt: string): number {
 
 function useAchievements(profile: Profile | null, posts: Post[], totalLikes: number) {
   if (!profile) return [];
-  const out: { icon: string; label: string }[] = [];
-  if (profile.streak_count >= 3) out.push({ icon: '🔥', label: `${profile.streak_count} Day Streak` });
-  if (posts.some((p) => p.media_type === 'video')) out.push({ icon: '🎥', label: 'Creator' });
+  const out: { icon: IconName; color: string; label: string }[] = [];
+  if (profile.streak_count >= 3) out.push({ icon: 'flame', color: colors.accent, label: `${profile.streak_count} Day Streak` });
+  if (posts.some((p) => p.media_type === 'video')) out.push({ icon: 'videocam', color: colors.cyan, label: 'Creator' });
   const comments = posts.reduce((s, p) => s + (p.comments_count ?? 0), 0);
-  if (comments >= 5) out.push({ icon: '💬', label: 'Conversation Starter' });
-  if (posts.some((p) => p.drop_id)) out.push({ icon: '🚀', label: 'First Drop' });
-  if (totalLikes >= 25) out.push({ icon: '🌟', label: 'Rising Creator' });
+  if (comments >= 5) out.push({ icon: 'chatbubbles', color: colors.violet, label: 'Conversation Starter' });
+  if (posts.some((p) => p.drop_id)) out.push({ icon: 'rocket', color: colors.accent, label: 'First Drop' });
+  if (totalLikes >= 25) out.push({ icon: 'star', color: colors.accent, label: 'Rising Creator' });
   return out;
 }
 
@@ -654,9 +665,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     margin: 3,
-  },
-  achievementIcon: {
-    fontSize: 12,
+    gap: 6,
   },
   achievementLabel: {
     color: colors.text,
@@ -668,12 +677,22 @@ const styles = StyleSheet.create({
     width: '100%',
     marginTop: 18,
   },
+  sectionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 8,
+  },
   dropsTitle: {
     color: colors.accent,
     fontSize: 13,
     fontWeight: '800',
     letterSpacing: 0.5,
-    marginBottom: 8,
+  },
+  statRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   dropCard: {
     width: 130,
@@ -734,6 +753,9 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   avatarSheetItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
     backgroundColor: colors.surfaceAlt,
     borderRadius: radius.md,
     paddingVertical: 14,
@@ -845,6 +867,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 6,
     left: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
     backgroundColor: colors.overlay,
     borderRadius: 6,
     paddingHorizontal: 6,
@@ -861,17 +886,17 @@ const styles = StyleSheet.create({
     right: 6,
     backgroundColor: colors.accentSoft,
     borderRadius: 6,
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-  },
-  tileDropText: {
-    fontSize: 11,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
   },
   tileRepost: {
     position: 'absolute',
     bottom: 6,
     left: 6,
     right: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     backgroundColor: colors.overlay,
     borderRadius: 6,
     paddingHorizontal: 6,

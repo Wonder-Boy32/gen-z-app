@@ -10,6 +10,7 @@
     "postinstall": "node scripts/ensure-rn-android.js"
   },
   "dependencies": {
+    "@expo/vector-icons": "^15.1.1",
     "@supabase/supabase-js": "2.109.0",
     "expo": "~57.0.16",
     "expo-audio": "~57.0.4",

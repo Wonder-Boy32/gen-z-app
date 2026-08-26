@@ -12,6 +12,7 @@ import {
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import Avatar from './Avatar';
+import Icon from './ui/Icon';
 import { fmtCount } from './FeedPost';
 
 type PeekProfile = {
@@ -37,10 +38,10 @@ const H = 3600 * 1000;
 
 function timeLeft(expiresAt: string): string {
   const ms = new Date(expiresAt).getTime() - Date.now();
-  if (ms <= 0) return '💨';
+  if (ms <= 0) return 'Expired';
   const h = Math.floor(ms / H);
-  if (h >= 24) return `🔥 ${h}h`;
-  return `🔥 ${h}h ${Math.floor((ms % H) / 60000)}m`;
+  if (h >= 24) return `${h}h`;
+  return `${h}h ${Math.floor((ms % H) / 60000)}m`;
 }
 
 export default function ProfilePeekModal({
@@ -142,7 +143,10 @@ export default function ProfilePeekModal({
 
               {posts.length > 0 && (
                 <>
-                  <Text style={styles.dropsTitle}>🔥 Active Drops</Text>
+                  <View style={styles.sectionTitleRow}>
+                    <Icon name="flame" size={15} color={colors.accent} />
+                    <Text style={styles.dropsTitle}>Active Drops</Text>
+                  </View>
                   <FlatList
                     data={posts}
                     horizontal
@@ -157,7 +161,10 @@ export default function ProfilePeekModal({
                             <Text style={styles.tileText} numberOfLines={3}>{item.content ?? ''}</Text>
                           </View>
                         )}
-                        <Text style={styles.tileTime}>{timeLeft(item.expires_at)}</Text>
+                        <View style={styles.tileTimeRow}>
+                          <Icon name="flame" size={10} color={colors.accent} />
+                          <Text style={styles.tileTime}>{timeLeft(item.expires_at)}</Text>
+                        </View>
                       </View>
                     )}
                   />
@@ -279,12 +286,17 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
+  sectionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 18,
+    marginBottom: 8,
+  },
   dropsTitle: {
     color: colors.text,
     fontSize: 13,
     fontWeight: '800',
-    marginTop: 18,
-    marginBottom: 8,
   },
   tile: {
     width: 84,
@@ -310,14 +322,19 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textAlign: 'center',
   },
-  tileTime: {
+  tileTimeRow: {
     position: 'absolute',
     bottom: 5,
     left: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
     backgroundColor: 'rgba(0,0,0,0.65)',
     borderRadius: 999,
     paddingHorizontal: 6,
     paddingVertical: 2,
+  },
+  tileTime: {
     color: colors.accent,
     fontSize: 9,
     fontWeight: '700',

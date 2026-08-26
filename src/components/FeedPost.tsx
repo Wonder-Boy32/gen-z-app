@@ -13,6 +13,7 @@ import {
 import DropVideoView, { DropEffects, DropSticker, DropTextLayer } from './DropVideoView';
 import { colors, shadows } from '../theme';
 import Avatar from './Avatar';
+import Icon, { IconName } from './ui/Icon';
 
 export type FeedPost = {
   id: string;
@@ -153,36 +154,53 @@ export default function FeedPost({
           { opacity: heartOpacity, transform: [{ scale: heartScale }] },
         ]}
       >
-        <Text style={styles.heartBurstIcon}>♥</Text>
+        <Icon name="heart" size={110} color={colors.accent} style={styles.heartBurstIcon} />
       </Animated.View>
 
       <View style={[styles.overlay, { top: contentTop, bottom: contentBottom }]} pointerEvents="box-none">
         <View style={styles.rail}>
           <Pressable onPress={() => setMenuOpen(true)} style={styles.railBtn} hitSlop={6}>
-            <Text style={styles.railIcon}>•••</Text>
+            <Icon name="ellipsis-horizontal" size={30} color={colors.logoWhite} style={styles.railIconShadow} />
           </Pressable>
           <Pressable onPress={onLike} style={styles.railBtn} hitSlop={6}>
-            <Text style={[styles.railIcon, post.liked_by_me && styles.railIconLiked]}>♥</Text>
+            <Icon
+              name={post.liked_by_me ? 'heart' : 'heart-outline'}
+              size={30}
+              color={post.liked_by_me ? colors.accent : colors.logoWhite}
+              style={styles.railIconShadow}
+            />
             <Text style={styles.railCount}>{fmtCount(post.likes_count)}</Text>
           </Pressable>
           <Pressable onPress={onComment} style={styles.railBtn} hitSlop={6}>
-            <Text style={styles.railIcon}>✎</Text>
+            <Icon name="chatbubble-ellipses-outline" size={27} color={colors.logoWhite} style={styles.railIconShadow} />
             <Text style={styles.railCount}>{fmtCount(post.comments_count)}</Text>
           </Pressable>
           <Pressable onPress={onSave} style={styles.railBtn} hitSlop={6}>
-            <Text style={[styles.railIcon, post.saved_by_me && styles.railIconLiked]}>⤓</Text>
+            <Icon
+              name={post.saved_by_me ? 'bookmark' : 'bookmark-outline'}
+              size={28}
+              color={post.saved_by_me ? colors.accent : colors.logoWhite}
+              style={styles.railIconShadow}
+            />
           </Pressable>
           <Pressable onPress={onRepost} style={styles.railBtn} hitSlop={6}>
-            <Text style={[styles.railIcon, post.reposted_by_me && styles.railIconLiked]}>↻</Text>
+            <Icon
+              name={post.reposted_by_me ? 'repeat' : 'repeat-outline'}
+              size={30}
+              color={post.reposted_by_me ? colors.accent : colors.logoWhite}
+              style={styles.railIconShadow}
+            />
           </Pressable>
           <Pressable onPress={onShare} style={styles.railBtn} hitSlop={6}>
-            <Text style={styles.railIcon}>↗</Text>
+            <Icon name="share-social-outline" size={27} color={colors.logoWhite} style={styles.railIconShadow} />
           </Pressable>
           {!!post.drop_id && (
             <Pressable onPress={cycleReaction} style={styles.railBtn} hitSlop={6}>
-              <Text style={[styles.reactionBadge, !!post.my_reaction && styles.reactionBadgeActive]}>
-                {post.my_reaction ?? '✧'}
-              </Text>
+              {post.my_reaction ? (
+                <Text style={[styles.reactionBadge, styles.reactionBadgeActive]}>{post.my_reaction}</Text>
+              ) : (
+                <Icon name="sparkles" size={26} color={colors.logoWhite} style={styles.railIconShadow} />
+              )}
               {post.reactions_count > 0 && (
                 <Text style={styles.railCount}>{fmtCount(post.reactions_count)}</Text>
               )}
@@ -231,20 +249,23 @@ export default function FeedPost({
 
           {!!post.audio && (
             <Pressable style={styles.audioChip} onPress={onOpenSound}>
-              <Text style={styles.audioText}>♪ {post.audio}</Text>
+              <Icon name="musical-note" size={13} color={colors.cyan} />
+              <Text style={styles.audioText}>{post.audio}</Text>
               <Text style={styles.audioCta}> ›</Text>
             </Pressable>
           )}
 
           {!!post.drop_id && (
             <View style={styles.dropChip}>
-              <Text style={styles.dropChipText}>📦 DROP</Text>
+              <Icon name="cube-outline" size={12} color={colors.accent} />
+              <Text style={styles.dropChipText}>DROP</Text>
             </View>
           )}
 
           {(post.responses_count ?? 0) > 0 && (
             <Pressable style={styles.chainChip} onPress={onOpenChain}>
-              <Text style={styles.chainChipText}>🔗 {post.responses_count} responses</Text>
+              <Icon name="link-outline" size={12} color={colors.violet} />
+              <Text style={styles.chainChipText}>{post.responses_count} responses</Text>
             </Pressable>
           )}
 
@@ -285,26 +306,35 @@ function TimeLeft({ expiresAt, onExpired }: { expiresAt: string; onExpired: () =
   const m = Math.floor((ms % 3600000) / 60000);
   const urgent = ms < 3 * 3600000;
   return (
-    <Text style={[styles.timeLeft, urgent && styles.timeLeftUrgent]}>
-      {urgent ? '⚡ ENDING SOON' : `🔥 ${h}h ${m}m left`}
-    </Text>
+    <View style={styles.timeRow}>
+      <Icon
+        name={urgent ? 'flash' : 'flame'}
+        size={14}
+        color={urgent ? colors.danger : colors.accent}
+        style={styles.railIconShadow}
+      />
+      <Text style={[styles.timeLeft, urgent && styles.timeLeftUrgent]}>
+        {urgent ? 'ENDING SOON' : `${h}h ${m}m left`}
+      </Text>
+    </View>
   );
 }
 
 // real Drop Pulse indicators — hidden when there is nothing meaningful
 function PulseRow({ pulse, comments }: { pulse?: FeedPost['pulse']; comments: number }) {
   if (!pulse) return null;
-  const chips: string[] = [];
-  if (pulse.views30 >= 5) chips.push(`👁 ${pulse.views30} watching`);
-  if (pulse.rising) chips.push('⚡ Rising fast');
-  if (pulse.trending) chips.push('🔥 Trending now');
-  if (comments >= 3) chips.push(`💬 ${comments} conversations`);
+  const chips: { icon: IconName; color: string; text: string }[] = [];
+  if (pulse.views30 >= 5) chips.push({ icon: 'eye-outline', color: colors.logoWhite, text: `${pulse.views30} watching` });
+  if (pulse.rising) chips.push({ icon: 'flash', color: colors.accent, text: 'Rising fast' });
+  if (pulse.trending) chips.push({ icon: 'flame', color: colors.accent, text: 'Trending now' });
+  if (comments >= 3) chips.push({ icon: 'chatbubble-ellipses-outline', color: colors.logoWhite, text: `${comments} conversations` });
   if (!chips.length) return null;
   return (
     <View style={styles.pulseRow}>
       {chips.map((c) => (
-        <View key={c} style={styles.pulseChip}>
-          <Text style={styles.pulseChipText}>{c}</Text>
+        <View key={c.text} style={styles.pulseChip}>
+          <Icon name={c.icon} size={11} color={c.color} />
+          <Text style={styles.pulseChipText}>{c.text}</Text>
         </View>
       ))}
     </View>
@@ -313,14 +343,14 @@ function PulseRow({ pulse, comments }: { pulse?: FeedPost['pulse']; comments: nu
 
 type MenuAction = 'hide' | 'mute' | 'block' | 'notinterested' | 'report' | 'replydrop' | 'why';
 
-const MENU_ITEMS: { key: MenuAction; label: string }[] = [
-  { key: 'why', label: '💡 Why am I seeing this?' },
-  { key: 'replydrop', label: '🎥 Reply with Drop' },
-  { key: 'notinterested', label: '🙅 Not interested' },
-  { key: 'hide', label: '🙈 Hide this Drop' },
-  { key: 'mute', label: '🔇 Mute creator' },
-  { key: 'block', label: '🚫 Block creator' },
-  { key: 'report', label: '⚠️ Report' },
+const MENU_ITEMS: { key: MenuAction; label: string; icon: IconName; iconColor: string }[] = [
+  { key: 'why', label: 'Why am I seeing this?', icon: 'bulb-outline', iconColor: colors.accent },
+  { key: 'replydrop', label: 'Reply with Drop', icon: 'videocam-outline', iconColor: colors.cyan },
+  { key: 'notinterested', label: 'Not interested', icon: 'hand-left-outline', iconColor: colors.textMuted },
+  { key: 'hide', label: 'Hide this Drop', icon: 'eye-off-outline', iconColor: colors.textMuted },
+  { key: 'mute', label: 'Mute creator', icon: 'volume-mute-outline', iconColor: colors.textMuted },
+  { key: 'block', label: 'Block creator', icon: 'ban-outline', iconColor: colors.danger },
+  { key: 'report', label: 'Report', icon: 'warning-outline', iconColor: colors.danger },
 ];
 
 function DropMenu({
@@ -373,6 +403,7 @@ function DropMenu({
                     else onAction(it.key);
                   }}
                 >
+                  <Icon name={it.icon} size={19} color={it.iconColor} />
                   <Text style={styles.menuItemText}>{it.label}</Text>
                 </Pressable>
               ))}
@@ -509,11 +540,14 @@ const styles = StyleSheet.create({
     zIndex: 20,
   },
   heartBurstIcon: {
-    fontSize: 110,
-    color: colors.accent,
     textShadowColor: 'rgba(0,0,0,0.4)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 8,
+  },
+  railIconShadow: {
+    textShadowColor: 'rgba(0,0,0,0.6)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
   overlay: {
     position: 'absolute',
@@ -539,9 +573,6 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0,0,0,0.6)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 4,
-  },
-  railIconLiked: {
-    color: colors.accent,
   },
   railCount: {
     color: colors.logoWhite,
@@ -649,6 +680,7 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 5,
     backgroundColor: colors.overlay,
     borderRadius: 999,
     paddingHorizontal: 10,
@@ -662,6 +694,9 @@ const styles = StyleSheet.create({
   },
   dropChip: {
     alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
     backgroundColor: colors.accentSoft,
     borderWidth: 1,
     borderColor: colors.accent,
@@ -684,6 +719,7 @@ const styles = StyleSheet.create({
     color: colors.accent,
     fontSize: 11,
     fontWeight: '800',
+    marginLeft: 4,
     textShadowColor: 'rgba(0,0,0,0.7)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 4,
@@ -698,6 +734,9 @@ const styles = StyleSheet.create({
   },
   chainChip: {
     alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
     backgroundColor: 'rgba(139,123,255,0.16)',
     borderWidth: 1,
     borderColor: colors.violet,
@@ -718,6 +757,9 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   pulseChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     backgroundColor: colors.overlay,
     borderRadius: 999,
     paddingHorizontal: 9,
@@ -747,6 +789,9 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
     paddingVertical: 13,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,

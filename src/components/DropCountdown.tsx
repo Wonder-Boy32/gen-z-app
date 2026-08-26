@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, StyleSheet, Text } from 'react-native';
+import { Animated, StyleSheet, Text, View } from 'react-native';
 import { colors } from '../theme';
+import Icon from './ui/Icon';
 
 type Props = {
   endsAt: string;
@@ -31,7 +32,7 @@ export default function DropCountdown({ endsAt, mode, big }: Props) {
 
   const ms = new Date(endsAt).getTime() - now;
   if (ms <= 0) {
-    return <Text style={[styles.closed, big && styles.closedBig]}>💨 DROP CLOSED</Text>;
+    return <Text style={[styles.closed, big && styles.closedBig]}>DROP CLOSED</Text>;
   }
 
   const totalMins = Math.floor(ms / 60000);
@@ -40,11 +41,18 @@ export default function DropCountdown({ endsAt, mode, big }: Props) {
   const m = totalMins % 60;
   const urgent = totalMins < 10;
 
-  const text = totalMins < 60 ? `🔥 LAST ${totalMins} MIN` : `⏳ ${h}H ${m}M LEFT`;
+  const text = totalMins < 60 ? `LAST ${totalMins} MIN` : `${h}H ${m}M LEFT`;
 
   return (
     <Animated.View style={{ transform: [{ scale: pulse }], alignItems: 'center' }}>
-      <Text style={[styles.text, big && styles.textBig, urgent && styles.textUrgent]}>{text}</Text>
+      <View style={styles.row}>
+        <Icon
+          name={urgent ? 'flash' : totalMins < 60 ? 'flame' : 'hourglass-outline'}
+          size={big ? 22 : 14}
+          color={urgent ? colors.danger : colors.accent}
+        />
+        <Text style={[styles.text, big && styles.textBig, urgent && styles.textUrgent]}>{text}</Text>
+      </View>
       {urgent && (
         <Text style={[styles.seconds, big && styles.secondsBig]}>
           {String(totalMins).padStart(2, '0')}:{String(secs).padStart(2, '0')}
@@ -55,6 +63,7 @@ export default function DropCountdown({ endsAt, mode, big }: Props) {
 }
 
 const styles = StyleSheet.create({
+  row: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   text: {
     color: colors.accent,
     fontSize: 14,

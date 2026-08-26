@@ -13,6 +13,7 @@ import { VideoView, useVideoPlayer } from 'expo-video';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import LogoHeader from '../components/LogoHeader';
+import Icon from '../components/ui/Icon';
 import Countdown from '../components/Countdown';
 import Button from '../components/Button';
 import { uploadMedia } from '../utils/upload';
@@ -141,9 +142,12 @@ export default function UploadStoryScreen({ onPosted }: { onPosted: () => void }
 
       {liveDrop && (
         <Pressable style={styles.dropToggle} onPress={() => setPostToDrop((v) => !v)}>
-          <Text style={styles.dropToggleTitle}>
-            {postToDrop ? '📦 Posting to the LIVE drop' : 'Post to the live drop'}
-          </Text>
+          <View style={styles.dropToggleTitleRow}>
+            <Icon name="cube-outline" size={15} color={colors.accent} />
+            <Text style={styles.dropToggleTitle}>
+              {postToDrop ? 'Posting to the LIVE drop' : 'Post to the live drop'}
+            </Text>
+          </View>
           <Text style={styles.dropTogglePrompt} numberOfLines={2}>
             “{liveDrop.prompt}”
           </Text>
@@ -217,7 +221,7 @@ export default function UploadStoryScreen({ onPosted }: { onPosted: () => void }
 
       <TextInput
         style={styles.input}
-        placeholder="Audio / song name (optional) — ♪"
+        placeholder="Audio / song name (optional)"
         placeholderTextColor={colors.textFaint}
         value={audio}
         onChangeText={setAudio}
@@ -266,6 +270,11 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     padding: 12,
     marginBottom: 16,
+  },
+  dropToggleTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   dropToggleTitle: {
     color: colors.accent,

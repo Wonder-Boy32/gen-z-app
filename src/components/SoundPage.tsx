@@ -12,6 +12,7 @@ import {
 import { useInsets } from '../utils/useInsets';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
+import Icon from './ui/Icon';
 import { fmtCount } from './FeedPost';
 
 type SoundRow = {
@@ -80,7 +81,8 @@ export default function SoundPage({
         </View>
       )}
       <View style={styles.thumbBadge}>
-        <Text style={styles.thumbBadgeText}>♥ {fmtCount(p.likes_count)}</Text>
+        <Icon name="heart" size={10} color={colors.danger} />
+        <Text style={styles.thumbBadgeText}>{fmtCount(p.likes_count)}</Text>
       </View>
     </View>
   );
@@ -94,7 +96,10 @@ export default function SoundPage({
             <Pressable onPress={onClose} hitSlop={8}>
               <Text style={styles.close}>✕</Text>
             </Pressable>
-            <Text style={styles.title}>♪ Sound</Text>
+            <View style={styles.titleRow}>
+              <Icon name="musical-note" size={16} color={colors.cyan} />
+              <Text style={styles.title}>Sound</Text>
+            </View>
             <View style={{ width: 20 }} />
           </View>
           {loading ? (
@@ -111,7 +116,10 @@ export default function SoundPage({
 
               {trending.length > 0 && (
                 <>
-                  <Text style={styles.sectionTitle}>🔥 Trending with this sound</Text>
+                  <View style={styles.sectionTitleRow}>
+                    <Icon name="flame" size={15} color={colors.accent} />
+                    <Text style={styles.sectionTitle}>Trending with this sound</Text>
+                  </View>
                   <FlatList
                     data={trending}
                     horizontal
@@ -212,6 +220,8 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  sectionTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
   sectionTitle: {
     color: colors.text,
     fontSize: 14,
@@ -247,6 +257,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 6,
     left: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
     backgroundColor: 'rgba(0,0,0,0.6)',
     borderRadius: 999,
     paddingHorizontal: 8,

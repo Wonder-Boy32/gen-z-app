@@ -2,15 +2,16 @@ import React, { useEffect, useRef } from 'react';
 import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useInsets } from '../utils/useInsets';
 import { colors } from '../theme';
+import Icon, { IconName } from './ui/Icon';
 
 export type Tab = 'feed' | 'discover' | 'post' | 'chat' | 'profile';
 
-const ITEMS: { key: Tab; label: string; glyph: string }[] = [
-  { key: 'feed', label: 'Feed', glyph: '▶' },
-  { key: 'discover', label: 'Discover', glyph: '✦' },
-  { key: 'post', label: '', glyph: '✚' },
-  { key: 'chat', label: 'Chat', glyph: '✉' },
-  { key: 'profile', label: 'Me', glyph: '◉' },
+const ITEMS: { key: Tab; label: string; icon: IconName; iconActive: IconName }[] = [
+  { key: 'feed', label: 'Feed', icon: 'play-outline', iconActive: 'play' },
+  { key: 'discover', label: 'Discover', icon: 'compass-outline', iconActive: 'compass' },
+  { key: 'post', label: '', icon: 'add-circle-outline', iconActive: 'add-circle' },
+  { key: 'chat', label: 'Chat', icon: 'chatbubble-ellipses-outline', iconActive: 'chatbubble-ellipses' },
+  { key: 'profile', label: 'Me', icon: 'person-outline', iconActive: 'person' },
 ];
 
 export default function TabBar({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
@@ -37,7 +38,11 @@ export default function TabBar({ tab, onChange }: { tab: Tab; onChange: (t: Tab)
             style={styles.item}
             onPress={() => onChange(item.key)}
           >
-            <Text style={[styles.glyph, active && styles.glyphActive]}>{item.glyph}</Text>
+            <Icon
+              name={active ? item.iconActive : item.icon}
+              size={22}
+              color={active ? colors.accent : colors.textFaint}
+            />
             {item.label !== '' && (
               <Text style={[styles.label, active && styles.labelActive]}>{item.label}</Text>
             )}

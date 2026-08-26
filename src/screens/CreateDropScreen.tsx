@@ -20,6 +20,7 @@ import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import { TOP_INSET } from '../utils/useInsets';
 import LogoHeader from '../components/LogoHeader';
+import Icon, { IconName } from '../components/ui/Icon';
 import Button from '../components/Button';
 import Draggable from '../components/create/Draggable';
 import MediaPickerSheet from '../components/create/MediaPickerSheet';
@@ -34,7 +35,7 @@ import { extractVideoCover, hasNativeFFmpeg, processDropVideo } from '../utils/v
 
 // ============================================================
 // GEN Z — ADVANCED UPLOAD / CREATE
-// CREATE → SELECT MEDIA → EDIT → PREVIEW → PUBLISH → 🔥 DROP IT
+// CREATE → SELECT MEDIA → EDIT → PREVIEW → PUBLISH → DROP IT
 // One posts row. expires_at = created_at + 48h (DB default, immutable).
 // Drafts live in `drafts` and NEVER start the 48h timer.
 // ============================================================
@@ -80,18 +81,18 @@ type EditorOverlay =
   | 'rotate'
   | null;
 
-const TOOLS: { id: EditorOverlay; icon: string; label: string }[] = [
-  { id: 'trim', icon: '✂️', label: 'Trim' },
-  { id: 'cover', icon: '🎞', label: 'Cover' },
-  { id: 'sound', icon: '🎵', label: 'Sound' },
-  { id: 'effects', icon: '✨', label: 'Effects' },
-  { id: 'text', icon: 'Aa', label: 'Text' },
-  { id: 'stickers', icon: '🏷', label: 'Stickers' },
-  { id: 'filters', icon: '🎨', label: 'Filters' },
-  { id: 'voiceover', icon: '🎙', label: 'Voiceover' },
-  { id: 'speed', icon: '⚡', label: 'Speed' },
-  { id: 'crop', icon: '⛶', label: 'Crop' },
-  { id: 'rotate', icon: '🔄', label: 'Rotate' },
+const TOOLS: { id: EditorOverlay; icon: IconName; color: string; label: string }[] = [
+  { id: 'trim', icon: 'cut-outline', color: '#FFFFFF', label: 'Trim' },
+  { id: 'cover', icon: 'film-outline', color: '#FFFFFF', label: 'Cover' },
+  { id: 'sound', icon: 'musical-note', color: '#4DD8FF', label: 'Sound' },
+  { id: 'effects', icon: 'sparkles', color: '#8B7BFF', label: 'Effects' },
+  { id: 'text', icon: 'text', color: '#FFFFFF', label: 'Text' },
+  { id: 'stickers', icon: 'pricetag', color: '#FF7A00', label: 'Stickers' },
+  { id: 'filters', icon: 'color-palette', color: '#FF7A00', label: 'Filters' },
+  { id: 'voiceover', icon: 'mic', color: '#4DD8FF', label: 'Voiceover' },
+  { id: 'speed', icon: 'flash', color: '#FF7A00', label: 'Speed' },
+  { id: 'crop', icon: 'scan', color: '#FFFFFF', label: 'Crop' },
+  { id: 'rotate', icon: 'sync', color: '#4DD8FF', label: 'Rotate' },
 ];
 
 export default function CreateDropScreen({
@@ -616,9 +617,12 @@ export default function CreateDropScreen({
                   style={[styles.segmentBtn, mode === m && styles.segmentBtnActive]}
                   onPress={() => setMode(m)}
                 >
-                  <Text style={[styles.segmentText, mode === m && styles.segmentTextActive]}>
-                    {m === 'media' ? '📹 Media' : '✍️ Text'}
-                  </Text>
+                  <View style={styles.statRow}>
+                    <Icon name={m === 'media' ? 'videocam-outline' : 'create-outline'} size={15} color={mode === m ? colors.accent : colors.textMuted} />
+                    <Text style={[styles.segmentText, mode === m && styles.segmentTextActive]}>
+                      {m === 'media' ? 'Media' : 'Text'}
+                    </Text>
+                  </View>
                 </Pressable>
               ))}
             </View>
@@ -749,12 +753,14 @@ export default function CreateDropScreen({
             ))}
             {trimActive && (
               <View pointerEvents="none" style={styles.trimBadge}>
-                <Text style={styles.trimBadgeText}>✂️ {fmtTime(trimStart)} – {fmtTime(trimEnd)}</Text>
+                <Icon name="cut-outline" size={12} color={colors.accent} />
+                <Text style={styles.trimBadgeText}>{fmtTime(trimStart)} – {fmtTime(trimEnd)}</Text>
               </View>
             )}
             {sound && (
               <View pointerEvents="none" style={styles.soundBadge}>
-                <Text style={styles.soundBadgeText}>♪ {sound.name}</Text>
+                <Icon name="musical-note" size={11} color={colors.cyan} />
+                <Text style={styles.soundBadgeText}>{sound.name}</Text>
               </View>
             )}
           </View>
@@ -770,7 +776,7 @@ export default function CreateDropScreen({
                   if (t.id === 'trim') setTrimActive(true);
                 }}
               >
-                <Text style={styles.toolIcon}>{t.icon}</Text>
+                <Icon name={t.icon as IconName} size={18} color={t.color} />
                 <Text style={[styles.toolLabel, overlay === t.id && styles.toolLabelActive]}>{t.label}</Text>
               </Pressable>
             ))}
@@ -805,11 +811,14 @@ export default function CreateDropScreen({
               <View style={styles.panelRow}>
                 {sound ? (
                   <>
-                    <Text style={styles.panelVal}>♪ {sound.name} · {sound.artist ?? 'GEN Z'}</Text>
+                    <View style={styles.statRow}>
+                      <Icon name="musical-note" size={13} color={colors.cyan} />
+                      <Text style={styles.panelVal}>{sound.name} · {sound.artist ?? 'GEN Z'}</Text>
+                    </View>
                     <Pressable style={styles.resetBtn} onPress={() => setSound(null)}><Text style={styles.resetText}>✕ Remove</Text></Pressable>
                   </>
                 ) : (
-                  <Button variant="secondary" title="🎵 Browse sounds" onPress={() => setSoundOpen(true)} />
+                  <Button variant="secondary" title="Browse sounds" onPress={() => setSoundOpen(true)} />
                 )}
               </View>
             )}
@@ -829,7 +838,7 @@ export default function CreateDropScreen({
             )}
             {overlay === 'stickers' && (
               <View style={styles.panelRow}>
-                <Button variant="secondary" title="🏷 Add sticker" onPress={() => setStickerOpen(true)} />
+                <Button variant="secondary" title="Add sticker" onPress={() => setStickerOpen(true)} />
               </View>
             )}
             {overlay === 'filters' && <FilterCarousel value={filter} onChange={setFilter} />}
@@ -861,7 +870,7 @@ export default function CreateDropScreen({
                     />
                     <Button
                       variant="secondary"
-                      title={coverBusy ? 'Generating…' : '⚡ Auto (first frame)'}
+                      title={coverBusy ? 'Generating…' : 'Auto (first frame)'}
                       disabled={coverBusy}
                       onPress={async () => {
                         setCoverBusy(true);
@@ -877,7 +886,7 @@ export default function CreateDropScreen({
                 )}
                 {!coverUri && (
                   <Text style={styles.panelHint}>
-                    No cover chosen? We auto-capture the first frame at publish — or use ⚡ Auto now.
+                    No cover chosen? We auto-capture the first frame at publish — or use Auto now.
                   </Text>
                 )}
               </View>
@@ -1012,7 +1021,10 @@ export default function CreateDropScreen({
 
             {liveDrop && (
               <Pressable style={[styles.dropToggle, postToDrop && styles.dropToggleOn]} onPress={() => setPostToDrop((v) => !v)}>
-                <Text style={styles.dropToggleTitle}>{postToDrop ? '📦 Posting to the LIVE drop' : '📦 Post to the live drop'}</Text>
+                <View style={styles.statRow}>
+                  <Icon name="cube-outline" size={15} color={colors.accent} />
+                  <Text style={styles.dropToggleTitle}>{postToDrop ? 'Posting to the LIVE drop' : 'Post to the live drop'}</Text>
+                </View>
                 <Text style={styles.dropTogglePrompt} numberOfLines={2}>“{liveDrop.prompt}”</Text>
               </Pressable>
             )}
@@ -1042,7 +1054,7 @@ export default function CreateDropScreen({
 
             {/* 48h confirmation */}
             <View style={styles.fortyEight}>
-              <Text style={styles.fortyEightIcon}>⏳</Text>
+              <Icon name="hourglass-outline" size={26} color={colors.accent} />
               <View style={styles.fortyEightBody}>
                 <Text style={styles.fortyEightTitle}>This Drop disappears in 48 hours</Text>
                 <Text style={styles.fortyEightSub}>
@@ -1057,7 +1069,10 @@ export default function CreateDropScreen({
               {uploading ? (
                 <ActivityIndicator color={colors.bg} />
               ) : (
-                <Text style={styles.dropBtnText}>🔥 DROP IT</Text>
+                <View style={styles.statRow}>
+                  <Icon name="flame" size={20} color={colors.bg} />
+                  <Text style={styles.dropBtnText}>DROP IT</Text>
+                </View>
               )}
             </Pressable>
             <Text style={styles.footer48}>Gone in 48 hours. Make it count.</Text>
@@ -1067,7 +1082,9 @@ export default function CreateDropScreen({
 
       {step === 'live' && (
         <View style={styles.liveWrap}>
-          <Animated.Text style={[styles.liveFlame, { transform: [{ scale: livePulse }] }]}>🔥</Animated.Text>
+          <Animated.View style={[styles.liveFlame, { transform: [{ scale: livePulse }] }]}>
+            <Icon name="flame" size={84} color={colors.accent} />
+          </Animated.View>
           <Text style={styles.liveTitle}>DROP LIVE</Text>
           <Text style={styles.liveSub}>Your drop is live for 48 hours.</Text>
           <Text style={styles.liveSub2}>Gone in 48 hours. Make it count.</Text>
@@ -1108,7 +1125,7 @@ export default function CreateDropScreen({
         <View style={styles.exitOverlay}>
           <View style={styles.exitSheet}>
             <Text style={styles.exitTitle}>Save as draft?</Text>
-            <Text style={styles.exitSub}>Drafts never start the 48-hour timer. Your drop only goes live when you hit 🔥 DROP IT.</Text>
+            <Text style={styles.exitSub}>Drafts never start the 48-hour timer. Your drop only goes live when you hit DROP IT.</Text>
             <Button title="💾 Save draft" onPress={saveDraft} style={{ marginTop: 16 }} />
             <Button variant="secondary" title="🗑 Discard" onPress={discardDraft} style={{ marginTop: 10 }} />
             <Pressable style={styles.exitCancel} onPress={() => setExitAsk(false)}>
@@ -1346,6 +1363,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 12,
     left: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
     backgroundColor: 'rgba(0,0,0,0.65)',
     borderRadius: radius.pill,
     paddingHorizontal: 10,
@@ -1356,6 +1376,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 12,
     left: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
     backgroundColor: 'rgba(0,0,0,0.65)',
     borderRadius: radius.pill,
     paddingHorizontal: 10,
@@ -1450,8 +1473,9 @@ const styles = StyleSheet.create({
   },
   dropBtnDisabled: { opacity: 0.6 },
   dropBtnText: { color: colors.bg, fontSize: 18, fontWeight: '900', letterSpacing: 0.5, lineHeight: 24 },
+  statRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   liveWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bgDeep, padding: 24 },
-  liveFlame: { fontSize: 84 },
+  liveFlame: { padding: 8 },
   liveTitle: { color: colors.accent, fontSize: 34, fontWeight: '900', letterSpacing: 2, marginTop: 10, ...shadows.glow },
   liveSub: { color: colors.text, fontSize: 15, fontWeight: '600', marginTop: 10 },
   liveSub2: { color: colors.textMuted, fontSize: 13, marginTop: 4 },

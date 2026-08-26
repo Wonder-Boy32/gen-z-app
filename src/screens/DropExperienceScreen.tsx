@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import DropVideoView from '../components/DropVideoView';
+import Icon from '../components/ui/Icon';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import { TOP_INSET } from '../utils/useInsets';
@@ -241,7 +242,8 @@ export default function DropExperienceScreen({ drop, onClose, onViewAll, onJoin 
                       <TileMedia sub={item} />
                       {item.likes_count > 0 && (
                         <View style={styles.tileCount}>
-                          <Text style={styles.tileCountText}>♥ {fmtCount(item.likes_count)}</Text>
+                          <Icon name="heart" size={10} color={colors.danger} />
+                          <Text style={styles.tileCountText}>{fmtCount(item.likes_count)}</Text>
                         </View>
                       )}
                     </Pressable>
@@ -377,22 +379,33 @@ function DetailModal({
             <View style={styles.detailInfo}>
               <Text style={styles.detailUser}>@{sub.profile?.username ?? 'unknown'}</Text>
               {!!sub.caption && <Text style={styles.detailCaption}>{sub.caption}</Text>}
-              {!!sub.audio && <Text style={styles.detailAudio}>♪ {sub.audio}</Text>}
+              {!!sub.audio && (
+                <View style={styles.detailAudioRow}>
+                  <Icon name="musical-note" size={12} color={colors.cyan} />
+                  <Text style={styles.detailAudio}>{sub.audio}</Text>
+                </View>
+              )}
               <View style={styles.detailActions}>
                 <Pressable style={styles.detailAction} onPress={onLike} hitSlop={8}>
-                  <Text style={[styles.detailActionIcon, sub.liked_by_me && styles.detailActionActive]}>♥</Text>
+                  <Icon
+                    name={sub.liked_by_me ? 'heart' : 'heart-outline'}
+                    size={22}
+                    color={sub.liked_by_me ? colors.danger : colors.logoWhite}
+                  />
                   <Text style={styles.detailActionLabel}>{fmtCount(sub.likes_count)}</Text>
                 </Pressable>
                 <Pressable style={styles.detailAction} onPress={onReact} hitSlop={8}>
-                  <Text style={[styles.detailActionIcon, !!sub.my_reaction && styles.detailActionActive]}>
-                    {sub.my_reaction ?? '✧'}
-                  </Text>
+                  {sub.my_reaction ? (
+                    <Text style={[styles.detailActionIcon, styles.detailActionActive]}>{sub.my_reaction}</Text>
+                  ) : (
+                    <Icon name="sparkles" size={21} color={colors.logoWhite} />
+                  )}
                   {sub.reactions_count > 0 && (
                     <Text style={styles.detailActionLabel}>{fmtCount(sub.reactions_count)}</Text>
                   )}
                 </Pressable>
                 <Pressable style={styles.detailAction} onPress={onComment} hitSlop={8}>
-                  <Text style={styles.detailActionIcon}>✎</Text>
+                  <Icon name="chatbubble-ellipses-outline" size={21} color={colors.logoWhite} />
                   <Text style={styles.detailActionLabel}>{fmtCount(sub.comments_count)}</Text>
                 </Pressable>
                 <Text style={styles.detailViews}>{fmtCount(sub.views_count)} views</Text>
@@ -580,6 +593,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 5,
     left: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
     backgroundColor: colors.overlay,
     borderRadius: 6,
     paddingHorizontal: 6,
@@ -679,10 +695,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 4,
   },
+  detailAudioRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
   detailAudio: {
     color: colors.cyan,
     fontSize: 13,
-    marginTop: 4,
   },
   detailActions: {
     flexDirection: 'row',

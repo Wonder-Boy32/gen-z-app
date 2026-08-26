@@ -13,6 +13,7 @@ import { useInsets } from '../utils/useInsets';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import Avatar from './Avatar';
+import Icon from './ui/Icon';
 import { fmtCount } from './FeedPost';
 
 export type ChainPost = {
@@ -34,10 +35,10 @@ const H = 3600 * 1000;
 
 function timeLeft(expiresAt: string): string {
   const ms = new Date(expiresAt).getTime() - Date.now();
-  if (ms <= 0) return '💨 Expired';
+  if (ms <= 0) return 'Expired';
   const h = Math.floor(ms / H);
   const m = Math.floor((ms % H) / 60000);
-  return `🔥 ${h}h ${m}m left`;
+  return `${h}h ${m}m left`;
 }
 
 export default function ChainModal({
@@ -77,7 +78,10 @@ export default function ChainModal({
         <View style={[styles.sheet, { paddingBottom: 20 + insets.bottom }]}>
           <View style={styles.handle} />
           <View style={styles.headerRow}>
-            <Text style={styles.title}>🔗 Drop Chain</Text>
+            <View style={styles.titleRow}>
+              <Icon name="link" size={18} color={colors.violet} />
+              <Text style={styles.title}>Drop Chain</Text>
+            </View>
             <Pressable onPress={onClose} hitSlop={8}>
               <Text style={styles.close}>✕</Text>
             </Pressable>
@@ -103,7 +107,8 @@ export default function ChainModal({
                     </View>
                     {!item.isRoot && (
                       <View style={styles.responseBadge}>
-                        <Text style={styles.responseBadgeText}>↻ response</Text>
+                        <Icon name="repeat" size={11} color={colors.cyan} />
+                        <Text style={styles.responseBadgeText}>response</Text>
                       </View>
                     )}
                   </View>
@@ -117,9 +122,20 @@ export default function ChainModal({
                     </View>
                   )}
                   <View style={styles.cardMeta}>
-                    <Text style={styles.metaText}>♥ {fmtCount(item.likes_count)}</Text>
-                    <Text style={styles.metaText}>💬 {fmtCount(item.comments_count)}</Text>
-                    {!!item.audio && <Text style={styles.metaText} numberOfLines={1}>♪ {item.audio}</Text>}
+                    <View style={styles.metaRow}>
+                      <Icon name="heart" size={12} color={colors.danger} />
+                      <Text style={styles.metaText}>{fmtCount(item.likes_count)}</Text>
+                    </View>
+                    <View style={styles.metaRow}>
+                      <Icon name="chatbubble-ellipses-outline" size={12} color={colors.textMuted} />
+                      <Text style={styles.metaText}>{fmtCount(item.comments_count)}</Text>
+                    </View>
+                    {!!item.audio && (
+                      <View style={styles.metaRow}>
+                        <Icon name="musical-note" size={12} color={colors.cyan} />
+                        <Text style={styles.metaText} numberOfLines={1}>{item.audio}</Text>
+                      </View>
+                    )}
                   </View>
                 </View>
               )}
@@ -166,6 +182,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   title: {
     color: colors.text,
     fontSize: 17,
@@ -220,6 +237,9 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   responseBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     backgroundColor: 'rgba(139,123,255,0.16)',
     borderRadius: 999,
     paddingHorizontal: 8,
@@ -251,9 +271,11 @@ const styles = StyleSheet.create({
   },
   cardMeta: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 14,
     marginTop: 8,
   },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   metaText: {
     color: colors.textMuted,
     fontSize: 12,

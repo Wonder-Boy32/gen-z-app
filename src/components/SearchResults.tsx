@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import DropVideoView from './DropVideoView';
+import Icon from './ui/Icon';
 import { supabase } from '../supabase/client';
 import { colors, radius } from '../theme';
 import DropExperienceScreen from '../screens/DropExperienceScreen';
@@ -234,9 +235,10 @@ export default function SearchResults({ query, onPickQuery, onOpenUser, onOpenAu
             <View style={styles.chipWrap}>
               {trending.map((t, i) => (
                 <Pressable key={t.query} style={styles.chip} onPress={() => pick(t.query)}>
-                  <Text style={styles.chipText}>
-                    {i === 0 ? '🔥' : i === 1 ? '🔥' : '·'} {t.query}
-                  </Text>
+                  <View style={styles.statRow}>
+                    {i < 2 && <Icon name="flame" size={12} color={colors.accent} />}
+                    <Text style={styles.chipText}>{t.query}</Text>
+                  </View>
                 </Pressable>
               ))}
             </View>
@@ -326,7 +328,10 @@ export default function SearchResults({ query, onPickQuery, onOpenUser, onOpenAu
                     <Text style={[styles.tileText, p.text_color ? { color: p.text_color } : null]} numberOfLines={3}>{p.content}</Text>
                   </View>
                 )}
-                <Text style={styles.tileLikes}>♥ {fmtCount(p.likes_count)}</Text>
+                <View style={styles.statRow}>
+                  <Icon name="heart" size={11} color={colors.accent} />
+                  <Text style={styles.tileLikes}>{fmtCount(p.likes_count)}</Text>
+                </View>
               </Pressable>
             ))}
           </View>
@@ -367,7 +372,10 @@ export default function SearchResults({ query, onPickQuery, onOpenUser, onOpenAu
                   onOpenAudio(s.audio);
                 }}
               >
-                <Text style={styles.chipText}>♪ {s.audio}</Text>
+                <View style={styles.statRow}>
+                  <Icon name="musical-note" size={12} color={colors.cyan} />
+                  <Text style={styles.chipText}>{s.audio}</Text>
+                </View>
                 <Text style={styles.chipCount}>{s.count}</Text>
               </Pressable>
             ))}
@@ -476,9 +484,18 @@ function PostModal({ post, onClose }: { post: P | null; onClose: () => void }) {
               <Text style={styles.infoUser}>@{post.profile?.username ?? 'unknown'}</Text>
               {!!post.caption && <Text style={styles.infoCaption}>{post.caption}</Text>}
               <View style={styles.stats}>
-                <Text style={styles.stat}>♥ {fmtCount(post.likes_count)}</Text>
-                <Text style={styles.stat}>✎ {fmtCount(post.comments_count)}</Text>
-                <Text style={styles.stat}>👁 {fmtCount(post.views_count)}</Text>
+                <View style={styles.statRow}>
+                  <Icon name="heart" size={13} color={colors.logoWhite} />
+                  <Text style={styles.stat}>{fmtCount(post.likes_count)}</Text>
+                </View>
+                <View style={styles.statRow}>
+                  <Icon name="chatbubble-ellipses-outline" size={13} color={colors.logoWhite} />
+                  <Text style={styles.stat}>{fmtCount(post.comments_count)}</Text>
+                </View>
+                <View style={styles.statRow}>
+                  <Icon name="eye-outline" size={14} color={colors.logoWhite} />
+                  <Text style={styles.stat}>{fmtCount(post.views_count)}</Text>
+                </View>
               </View>
             </View>
           </>
@@ -718,10 +735,15 @@ const styles = StyleSheet.create({
   stats: {
     flexDirection: 'row',
     marginTop: 12,
+    gap: 18,
   },
   stat: {
     color: colors.textMuted,
     fontSize: 13,
-    marginRight: 18,
+  },
+  statRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
 });

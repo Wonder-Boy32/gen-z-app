@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, Text } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { colors } from '../theme';
+import Icon from './ui/Icon';
 
 type Props = {
   expiresAt: string;
@@ -17,18 +18,33 @@ export default function Countdown({ expiresAt, style }: Props) {
 
   const ms = new Date(expiresAt).getTime() - now;
   if (ms <= 0) {
-    return <Text style={[styles.gone, style]}>💨 Gone</Text>;
+    return <Text style={[styles.gone, style]}>Gone</Text>;
   }
   const mins = Math.floor(ms / 60000);
   if (mins < 60) {
-    return <Text style={[styles.urgent, style]}>🔥 LAST {mins} MIN</Text>;
+    return (
+      <View style={[styles.row, style]}>
+        <Icon name="flame" size={12} color={colors.accent} />
+        <Text style={styles.urgent}>LAST {mins} MIN</Text>
+      </View>
+    );
   }
   const h = Math.floor(mins / 60);
   const m = mins % 60;
-  return <Text style={[styles.normal, style]}>⏳ {h}h {m}m left</Text>;
+  return (
+    <View style={[styles.row, style]}>
+      <Icon name="hourglass-outline" size={12} color={colors.textMuted} />
+      <Text style={styles.normal}>{h}h {m}m left</Text>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
   normal: {
     color: colors.textMuted,
     fontSize: 12,

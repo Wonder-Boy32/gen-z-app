@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
+import Icon from '../components/ui/Icon';
 import Button from '../components/Button';
 
 type Mode = 'login' | 'signup';
@@ -125,7 +126,11 @@ export default function AuthScreen() {
                 hitSlop={10}
                 accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
               >
-                <Text style={[styles.eyeIcon, showPassword && styles.eyeIconActive]}>👁</Text>
+                <Icon
+                  name={showPassword ? 'eye-outline' : 'eye-off-outline'}
+                  size={20}
+                  color={showPassword ? colors.accent : colors.textMuted}
+                />
               </Pressable>
             </View>
 

@@ -12,6 +12,7 @@ import {
 import { supabase } from '../supabase/client';
 import { colors, radius } from '../theme';
 import Avatar from './Avatar';
+import Icon, { IconName } from './ui/Icon';
 
 type P = { id: string; username: string; avatar_url: string | null; last_seen_at: string | null };
 
@@ -148,16 +149,19 @@ export default function NewChatModal({ visible, onClose, onOpen }: Props) {
           ) : (
             <FlatList
               data={[
-                ...(online.length ? [{ key: '🟢 Online now', items: online }] : []),
-                ...(recent.length ? [{ key: '🕒 Recently active', items: recent }] : []),
-                ...(suggested.length ? [{ key: '✨ Suggested for you', items: suggested }] : []),
-                ...(following.length ? [{ key: '👥 People you follow', items: following }] : []),
-                ...(trending.length ? [{ key: '🔥 Trending creators', items: trending }] : []),
+                ...(online.length ? [{ key: 'Online now', icon: 'radio', color: '#34C759', items: online }] : []),
+                ...(recent.length ? [{ key: 'Recently active', icon: 'time-outline', color: '#FFC53D', items: recent }] : []),
+                ...(suggested.length ? [{ key: 'Suggested for you', icon: 'sparkles', color: '#8B7BFF', items: suggested }] : []),
+                ...(following.length ? [{ key: 'People you follow', icon: 'people-outline', color: '#4DD8FF', items: following }] : []),
+                ...(trending.length ? [{ key: 'Trending creators', icon: 'flame', color: '#FF7A00', items: trending }] : []),
               ]}
               keyExtractor={(s) => s.key}
               renderItem={({ item }) => (
                 <View>
-                  <Text style={styles.sectionTitle}>{item.key}</Text>
+                  <View style={styles.sectionTitleRow}>
+                    <Icon name={item.icon as IconName} size={14} color={item.color} />
+                    <Text style={styles.sectionTitle}>{item.key}</Text>
+                  </View>
                   {item.items.map(renderRow)}
                 </View>
               )}
@@ -214,14 +218,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginBottom: 12,
   },
+  sectionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 14,
+    marginBottom: 4,
+  },
   sectionTitle: {
     color: colors.textMuted,
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.5,
     textTransform: 'uppercase',
-    marginTop: 14,
-    marginBottom: 4,
   },
   row: {
     flexDirection: 'row',

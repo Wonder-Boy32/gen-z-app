@@ -16,6 +16,7 @@ import { colors, radius, shadows } from '../theme';
 import LogoHeader from '../components/LogoHeader';
 import { useInsets } from '../utils/useInsets';
 import DropCountdown from '../components/DropCountdown';
+import Icon from '../components/ui/Icon';
 import FeedPost, { setFeedUserId } from '../components/FeedPost';
 import CommentsModal from '../components/CommentsModal';
 import ChainModal from '../components/ChainModal';
@@ -813,7 +814,14 @@ export default function FeedScreen({
                   <Text style={[styles.liveText, styles.votingText]}>VOTING</Text>
                 </View>
               )}
-              <Text style={styles.dropBannerTitle}>{dropMode ? '📦 IN DROP' : '🚨 GEN Z DROP'}</Text>
+              <View style={styles.dropBannerTitleRow}>
+                <Icon
+                  name={dropMode ? 'cube-outline' : 'megaphone-outline'}
+                  size={13}
+                  color={colors.accent}
+                />
+                <Text style={styles.dropBannerTitle}>{dropMode ? 'IN DROP' : 'GEN Z DROP'}</Text>
+              </View>
             </View>
 
             <Text style={styles.dropBannerPrompt} numberOfLines={1}>
@@ -887,7 +895,10 @@ export default function FeedScreen({
               <Text style={styles.emptyText}>{emptyCopy.text}</Text>
               {suggestions.length > 0 && (
                 <View style={styles.suggestWrap}>
-                  <Text style={styles.suggestTitle}>🔥 Discover something new</Text>
+                  <View style={styles.suggestTitleRow}>
+                    <Icon name="flame" size={15} color={colors.accent} />
+                    <Text style={styles.suggestTitle}>Discover something new</Text>
+                  </View>
                   <FlatList
                     data={suggestions}
                     horizontal
@@ -1141,6 +1152,7 @@ const styles = StyleSheet.create({
   },
   joinPillText: { color: colors.bg, fontSize: 12, fontWeight: '800', letterSpacing: 0.5 },
   bannerBack: { color: colors.cyan, fontSize: 12, fontWeight: '600' },
+  dropBannerTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   dropBannerTitle: { color: colors.accent, fontSize: 11, fontWeight: '800', letterSpacing: 1, textAlign: 'center' },
   dropBannerPrompt: { color: colors.text, fontSize: 14, fontWeight: '600', marginTop: 3, textAlign: 'center' },
   dropBannerTime: { marginTop: 4 },
@@ -1174,7 +1186,8 @@ const styles = StyleSheet.create({
   emptyTitle: { color: colors.text, fontSize: 20, fontWeight: '700' },
   emptyText: { color: colors.textMuted, fontSize: 14, textAlign: 'center', marginTop: 10, lineHeight: 20 },
   suggestWrap: { marginTop: 24, width: '100%' },
-  suggestTitle: { color: colors.accent, fontSize: 14, fontWeight: '800', marginBottom: 12 },
+  suggestTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 },
+  suggestTitle: { color: colors.accent, fontSize: 14, fontWeight: '800' },
   suggestCard: {
     width: 110,
     marginRight: 12,

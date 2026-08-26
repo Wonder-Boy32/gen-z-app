@@ -12,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import DropVideoView from '../components/DropVideoView';
+import Icon from '../components/ui/Icon';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import { TOP_INSET } from '../utils/useInsets';
@@ -150,7 +151,10 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
     <Pressable style={styles.videoCard} onPress={() => setSelected(p)}>
       <CardMedia post={p} />
       <View style={styles.cardOverlay}>
-        <Text style={styles.cardLikes}>♥ {fmtCount(p.likes_count)}</Text>
+        <View style={styles.statRow}>
+          <Icon name="heart" size={12} color={colors.logoWhite} />
+          <Text style={styles.cardLikes}>{fmtCount(p.likes_count)}</Text>
+        </View>
         <Text style={styles.cardUser} numberOfLines={1}>@{p.profile?.username ?? 'unknown'}</Text>
       </View>
     </Pressable>
@@ -198,8 +202,10 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
         />
       ) : (
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {/* 🔥 Trending Now */}
-        <Text style={styles.sectionTitle}>🔥 Trending Now</Text>
+        <View style={styles.sectionTitleRow}>
+          <Icon name="flame" size={16} color={colors.accent} />
+          <Text style={styles.sectionTitle}>Trending Now</Text>
+        </View>
         {trendingVideos.length ? (
           <FlatList
             data={trendingVideos}
@@ -245,7 +251,10 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
             <Pressable key={p.id} style={styles.gridTile} onPress={() => setSelected(p)}>
               <CardMedia post={p} />
               <View style={styles.gridOverlay}>
-                <Text style={styles.gridLikes}>♥ {fmtCount(p.likes_count)}</Text>
+                <View style={styles.statRow}>
+                  <Icon name="heart" size={11} color={colors.logoWhite} />
+                  <Text style={styles.gridLikes}>{fmtCount(p.likes_count)}</Text>
+                </View>
                 <Text style={styles.gridViews}>{fmtCount(p.views_count)} views</Text>
               </View>
             </Pressable>
@@ -269,12 +278,17 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
           ListEmptyComponent={<Text style={styles.empty}>No new creators yet.</Text>}
         />
 
-        {/* 🎵 Trending Sounds */}
-        <Text style={styles.sectionTitle}>🎵 Trending Sounds</Text>
+        <View style={styles.sectionTitleRow}>
+          <Icon name="musical-notes" size={16} color={colors.cyan} />
+          <Text style={styles.sectionTitle}>Trending Sounds</Text>
+        </View>
         <View style={styles.chipWrap}>
           {sounds.map((s) => (
             <Pressable key={s.audio} style={styles.chip} onPress={() => onOpenAudio(s.audio)}>
-              <Text style={styles.chipText}>♪ {s.audio}</Text>
+              <View style={styles.statRow}>
+                <Icon name="musical-note" size={12} color={colors.cyan} />
+                <Text style={styles.chipText}>{s.audio}</Text>
+              </View>
               <Text style={styles.chipCount}>{s.count} posts</Text>
             </Pressable>
           ))}
@@ -375,11 +389,25 @@ function PostDetailModal({ post, onClose }: { post: P | null; onClose: () => voi
             <View style={styles.detailInfo}>
               <Text style={styles.detailUser}>@{post.profile?.username ?? 'unknown'}</Text>
               {!!post.caption && <Text style={styles.detailCaption}>{post.caption}</Text>}
-              {!!post.audio && <Text style={styles.detailAudio}>♪ {post.audio}</Text>}
+              {!!post.audio && (
+                <View style={styles.statRow}>
+                  <Icon name="musical-note" size={12} color={colors.cyan} />
+                  <Text style={styles.detailAudio}>{post.audio}</Text>
+                </View>
+              )}
               <View style={styles.detailStats}>
-                <Text style={styles.detailStat}>♥ {fmtCount(post.likes_count)}</Text>
-                <Text style={styles.detailStat}>✎ {fmtCount(post.comments_count)}</Text>
-                <Text style={styles.detailStat}>👁 {fmtCount(post.views_count)}</Text>
+                <View style={styles.statRow}>
+                  <Icon name="heart" size={13} color={colors.logoWhite} />
+                  <Text style={styles.detailStat}>{fmtCount(post.likes_count)}</Text>
+                </View>
+                <View style={styles.statRow}>
+                  <Icon name="chatbubble-ellipses-outline" size={13} color={colors.logoWhite} />
+                  <Text style={styles.detailStat}>{fmtCount(post.comments_count)}</Text>
+                </View>
+                <View style={styles.statRow}>
+                  <Icon name="eye-outline" size={14} color={colors.logoWhite} />
+                  <Text style={styles.detailStat}>{fmtCount(post.views_count)}</Text>
+                </View>
               </View>
             </View>
           </>
@@ -434,14 +462,24 @@ const styles = StyleSheet.create({
     paddingTop: TOP_INSET + 16,
     paddingBottom: 40,
   },
+  sectionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    marginTop: 20,
+    marginBottom: 12,
+    paddingHorizontal: 20,
+  },
   sectionTitle: {
     color: colors.text,
     fontSize: 18,
     fontWeight: '800',
-    marginTop: 20,
-    marginBottom: 12,
-    paddingHorizontal: 20,
     letterSpacing: 0.3,
+  },
+  statRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   empty: {
     color: colors.textMuted,
