@@ -123,9 +123,9 @@ export default function FeedScreen({
 }) {
   const { height } = useWindowDimensions();
   const insets = useInsets();
-  // never let the top nav slide under the status bar — fallback for
-  // builds where the safe-area module reports zero insets
-  const safeTop = Math.max(insets.top, TOP_INSET);
+  // never let the top nav slide under the status bar — floor of 44px
+  // covers devices that under-report the status-bar height
+  const safeTop = Math.max(insets.top, TOP_INSET, 44);
   const [mode, setMode] = useState<FeedMode>('foryou');
   const [posts, setPosts] = useState<FeedPostFull[]>([]);
   const [loading, setLoading] = useState(true);
