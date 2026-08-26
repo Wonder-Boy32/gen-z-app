@@ -194,13 +194,14 @@ export default function FeedScreen({
         m === 'expiring' ? new Date(a.r.expires_at).getTime() - new Date(b.r.expires_at).getTime() : b.score - a.score
       );
 
-      // creator diversity — cap repeats per creator
+      // creator diversity — cap repeats per creator (your own posts never capped)
       const perCreator = new Map<string, number>();
       const cap = m === 'live' ? 2 : 3;
       const out: FeedPostFull[] = [];
       for (const { r, pulse } of scored) {
+        const mine = r.user_id === currentUserId;
         const c = perCreator.get(r.user_id) ?? 0;
-        if (c >= cap) continue;
+        if (!mine && c >= cap) continue;
         perCreator.set(r.user_id, c + 1);
         out.push(r as FeedPostFull);
         if (out.length >= PAGE_SIZE) break;
@@ -248,7 +249,12 @@ export default function FeedScreen({
     ]);
     const hidden = new Set((hid.data ?? []).map((x) => x.post_id));
     const muted = new Set((mut.data ?? []).map((x) => x.muted_id));
-    const blocked = new Set((blk.data ?? []).map((x) => x.blocked_id ?? x.blocker_id));
+    // blocked = people *I* blocked + people who blocked *me* — never myself
+    const blocked = new Set<string>();
+    (blk.data ?? []).forEach((x: any) => {
+      if (x.blocker_id === user?.id) blocked.add(x.blocked_id);
+      if (x.blocked_id === user?.id) blocked.add(x.blocker_id);
+    });
     const notInterested = new Set((notInt.data ?? []).map((x) => x.tag));
 
     let following = new Set<string>();
@@ -322,7 +328,7 @@ export default function FeedScreen({
     }
 
     let rows = ((data ?? []) as FeedPostRow[]).filter(
-      (p) => !hidden.has(p.id) && !muted.has(p.user_id) && !blocked.has(p.user_id) && p.id !== user?.id
+      (p) => !hidden.has(p.id) && !muted.has(p.user_id) && !blocked.has(p.user_id)
     );
     if (mode === 'around' && aroundRegion) {
       rows = rows.filter((p) => (p.profile?.region ?? '').toLowerCase() === aroundRegion.toLowerCase());
