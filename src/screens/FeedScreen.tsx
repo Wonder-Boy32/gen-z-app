@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Alert,
   Animated,
   FlatList,
   Image,
@@ -649,9 +650,24 @@ export default function FeedScreen({
   };
 
   // personalization actions — all real, all persisted
-  const personalize = async (post: FeedPostFull, action: 'hide' | 'mute' | 'block' | 'notinterested' | 'report') => {
+  const personalize = async (post: FeedPostFull, action: 'hide' | 'mute' | 'block' | 'notinterested' | 'report' | 'delete') => {
     const me = myIdRef.current;
     if (!me) return;
+    if (action === 'delete') {
+      if (post.user_id !== me) return;
+      Alert.alert('Delete drop?', 'This removes it everywhere — likes, comments and replies go too.', [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            await supabase.from('posts').delete().eq('id', post.id).eq('user_id', me);
+            removePost(post.id);
+          },
+        },
+      ]);
+      return;
+    }
     if (action === 'report') {
       await supabase.from('reports').insert({ reporter_id: me, post_id: post.id, reason: 'reported from feed' });
       return;

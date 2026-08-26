@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   FlatList,
   Image,
   Modal,
@@ -152,6 +153,25 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
     load();
   }, [load]);
 
+  // long-press a tile/card to delete your own post
+  const confirmDelete = (p: Post) => {
+    if (p.user_id !== myId) return;
+    Alert.alert('Delete drop?', 'This removes it everywhere — likes, comments and replies go too.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          if (!myId) return;
+          await supabase.from('posts').delete().eq('id', p.id).eq('user_id', myId);
+          setPosts((prev) => prev.filter((x) => x.id !== p.id));
+          setReposts((prev) => prev.filter((x) => x.id !== p.id));
+          setSaved((prev) => prev.filter((x) => x.id !== p.id));
+        },
+      },
+    ]);
+  };
+
   const shareProfile = () => {
     Share.share({
       message: `Check out @${profile?.username ?? 'unknown'} on Gen Z — every story, gone in 48 hours!`,
@@ -262,6 +282,8 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
                       <Pressable
                         style={styles.dropCard}
                         onPress={() => setViewer({ list: activePosts, index: i })}
+                        onLongPress={() => confirmDelete(item)}
+                        delayLongPress={450}
                       >
                         {item.cover_url || (item.media_type === 'image' && item.media_url) ? (
                           <Image
@@ -305,7 +327,12 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
             </View>
           }
           renderItem={({ item, index: i }) => (
-            <Pressable style={styles.tile} onPress={() => setViewer({ list: grid, index: i })}>
+            <Pressable
+              style={styles.tile}
+              onPress={() => setViewer({ list: grid, index: i })}
+              onLongPress={() => confirmDelete(item)}
+              delayLongPress={450}
+            >
               {item.cover_url || (item.media_type === 'image' && item.media_url) ? (
                 <Image source={{ uri: item.cover_url ?? item.media_url! }} style={styles.tileImage} />
               ) : item.media_type === 'video' ? (

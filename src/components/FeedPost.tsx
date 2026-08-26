@@ -381,7 +381,7 @@ function PulseRow({ pulse, comments }: { pulse?: FeedPost['pulse']; comments: nu
   );
 }
 
-type MenuAction = 'hide' | 'mute' | 'block' | 'notinterested' | 'report' | 'replydrop' | 'why';
+type MenuAction = 'hide' | 'mute' | 'block' | 'notinterested' | 'report' | 'replydrop' | 'why' | 'delete';
 
 const MENU_ITEMS: { key: MenuAction; label: string; icon: IconName; iconColor: string }[] = [
   { key: 'why', label: 'Why am I seeing this?', icon: 'bulb-outline', iconColor: colors.accent },
@@ -391,7 +391,11 @@ const MENU_ITEMS: { key: MenuAction; label: string; icon: IconName; iconColor: s
   { key: 'mute', label: 'Mute creator', icon: 'volume-mute-outline', iconColor: colors.textMuted },
   { key: 'block', label: 'Block creator', icon: 'ban-outline', iconColor: colors.danger },
   { key: 'report', label: 'Report', icon: 'warning-outline', iconColor: colors.danger },
+  { key: 'delete', label: 'Delete drop', icon: 'trash-outline', iconColor: colors.danger },
 ];
+
+// own posts: delete + the still-useful actions only
+const OWN_MENU_ITEMS = MENU_ITEMS.filter((m) => m.key === 'delete' || m.key === 'why' || m.key === 'replydrop' || m.key === 'report');
 
 function DropMenu({
   visible,
@@ -434,7 +438,7 @@ function DropMenu({
           ) : (
             <>
               <Text style={styles.menuTitle}>Drop options</Text>
-              {MENU_ITEMS.map((it) => (
+              {(post.user_id === currentUserId ? OWN_MENU_ITEMS : MENU_ITEMS).map((it) => (
                 <Pressable
                   key={it.key}
                   style={styles.menuItem}

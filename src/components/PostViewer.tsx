@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Alert,
   FlatList,
   Pressable,
   Share,
@@ -130,9 +131,24 @@ export default function PostViewer({ posts, index, onClose }: Props) {
 
   const removePost = (id: string) => setItems((prev) => prev.filter((p) => p.id !== id));
 
-  const personalize = async (post: ViewerPost, action: 'hide' | 'mute' | 'block' | 'notinterested' | 'report') => {
+  const personalize = async (post: ViewerPost, action: 'hide' | 'mute' | 'block' | 'notinterested' | 'report' | 'delete') => {
     const me = meRef.current;
     if (!me) return;
+    if (action === 'delete') {
+      if (post.user_id !== me) return;
+      Alert.alert('Delete drop?', 'This removes it everywhere — likes, comments and replies go too.', [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            await supabase.from('posts').delete().eq('id', post.id).eq('user_id', me);
+            removePost(post.id);
+          },
+        },
+      ]);
+      return;
+    }
     if (action === 'hide' || action === 'notinterested') {
       await supabase.from('hidden_posts').insert({ user_id: me, post_id: post.id });
       removePost(post.id);
