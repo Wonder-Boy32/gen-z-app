@@ -108,8 +108,8 @@ export default function FeedPost({
   const [menuOpen, setMenuOpen] = useState(false);
   const [showReasons, setShowReasons] = useState(false);
 
-  // ---------- attached sound track (plays over the video) ----------
-  const soundUrl = post.media_type === 'video' ? post.sound_url : null;
+  // ---------- attached sound track (plays on video, photo AND text drops) ----------
+  const soundUrl = post.sound_url;
   const soundPlayer = useAudioPlayer(soundUrl ?? null);
   const soundStatus = useAudioPlayerStatus(soundPlayer);
   const soundActive = isActive && !holdPause && !!post.sound_url;
