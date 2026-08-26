@@ -565,7 +565,7 @@ const styles = StyleSheet.create({
   },
   bottomLeft: {
     padding: 16,
-    paddingBottom: 34,
+    paddingBottom: 120,
     maxWidth: '78%',
   },
   userRow: {

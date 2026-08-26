@@ -14,6 +14,7 @@ import {
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import LogoHeader from '../components/LogoHeader';
+import { useInsets } from '../utils/useInsets';
 import DropCountdown from '../components/DropCountdown';
 import FeedPost, { setFeedUserId } from '../components/FeedPost';
 import CommentsModal from '../components/CommentsModal';
@@ -111,6 +112,7 @@ export default function FeedScreen({
   initialHashtagMode?: string | null;
 }) {
   const { height } = useWindowDimensions();
+  const insets = useInsets();
   const [mode, setMode] = useState<FeedMode>('foryou');
   const [posts, setPosts] = useState<FeedPostFull[]>([]);
   const [loading, setLoading] = useState(true);
@@ -682,12 +684,13 @@ export default function FeedScreen({
 
   return (
     <View style={styles.container}>
-      <View style={styles.topBrand} pointerEvents="none">
+      <View style={[styles.topScrim, { height: insets.top + 108 }]} pointerEvents="none" />
+      <View style={[styles.topBrand, { paddingTop: insets.top + 8 }]} pointerEvents="none">
         <LogoHeader compact transparent />
       </View>
 
       {/* primary feed modes */}
-      <View style={styles.modeBar}>
+      <View style={[styles.modeBar, { top: insets.top + 46 }]}>
         {MODES.map((m) => (
           <Pressable
             key={m.key}
@@ -706,7 +709,7 @@ export default function FeedScreen({
       </View>
 
       {storiesVisible && (
-        <View style={styles.storiesWrap}>
+        <View style={[styles.storiesWrap, { top: insets.top + 88 }]}>
           <FlatList
             data={storyUsers}
             horizontal
@@ -737,10 +740,10 @@ export default function FeedScreen({
 
       {activeDrop && (
         <Animated.View
-          style={[
+            style={[
             styles.dropBanner,
             {
-              top: storiesVisible ? 224 : 132,
+              top: storiesVisible ? insets.top + 176 : insets.top + 100,
               opacity: bannerAnim,
               transform: [{ translateY: bannerSlide }],
             },
@@ -800,7 +803,7 @@ export default function FeedScreen({
 
       {(userMode || audioMode || hashtagMode) && (
         <Pressable
-          style={[styles.dropBanner, { top: 132 }]}
+          style={[styles.dropBanner, { top: insets.top + 100 }]}
           onPress={() => {
             setUserMode(null);
             setAudioMode(null);
@@ -974,6 +977,14 @@ function SkeletonFeed({ height }: { height: number }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
+  topScrim: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 9,
+    backgroundColor: 'rgba(6,10,22,0.45)',
+  },
   topBrand: {
     position: 'absolute',
     top: 0,
@@ -981,37 +992,34 @@ const styles = StyleSheet.create({
     right: 0,
     zIndex: 12,
     alignItems: 'center',
-    paddingTop: 48,
   },
   modeBar: {
     position: 'absolute',
-    top: 92,
     left: 0,
     right: 0,
     zIndex: 11,
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 6,
-    paddingHorizontal: 8,
+    gap: 4,
+    paddingHorizontal: 6,
   },
   modeChip: {
-    backgroundColor: 'rgba(13,20,38,0.55)',
+    backgroundColor: 'rgba(13,20,38,0.82)',
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: 'rgba(255,255,255,0.14)',
     borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
   },
   modeChipActive: {
-    backgroundColor: 'rgba(255,122,0,0.18)',
+    backgroundColor: 'rgba(255,122,0,0.22)',
     borderColor: colors.accent,
     ...shadows.glow,
   },
-  modeChipText: { color: colors.textMuted, fontSize: 12, fontWeight: '700' },
+  modeChipText: { color: colors.textMuted, fontSize: 11.5, fontWeight: '700' },
   modeChipTextActive: { color: colors.accent },
   storiesWrap: {
     position: 'absolute',
-    top: 128,
     left: 0,
     right: 0,
     zIndex: 10,
