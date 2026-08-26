@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { VideoView, useVideoPlayer } from 'expo-video';
+import { captureRef } from 'react-native-view-shot';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import LogoHeader from '../components/LogoHeader';
@@ -80,12 +81,12 @@ type EditorOverlay =
 
 const TOOLS: { id: EditorOverlay; icon: string; label: string }[] = [
   { id: 'trim', icon: '✂️', label: 'Trim' },
+  { id: 'cover', icon: '🎞', label: 'Cover' },
   { id: 'sound', icon: '🎵', label: 'Sound' },
   { id: 'effects', icon: '✨', label: 'Effects' },
   { id: 'text', icon: 'Aa', label: 'Text' },
   { id: 'stickers', icon: '🏷', label: 'Stickers' },
   { id: 'filters', icon: '🎨', label: 'Filters' },
-  { id: 'cover', icon: '🎞', label: 'Cover' },
   { id: 'voiceover', icon: '🎙', label: 'Voiceover' },
   { id: 'speed', icon: '⚡', label: 'Speed' },
   { id: 'crop', icon: '⛶', label: 'Crop' },
@@ -157,6 +158,7 @@ export default function CreateDropScreen({
 
   const firstIsVideo = assets.length > 0 && (assets[0].mimeType?.startsWith('video') ?? false);
   const firstVideoUri = firstIsVideo ? assets[0].uri : null;
+  const coverSource = firstVideoUri; // what the hidden cover-capture player plays
   const player = useVideoPlayer(firstVideoUri ? { uri: firstVideoUri } : null, (p) => {
     p.loop = true;
     p.playbackRate = 1;
@@ -183,6 +185,48 @@ export default function CreateDropScreen({
       }
     }
   }, [player, firstVideoUri]);
+
+  // ---- auto cover: hidden paused player + view-shot capture ----
+  const coverCaptureRef = useRef<View>(null);
+  const capturePlayer = useVideoPlayer(coverSource ? { uri: coverSource } : null, (p) => {
+    p.loop = false;
+    p.play();
+  });
+  useEffect(() => {
+    if (!capturePlayer) return;
+    const sub = capturePlayer.addListener('timeUpdate', ({ currentTime }: { currentTime: number }) => {
+      if (currentTime >= 0.4) capturePlayer.pause();
+    });
+    return () => sub.remove();
+  }, [capturePlayer]);
+  useEffect(() => {
+    if (capturePlayer && coverSource) {
+      try {
+        capturePlayer.replace({ uri: coverSource });
+        capturePlayer.play();
+      } catch {
+        // ignore
+      }
+    }
+  }, [capturePlayer, coverSource]);
+
+  const captureCoverNow = useCallback(async (): Promise<string | null> => {
+    if (!coverCaptureRef.current || !capturePlayer) return null;
+    try {
+      capturePlayer.currentTime = 0;
+      capturePlayer.play();
+      await new Promise((r) => setTimeout(r, 700));
+      capturePlayer.pause();
+      const uri = await captureRef(coverCaptureRef.current, {
+        format: 'jpg',
+        quality: 0.7,
+        result: 'tmpfile',
+      });
+      return uri;
+    } catch {
+      return null;
+    }
+  }, [capturePlayer]);
 
   // create-intent: reply-to-drop chain link
   useEffect(() => {
@@ -451,9 +495,15 @@ export default function CreateDropScreen({
           );
           items.push({ url: publicUrl, type: isVideo ? 'video' : 'image' });
 
-          // cover: user-picked, else auto-extract the first frame (native builds)
+          // cover: user-picked, else auto-capture a frame (view-shot, works
+          // everywhere), else ffmpeg frame in native builds.
           if (isVideo && i === 0) {
             let coverSrc: string | null = coverUri;
+            if (!coverSrc) {
+              try {
+                coverSrc = await captureCoverNow();
+              } catch {}
+            }
             if (!coverSrc && hasNativeFFmpeg()) {
               try {
                 coverSrc = await extractVideoCover(asset.uri);
@@ -808,16 +858,13 @@ export default function CreateDropScreen({
                     />
                     <Button
                       variant="secondary"
-                      title={coverBusy ? 'Extracting…' : '⚡ Auto (first frame)'}
-                      disabled={coverBusy || !hasNativeFFmpeg()}
+                      title={coverBusy ? 'Generating…' : '⚡ Auto (first frame)'}
+                      disabled={coverBusy}
                       onPress={async () => {
-                        if (!assets[0]) return;
                         setCoverBusy(true);
                         try {
-                          const local = await extractVideoCover(assets[0].uri);
-                          setCoverUri(local);
-                        } catch {
-                          // dev-build only — fall back to placeholder cover
+                          const local = await captureCoverNow();
+                          if (local) setCoverUri(local);
                         } finally {
                           setCoverBusy(false);
                         }
@@ -825,9 +872,9 @@ export default function CreateDropScreen({
                     />
                   </View>
                 )}
-                {!hasNativeFFmpeg() && !coverUri && (
+                {!coverUri && (
                   <Text style={styles.panelHint}>
-                    ⚡ Auto cover needs the dev build (ffmpeg). Until then pick one — otherwise a ▶ placeholder shows.
+                    No cover chosen? We auto-capture the first frame at publish — or use ⚡ Auto now.
                   </Text>
                 )}
               </View>
@@ -1041,6 +1088,18 @@ export default function CreateDropScreen({
       <StickerPicker visible={stickerOpen} onClose={() => setStickerOpen(false)} onPick={addSticker} />
       <PhotoEditorModal visible={photoEditorOpen} images={assets.filter((a) => !(a.mimeType?.startsWith('video') ?? false))} value={collage} onChange={setCollage} onClose={() => setPhotoEditorOpen(false)} />
 
+      {/* hidden video frame for auto cover capture */}
+      {coverSource && (
+        <View
+          ref={coverCaptureRef}
+          collapsable={false}
+          style={styles.coverCapture}
+          pointerEvents="none"
+        >
+          <VideoView player={capturePlayer} style={styles.coverCaptureVideo} surfaceType="textureview" />
+        </View>
+      )}
+
       {/* exit → save draft? */}
       <Modal visible={exitAsk} animationType="fade" transparent onRequestClose={() => setExitAsk(false)}>
         <View style={styles.exitOverlay}>
@@ -1165,6 +1224,18 @@ const styles = StyleSheet.create({
     color: colors.danger,
     fontSize: 13,
     fontWeight: '700',
+  },
+  coverCapture: {
+    position: 'absolute',
+    left: -2000,
+    top: 0,
+    width: 270,
+    height: 480,
+    backgroundColor: '#000',
+  },
+  coverCaptureVideo: {
+    width: '100%',
+    height: '100%',
   },
   replyBanner: {
     backgroundColor: 'rgba(139,123,255,0.14)',
