@@ -75,3 +75,7 @@ alter table public.profiles add column if not exists region text;
 
 -- ---- 8) Video drop cover image (user-picked or auto-extracted frame)
 alter table public.posts add column if not exists cover_url text;
+
+-- ---- 9) Text drop design (creator-chosen background + readable text color)
+alter table public.posts add column if not exists text_bg text;
+alter table public.posts add column if not exists text_color text;

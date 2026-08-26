@@ -39,6 +39,8 @@ type Post = {
   media_url: string | null;
   media_type: 'video' | 'image' | null;
   cover_url: string | null;
+  text_bg: string | null;
+  text_color: string | null;
   content: string | null;
   drop_id: string | null;
   views_count: number;
@@ -84,7 +86,7 @@ export default function ProfileScreen() {
           .maybeSingle(),
         supabase
           .from('posts')
-          .select('id, media_url, media_type, cover_url, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at')
+          .select('id, media_url, media_type, cover_url, text_bg, text_color, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false }),
         supabase
@@ -228,8 +230,8 @@ export default function ProfileScreen() {
                             <Text style={styles.dropVideoPhText}>▶ {item.views_count}</Text>
                           </View>
                         ) : (
-                          <View style={[styles.dropMedia, styles.dropTextBg]}>
-                            <Text style={styles.dropText} numberOfLines={3}>{item.content}</Text>
+                          <View style={[styles.dropMedia, styles.dropTextBg, item.text_bg ? { backgroundColor: item.text_bg } : null]}>
+                            <Text style={[styles.dropText, item.text_color ? { color: item.text_color } : null]} numberOfLines={3}>{item.content}</Text>
                           </View>
                         )}
                         <View style={styles.dropInfo}>
@@ -262,8 +264,8 @@ export default function ProfileScreen() {
                   <Text style={styles.tileVideoPhText}>▶ {item.views_count}</Text>
                 </View>
               ) : (
-                <View style={[styles.tileImage, styles.tileTextBg]}>
-                  <Text style={styles.tileText} numberOfLines={3}>{item.content}</Text>
+                <View style={[styles.tileImage, styles.tileTextBg, item.text_bg ? { backgroundColor: item.text_bg } : null]}>
+                  <Text style={[styles.tileText, item.text_color ? { color: item.text_color } : null]} numberOfLines={3}>{item.content}</Text>
                 </View>
               )}
               {item.media_type === 'video' && (

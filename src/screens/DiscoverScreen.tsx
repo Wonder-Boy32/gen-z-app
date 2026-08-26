@@ -37,7 +37,8 @@ type P = {
   media_url: string | null;
   media_type: 'video' | 'image' | null;
   cover_url: string | null;
-  media_items: { url: string; type: string }[] | null;
+  text_bg: string | null;
+  text_color: string | null;
   content: string | null;
   caption: string | null;
   audio: string | null;
@@ -335,8 +336,8 @@ function CardMedia({ post }: { post: P }) {
     return <Image source={{ uri: post.media_url }} style={styles.cardMedia} resizeMode="cover" />;
   }
   return (
-    <View style={[styles.cardMedia, styles.cardTextBg]}>
-      <Text style={styles.cardText} numberOfLines={4}>{post.content}</Text>
+    <View style={[styles.cardMedia, styles.cardTextBg, post.text_bg ? { backgroundColor: post.text_bg } : null]}>
+      <Text style={[styles.cardText, post.text_color ? { color: post.text_color } : null]} numberOfLines={3}>{post.content}</Text>
     </View>
   );
 }

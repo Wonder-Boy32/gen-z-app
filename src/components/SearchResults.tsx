@@ -24,6 +24,8 @@ type P = {
   media_url: string | null;
   media_type: 'video' | 'image' | null;
   cover_url: string | null;
+  text_bg: string | null;
+  text_color: string | null;
   content: string | null;
   caption: string | null;
   audio: string | null;
@@ -320,8 +322,8 @@ export default function SearchResults({ query, onPickQuery, onOpenUser, onOpenAu
                     <Text style={styles.videoPhText}>▶</Text>
                   </View>
                 ) : (
-                  <View style={[styles.tileImage, styles.tileTextBg]}>
-                    <Text style={styles.tileText} numberOfLines={3}>{p.content}</Text>
+                  <View style={[styles.tileImage, styles.tileTextBg, p.text_bg ? { backgroundColor: p.text_bg } : null]}>
+                    <Text style={[styles.tileText, p.text_color ? { color: p.text_color } : null]} numberOfLines={3}>{p.content}</Text>
                   </View>
                 )}
                 <Text style={styles.tileLikes}>♥ {fmtCount(p.likes_count)}</Text>

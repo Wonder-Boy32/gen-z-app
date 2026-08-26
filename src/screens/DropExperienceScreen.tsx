@@ -33,6 +33,8 @@ type Sub = {
   media_url: string | null;
   media_type: 'video' | 'image' | null;
   cover_url: string | null;
+  text_bg: string | null;
+  text_color: string | null;
   media_items: { url: string; type: string }[] | null;
   content: string | null;
   caption: string | null;
@@ -312,11 +314,11 @@ function TileMedia({ sub, small }: { sub: Sub; small?: boolean }) {
     return <Image source={{ uri: src }} style={styles.tileImage} resizeMode="cover" />;
   }
   if (sub.media_type === 'video') {
-    return (
-      <View style={[styles.tileImage, styles.videoPh]}>
-        <Text style={styles.videoPhText}>▶ {sub.views_count}</Text>
-      </View>
-    );
+  return (
+    <View style={[styles.tileImage, styles.tileTextBg, sub.text_bg ? { backgroundColor: sub.text_bg } : null]}>
+      <Text style={[styles.tileText, sub.text_color ? { color: sub.text_color } : null]} numberOfLines={3}>{sub.content}</Text>
+    </View>
+  );
   }
   if (sub.media_url) {
     return <Image source={{ uri: sub.media_url }} style={styles.tileImage} resizeMode="cover" />;

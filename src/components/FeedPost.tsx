@@ -28,6 +28,8 @@ export type FeedPost = {
   filters: { id?: string; label?: string }[] | null;
   text_layers: DropTextLayer[] | null;
   stickers: DropSticker[] | null;
+  text_bg: string | null;
+  text_color: string | null;
   likes_count: number;
   comments_count: number;
   views_count: number;
@@ -399,10 +401,10 @@ function MediaArea({
   if (post.media_url) {
     return <Image source={{ uri: post.media_url }} style={styles.fill} resizeMode="cover" />;
   }
-  // text post
+  // text post — creator's chosen background + readable text color
   return (
-    <View style={[styles.fill, styles.textPostBg]}>
-      <Text style={styles.textPostContent}>{post.content}</Text>
+    <View style={[styles.fill, styles.textPostBg, post.text_bg ? { backgroundColor: post.text_bg } : null]}>
+      <Text style={[styles.textPostContent, post.text_color ? { color: post.text_color } : null]}>{post.content}</Text>
     </View>
   );
 }

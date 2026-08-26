@@ -523,6 +523,8 @@ export default function CreateDropScreen({
         row.caption = caption.trim() || null;
       } else {
         row.content = content.trim();
+        row.text_bg = textColor;
+        row.text_color = ['#0D1426', '#1E2A47'].includes(textColor) ? '#FFFFFF' : '#0D1426';
       }
 
       row.sound = sound?.name ?? null;
