@@ -560,7 +560,7 @@ function CarouselMedia({ items }: { items: { url: string; type: string }[] }) {
           setIndex(Math.round(e.nativeEvent.contentOffset.x / width))
         }
         renderItem={({ item }) => (
-          <Image source={{ uri: item.url }} style={[styles.fill, { width, height: '100%' }]} resizeMode="cover" />
+          <Image source={{ uri: item.url }} style={[styles.carouselImage, { width }]} resizeMode="cover" />
         )}
       />
       {items.length > 1 && (
@@ -601,6 +601,10 @@ const styles = StyleSheet.create({
   },
   carousel: {
     height: '100%',
+  },
+  carouselImage: {
+    height: '100%',
+    backgroundColor: '#0A1220',
   },
   textPostBg: {
     backgroundColor: '#101A33',
