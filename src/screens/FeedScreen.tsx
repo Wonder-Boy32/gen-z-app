@@ -296,6 +296,7 @@ export default function FeedScreen({
     let query = supabase
       .from('posts')
       .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region)')
+      .is('parent_drop_id', null) // reply-with-drop posts live in comments, not the feed
       .order('created_at', { ascending: false })
       .limit(90);
     if (dropMode) query = query.eq('drop_id', dropMode);
@@ -328,6 +329,7 @@ export default function FeedScreen({
       query = supabase
         .from('posts')
         .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region)')
+        .is('parent_drop_id', null)
         .gte('expires_at', nowIso)
         .lte('expires_at', soon)
         .order('expires_at', { ascending: true })

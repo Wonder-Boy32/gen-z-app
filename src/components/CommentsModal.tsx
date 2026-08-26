@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Image,
   Modal,
   Pressable,
   StyleSheet,
@@ -9,10 +10,12 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { VideoView, useVideoPlayer } from 'expo-video';
 import { useInsets } from '../utils/useInsets';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import Icon from './ui/Icon';
+import Avatar from './Avatar';
 import { notifyUser } from '../utils/notify';
 
 type CommentRow = {
@@ -30,6 +33,28 @@ type CommentNode = CommentRow & {
   replies: CommentNode[];
   reply_count: number;
 };
+
+type DropReply = {
+  id: string;
+  user_id: string;
+  media_url: string | null;
+  media_type: 'video' | 'image' | null;
+  content: string | null;
+  text_bg: string | null;
+  text_color: string | null;
+  created_at: string;
+  profile: { username: string; avatar_url: string | null } | null;
+};
+
+function timeAgo(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(ms / 60000);
+  if (m < 1) return 'now';
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
 
 type SortKey = 'newest' | 'discussed' | 'top';
 
@@ -58,6 +83,8 @@ type Props = {
 export default function CommentsModal({ post, onClose, onPosted, onReplyWithDrop }: Props) {
   const insets = useInsets();
   const [roots, setRoots] = useState<CommentNode[]>([]);
+  const [dropReplies, setDropReplies] = useState<DropReply[]>([]);
+  const [viewing, setViewing] = useState<DropReply | null>(null);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -91,6 +118,17 @@ export default function CommentsModal({ post, onClose, onPosted, onReplyWithDrop
         rootList.push(node);
       }
     });
+    // reply-with-drop posts — they live in the comments, not the home feed
+    const { data: replyRows } = await supabase
+      .from('posts')
+      .select(
+        'id, user_id, media_url, media_type, content, text_bg, text_color, created_at, profile:profiles!posts_user_id_fkey(username, avatar_url)'
+      )
+      .eq('parent_drop_id', post.id)
+      .order('created_at', { ascending: false })
+      .limit(50);
+    setDropReplies((replyRows ?? []) as unknown as DropReply[]);
+
     // like counts + which ones I liked
     const ids = rows.map((r) => r.id);
     const me = (await supabase.auth.getUser()).data.user;
@@ -215,7 +253,7 @@ export default function CommentsModal({ post, onClose, onPosted, onReplyWithDrop
           <Icon
             name={node.liked_by_me ? 'heart' : 'heart-outline'}
             size={15}
-            color={node.liked_by_me ? colors.danger : colors.textMuted}
+            color={node.liked_by_me ? colors.accent : colors.textMuted}
           />
           {(node.likes_count ?? 0) > 0 && (
             <Text style={[styles.likeCount, node.liked_by_me && styles.likeCountActive]}>
@@ -253,13 +291,55 @@ export default function CommentsModal({ post, onClose, onPosted, onReplyWithDrop
           {loading ? (
             <ActivityIndicator color={colors.accent} style={styles.loader} />
           ) : (
-            <FlatList
-              data={sorted}
-              keyExtractor={(c) => c.id}
-              style={styles.list}
-              renderItem={({ item }) => renderNode(item, 0)}
-              ListEmptyComponent={<Text style={styles.empty}>No comments yet. Be the first.</Text>}
-            />
+            <>
+              {dropReplies.length > 0 && (
+                <View style={styles.dropReplySection}>
+                  <View style={styles.dropReplyHeader}>
+                    <Icon name="videocam-outline" size={13} color={colors.accent} />
+                    <Text style={styles.dropReplyHeaderText}>Replied with a drop</Text>
+                  </View>
+                  {dropReplies.map((r) => (
+                    <Pressable key={r.id} style={styles.dropReplyRow} onPress={() => setViewing(r)}>
+                      <Avatar url={r.profile?.avatar_url} name={r.profile?.username ?? 'G'} size={28} ring />
+                      <View style={styles.dropReplyBody}>
+                        <Text style={styles.dropReplyUser} numberOfLines={1}>
+                          @{r.profile?.username ?? 'unknown'}
+                        </Text>
+                        <Text style={styles.dropReplyMeta}>
+                          {r.media_type === 'video' ? 'Video drop' : r.media_url ? 'Photo drop' : 'Text drop'} ·{' '}
+                          {timeAgo(r.created_at)}
+                        </Text>
+                      </View>
+                      {r.media_url ? (
+                        <Image source={{ uri: r.media_url }} style={styles.dropReplyThumb} />
+                      ) : (
+                        <View
+                          style={[
+                            styles.dropReplyThumb,
+                            styles.dropReplyThumbText,
+                            r.text_bg ? { backgroundColor: r.text_bg } : null,
+                          ]}
+                        >
+                          <Text
+                            style={[styles.dropReplyThumbTextContent, r.text_color ? { color: r.text_color } : null]}
+                            numberOfLines={2}
+                          >
+                            {r.content}
+                          </Text>
+                        </View>
+                      )}
+                    </Pressable>
+                  ))}
+                </View>
+              )}
+              <FlatList
+                data={sorted}
+                keyExtractor={(c) => c.id}
+                style={styles.list}
+                renderItem={({ item }) => renderNode(item, 0)}
+                ListEmptyComponent={<Text style={styles.empty}>No comments yet. Be the first.</Text>}
+              />
+            </>
           )}
           {replyingTo && (
             <View style={styles.replyingBar}>
@@ -287,6 +367,57 @@ export default function CommentsModal({ post, onClose, onPosted, onReplyWithDrop
             </Pressable>
           </View>
         </View>
+      </View>
+
+      {viewing && viewing.media_type === 'video' && viewing.media_url && (
+        <VideoReplyViewer item={viewing} onClose={() => setViewing(null)} />
+      )}
+      {viewing && viewing.media_type !== 'video' && (
+        <MediaReplyViewer item={viewing} onClose={() => setViewing(null)} />
+      )}
+    </Modal>
+  );
+}
+
+function VideoReplyViewer({ item, onClose }: { item: DropReply; onClose: () => void }) {
+  const player = useVideoPlayer({ uri: item.media_url! }, (p) => {
+    p.loop = true;
+    p.play();
+  });
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.viewerWrap}>
+        <VideoView player={player} style={styles.viewerMedia} contentFit="contain" nativeControls />
+        <Pressable style={styles.viewerClose} onPress={onClose} hitSlop={10}>
+          <Text style={styles.viewerCloseText}>✕</Text>
+        </Pressable>
+      </View>
+    </Modal>
+  );
+}
+
+function MediaReplyViewer({ item, onClose }: { item: DropReply; onClose: () => void }) {
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.viewerWrap}>
+        {item.media_url ? (
+          <Image source={{ uri: item.media_url }} style={styles.viewerMedia} resizeMode="contain" />
+        ) : (
+          <View
+            style={[
+              styles.viewerMedia,
+              styles.viewerTextMedia,
+              item.text_bg ? { backgroundColor: item.text_bg } : null,
+            ]}
+          >
+            <Text style={[styles.viewerTextContent, item.text_color ? { color: item.text_color } : null]}>
+              {item.content}
+            </Text>
+          </View>
+        )}
+        <Pressable style={styles.viewerClose} onPress={onClose} hitSlop={10}>
+          <Text style={styles.viewerCloseText}>✕</Text>
+        </Pressable>
       </View>
     </Modal>
   );
@@ -418,7 +549,97 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   likeCountActive: {
-    color: colors.danger,
+    color: colors.accent,
+  },
+  dropReplySection: {
+    marginBottom: 8,
+  },
+  dropReplyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 8,
+  },
+  dropReplyHeaderText: {
+    color: colors.accent,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+  },
+  dropReplyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: radius.md,
+    marginBottom: 7,
+  },
+  dropReplyBody: { flex: 1 },
+  dropReplyUser: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  dropReplyMeta: {
+    color: colors.textFaint,
+    fontSize: 11,
+    marginTop: 1,
+  },
+  dropReplyThumb: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    backgroundColor: '#0A1220',
+  },
+  dropReplyThumbText: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 5,
+  },
+  dropReplyThumbTextContent: {
+    color: colors.logoWhite,
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  viewerWrap: {
+    flex: 1,
+    backgroundColor: 'rgba(2,4,10,0.97)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  viewerMedia: {
+    width: '100%',
+    height: '80%',
+  },
+  viewerTextMedia: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.lg,
+    padding: 24,
+    width: '90%',
+    alignSelf: 'center',
+  },
+  viewerTextContent: {
+    color: colors.logoWhite,
+    fontSize: 20,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  viewerClose: {
+    position: 'absolute',
+    top: 52,
+    right: 18,
+    backgroundColor: colors.overlay,
+    borderRadius: 999,
+    padding: 10,
+    zIndex: 10,
+  },
+  viewerCloseText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '800',
   },
   empty: {
     color: colors.textMuted,
