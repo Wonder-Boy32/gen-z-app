@@ -17,6 +17,7 @@ import LogoHeader from '../components/LogoHeader';
 import Button from '../components/Button';
 import Avatar from '../components/Avatar';
 import AvatarPickerModal from '../components/AvatarPickerModal';
+import PostViewer from '../components/PostViewer';
 import PeopleScreen from './PeopleScreen';
 import SettingsScreen from './SettingsScreen';
 
@@ -36,11 +37,20 @@ type Profile = {
 
 type Post = {
   id: string;
+  user_id: string;
   media_url: string | null;
   media_type: 'video' | 'image' | null;
+  media_items: { url: string; type: string }[] | null;
   cover_url: string | null;
   text_bg: string | null;
   text_color: string | null;
+  caption: string | null;
+  audio: string | null;
+  effects: any;
+  filters: any;
+  text_layers: any;
+  stickers: any;
+  parent_drop_id: string | null;
   content: string | null;
   drop_id: string | null;
   views_count: number;
@@ -48,16 +58,28 @@ type Post = {
   comments_count: number;
   expires_at: string;
   created_at: string;
+  liked_by_me?: boolean;
+  following?: boolean;
+  follow_pending?: boolean;
+  saved_by_me?: boolean;
+  reposted_by_me?: boolean;
+  my_reaction?: string | null;
+  reactions_count?: number;
+  profile: { username: string; avatar_url: string | null; is_private: boolean; region: string | null } | null;
 };
 
-type RepostRow = Post & { profile: { username: string; avatar_url: string | null } | null };
+type RepostRow = Post;
 
 type Tab = 'active' | 'videos' | 'reposts' | 'saved';
 
 const H48 = 48 * 3600 * 1000;
 
-export default function ProfileScreen() {
+export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (userId: string) => void }) {
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [myId, setMyId] = useState<string | null>(null);
+  const [viewer, setViewer] = useState<{ list: (Post | RepostRow)[]; index: number } | null>(null);
+  const [avatarSheet, setAvatarSheet] = useState(false);
+  const [avatarFull, setAvatarFull] = useState(false);
   const [posts, setPosts] = useState<Post[]>([]);
   const [reposts, setReposts] = useState<RepostRow[]>([]);
   const [saved, setSaved] = useState<Post[]>([]);
@@ -86,17 +108,23 @@ export default function ProfileScreen() {
           .maybeSingle(),
         supabase
           .from('posts')
-          .select('id, media_url, media_type, cover_url, text_bg, text_color, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at')
+          .select(
+            'id, user_id, media_url, media_type, media_items, cover_url, text_bg, text_color, caption, audio, effects, filters, text_layers, stickers, parent_drop_id, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region)'
+          )
           .eq('user_id', user.id)
           .order('created_at', { ascending: false }),
         supabase
           .from('reposts')
-          .select('post_id, post:posts!reposts_post_id_fkey(id, media_url, media_type, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at, profile:profiles!posts_user_id_fkey(username, avatar_url))')
+          .select(
+            'post_id, post:posts!reposts_post_id_fkey(id, user_id, media_url, media_type, media_items, cover_url, text_bg, text_color, caption, audio, effects, filters, text_layers, stickers, parent_drop_id, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region))'
+          )
           .eq('user_id', user.id)
           .order('created_at', { ascending: false }),
         supabase
           .from('saved_posts')
-          .select('post_id, post:posts!saved_posts_post_id_fkey(id, media_url, media_type, content, drop_id, views_count, expires_at)')
+          .select(
+            'post_id, post:posts!saved_posts_post_id_fkey(id, user_id, media_url, media_type, media_items, cover_url, text_bg, text_color, caption, audio, effects, filters, text_layers, stickers, parent_drop_id, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region))'
+          )
           .eq('user_id', user.id)
           .order('created_at', { ascending: false }),
         supabase.from('follows').select('following_id', { count: 'exact', head: true }).eq('follower_id', user.id),
@@ -104,9 +132,10 @@ export default function ProfileScreen() {
       ]);
 
     setProfile((prof as Profile | null) ?? null);
-    setPosts((myPosts ?? []) as Post[]);
-    setReposts(((repostRows ?? []).map((r: any) => r.post).filter(Boolean)) as RepostRow[]);
-    setSaved(((savedRows ?? []).map((s: any) => s.post).filter(Boolean)) as Post[]);
+    setMyId(user.id);
+    setPosts((myPosts ?? []) as unknown as Post[]);
+    setReposts(((repostRows ?? []).map((r: any) => r.post).filter(Boolean)) as unknown as RepostRow[]);
+    setSaved(((savedRows ?? []).map((s: any) => s.post).filter(Boolean)) as unknown as Post[]);
     setFollowing(fw.count ?? 0);
     setFollowers(fl.count ?? 0);
     setTotalLikes(((myPosts ?? []) as Post[]).reduce((sum, p) => sum + (p.likes_count ?? 0), 0));
@@ -156,12 +185,14 @@ export default function ProfileScreen() {
                 </Pressable>
               </View>
 
-              <Avatar
-                url={profile?.avatar_url}
-                name={profile?.display_name || profile?.username || 'G'}
-                size={94}
-                ring
-              />
+              <Pressable onPress={() => setAvatarSheet(true)} hitSlop={8}>
+                <Avatar
+                  url={profile?.avatar_url}
+                  name={profile?.display_name || profile?.username || 'G'}
+                  size={94}
+                  ring
+                />
+              </Pressable>
 
               <View style={styles.nameRow}>
                 <Text style={styles.displayName}>{profile?.display_name || profile?.username || 'Gen Z user'}</Text>
@@ -218,8 +249,11 @@ export default function ProfileScreen() {
                     horizontal
                     keyExtractor={(p) => p.id}
                     showsHorizontalScrollIndicator={false}
-                    renderItem={({ item }) => (
-                      <View style={styles.dropCard}>
+                    renderItem={({ item, index: i }) => (
+                      <Pressable
+                        style={styles.dropCard}
+                        onPress={() => setViewer({ list: activePosts, index: i })}
+                      >
                         {item.cover_url || (item.media_type === 'image' && item.media_url) ? (
                           <Image
                             source={{ uri: item.cover_url ?? item.media_url! }}
@@ -240,7 +274,7 @@ export default function ProfileScreen() {
                             <View style={[styles.progressFill, { width: `${progressOf(item.created_at, item.expires_at)}%` }]} />
                           </View>
                         </View>
-                      </View>
+                      </Pressable>
                     )}
                   />
                 </View>
@@ -255,8 +289,8 @@ export default function ProfileScreen() {
               </View>
             </View>
           }
-          renderItem={({ item }) => (
-            <View style={styles.tile}>
+          renderItem={({ item, index: i }) => (
+            <Pressable style={styles.tile} onPress={() => setViewer({ list: grid, index: i })}>
               {item.cover_url || (item.media_type === 'image' && item.media_url) ? (
                 <Image source={{ uri: item.cover_url ?? item.media_url! }} style={styles.tileImage} />
               ) : item.media_type === 'video' ? (
@@ -283,7 +317,7 @@ export default function ProfileScreen() {
                   <Text style={styles.tileRepostText} numberOfLines={1}>↻ @{item.profile.username}</Text>
                 </View>
               )}
-            </View>
+            </Pressable>
           )}
           ListEmptyComponent={<Text style={styles.empty}>Nothing active right now — post something before it vanishes.</Text>}
         />
@@ -300,6 +334,51 @@ export default function ProfileScreen() {
       />
 
       <ShareProfileModal visible={shareOpen} profile={profile} onClose={() => setShareOpen(false)} onShare={shareProfile} />
+
+      {viewer && (
+        <View style={styles.viewerWrap}>
+          <PostViewer posts={viewer.list as any} index={viewer.index} onClose={() => setViewer(null)} />
+        </View>
+      )}
+
+      {/* avatar chooser */}
+      <Modal visible={avatarSheet} transparent animationType="slide" onRequestClose={() => setAvatarSheet(false)}>
+        <Pressable style={styles.avatarSheetOverlay} onPress={() => setAvatarSheet(false)}>
+          <Pressable style={styles.avatarSheet} onPress={() => {}}>
+            <Text style={styles.avatarSheetTitle}>Your profile</Text>
+            <Pressable
+              style={styles.avatarSheetItem}
+              onPress={() => {
+                setAvatarSheet(false);
+                setAvatarFull(true);
+              }}
+            >
+              <Text style={styles.avatarSheetItemText}>👤 Check profile pic</Text>
+            </Pressable>
+            <Pressable
+              style={styles.avatarSheetItem}
+              onPress={() => {
+                setAvatarSheet(false);
+                if (myId) onOpenDropsFeed?.(myId);
+              }}
+            >
+              <Text style={styles.avatarSheetItemText}>🔥 Check active drops</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* fullscreen profile pic */}
+      <Modal visible={avatarFull} transparent animationType="fade" onRequestClose={() => setAvatarFull(false)}>
+        <Pressable style={styles.avatarFullOverlay} onPress={() => setAvatarFull(false)}>
+          {profile?.avatar_url && !profile.avatar_url.startsWith('preset:') ? (
+            <Image source={{ uri: profile.avatar_url }} style={styles.avatarFullImg} resizeMode="contain" />
+          ) : (
+            <Avatar url={profile?.avatar_url} name={profile?.display_name || profile?.username || 'G'} size={240} ring />
+          )}
+          <Text style={styles.avatarFullHint}>Tap anywhere to close</Text>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -625,6 +704,58 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#0A1220',
+  },
+  viewerWrap: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 30,
+    backgroundColor: colors.bg,
+  },
+  avatarSheetOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  avatarSheet: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: radius.lg,
+    borderTopRightRadius: radius.lg,
+    padding: 18,
+    paddingBottom: 34,
+    gap: 8,
+  },
+  avatarSheetTitle: {
+    color: colors.textMuted,
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  avatarSheetItem: {
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: radius.md,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  avatarSheetItemText: { color: colors.text, fontSize: 15, fontWeight: '700' },
+  avatarFullOverlay: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(2,4,10,0.95)',
+    padding: 24,
+  },
+  avatarFullImg: {
+    width: '100%',
+    height: '70%',
+    borderRadius: radius.lg,
+  },
+  avatarFullHint: {
+    color: colors.textFaint,
+    fontSize: 12,
+    marginTop: 18,
   },
   tileVideoPhText: {
     color: colors.textMuted,

@@ -68,7 +68,14 @@ export default function HomeScreen() {
           />
         )}
         {tab === 'chat' && <ChatsScreen />}
-        {tab === 'profile' && <ProfileScreen />}
+        {tab === 'profile' && (
+          <ProfileScreen
+            onOpenDropsFeed={(userId) => {
+              setPendingUser(userId);
+              setTab('feed');
+            }}
+          />
+        )}
       </View>
       <TabBar tab={tab} onChange={setTab} />
     </View>
