@@ -40,7 +40,16 @@ import { extractVideoCover, hasNativeFFmpeg, processDropVideo } from '../utils/v
 // Drafts live in `drafts` and NEVER start the 48h timer.
 // ============================================================
 
-type Sound = { id: string; name: string; artist: string | null; category: string; usage_count: number };
+type Sound = {
+  id: string;
+  name: string;
+  artist: string | null;
+  category: string;
+  usage_count: number;
+  url?: string | null;
+  start?: number;
+  end?: number;
+};
 type Sticker = { id: string; emoji: string; x: number; y: number; size: number };
 type Drop = { id: string; prompt: string; status: string; ends_at: string };
 type Mode = 'media' | 'text';
@@ -149,6 +158,7 @@ export default function CreateDropScreen({
   // ui state
   const [pickerOpen, setPickerOpen] = useState(false);
   const [soundOpen, setSoundOpen] = useState(false);
+  const [trimSound, setTrimSound] = useState<Sound | null>(null);
   const [textLayerOpen, setTextLayerOpen] = useState(false);
   const [stickerOpen, setStickerOpen] = useState(false);
   const [photoEditorOpen, setPhotoEditorOpen] = useState(false);
@@ -529,6 +539,10 @@ export default function CreateDropScreen({
       }
 
       row.sound = sound?.name ?? null;
+      row.sound_artist = sound?.artist ?? null;
+      row.sound_url = sound?.url ?? null;
+      row.sound_start = sound?.start ?? 0;
+      row.sound_end = sound?.end ?? null;
       row.visibility = visibility;
       row.allow_likes = allowLikes;
       row.allow_comments = allowComments;
@@ -817,10 +831,23 @@ export default function CreateDropScreen({
               <View style={styles.panelRow}>
                 {sound ? (
                   <>
-                    <View style={styles.statRow}>
-                      <Icon name="musical-note" size={13} color={colors.cyan} />
-                      <Text style={styles.panelVal}>{sound.name} · {sound.artist ?? 'GEN Z'}</Text>
+                    <View style={styles.soundInfo}>
+                      <View style={styles.statRow}>
+                        <Icon name="musical-note" size={13} color={colors.cyan} />
+                        <Text style={styles.panelVal} numberOfLines={1}>
+                          {sound.name} · {sound.artist ?? 'GEN Z'}
+                        </Text>
+                      </View>
+                      {typeof sound.start === 'number' && typeof sound.end === 'number' && (
+                        <Text style={styles.soundTrim}>
+                          Plays {fmtTime(sound.start)} – {fmtTime(sound.end)}
+                        </Text>
+                      )}
                     </View>
+                    <Pressable style={styles.soundAction} onPress={() => setTrimSound(sound)}>
+                      <Icon name="cut-outline" size={13} color={colors.accent} />
+                      <Text style={styles.soundActionText}>Trim</Text>
+                    </Pressable>
                     <Pressable style={styles.resetBtn} onPress={() => setSound(null)}><Text style={styles.resetText}>✕ Remove</Text></Pressable>
                   </>
                 ) : (
@@ -1105,7 +1132,36 @@ export default function CreateDropScreen({
         onClose={() => setPickerOpen(false)}
         onPicked={(a) => setAssets(a)}
       />
-      <SoundPickerModal visible={soundOpen} onClose={() => setSoundOpen(false)} onSelect={(s) => { setSound(s); setSoundOpen(false); }} />
+      <SoundPickerModal
+        visible={soundOpen}
+        onClose={() => setSoundOpen(false)}
+        initial={
+          trimSound
+            ? {
+                id: trimSound.id,
+                name: trimSound.name,
+                artist: trimSound.artist,
+                url: trimSound.url ?? null,
+                start: trimSound.start ?? 0,
+                end: trimSound.end ?? 30,
+              }
+            : null
+        }
+        onSelect={(s) => {
+          setSound({
+            id: s.id,
+            name: s.name,
+            artist: s.artist,
+            category: 'music',
+            usage_count: 0,
+            url: s.url,
+            start: s.start,
+            end: s.end,
+          });
+          setTrimSound(null);
+          setSoundOpen(false);
+        }}
+      />
       <TextLayerEditor
         visible={textLayerOpen}
         onClose={() => setTextLayerOpen(false)}
@@ -1481,6 +1537,21 @@ const styles = StyleSheet.create({
   dropBtnDisabled: { opacity: 0.6 },
   dropBtnText: { color: colors.bg, fontSize: 18, fontWeight: '900', letterSpacing: 0.5 },
   statRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  soundInfo: { flex: 1, marginRight: 8 },
+  soundTrim: { color: colors.textFaint, fontSize: 11, marginTop: 2 },
+  soundAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: colors.accentSoft,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    marginRight: 6,
+  },
+  soundActionText: { color: colors.accent, fontSize: 11, fontWeight: '800' },
   liveWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bgDeep, padding: 24 },
   liveFlame: { padding: 8 },
   liveTitle: { color: colors.accent, fontSize: 34, fontWeight: '900', letterSpacing: 2, marginTop: 10, ...shadows.glow },
