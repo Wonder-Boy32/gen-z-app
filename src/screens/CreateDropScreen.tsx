@@ -90,13 +90,22 @@ const TOOLS: { id: EditorOverlay; icon: string; label: string }[] = [
   { id: 'rotate', icon: '🔄', label: 'Rotate' },
 ];
 
-export default function CreateDropScreen({ onPosted }: { onPosted: () => void }) {
+export default function CreateDropScreen({
+  onPosted,
+  initialSound = null,
+  replyToDropId = null,
+}: {
+  onPosted: () => void;
+  initialSound?: string | null;
+  replyToDropId?: string | null;
+}) {
   const [step, setStep] = useState<Step>('create');
   const [mode, setMode] = useState<Mode>('media');
   const [assets, setAssets] = useState<ImagePicker.ImagePickerAsset[]>([]);
   const [caption, setCaption] = useState('');
   const [content, setContent] = useState('');
   const [textColor, setTextColor] = useState(TEXT_DROP_COLORS[0]);
+  const [parentDropId, setParentDropId] = useState<string | null>(replyToDropId);
 
   // editor state
   const [sound, setSound] = useState<Sound | null>(null);
@@ -170,6 +179,22 @@ export default function CreateDropScreen({ onPosted }: { onPosted: () => void })
       }
     }
   }, [player, firstVideoUri]);
+
+  // create-intent: reply-to-drop chain link
+  useEffect(() => {
+    if (replyToDropId) setParentDropId(replyToDropId);
+  }, [replyToDropId]);
+
+  // create-intent: sound preselected from the Sound page
+  useEffect(() => {
+    if (!initialSound || sound) return;
+    (async () => {
+      const { data } = await supabase.from('sounds').select('*').eq('name', initialSound).maybeSingle();
+      if (data) setSound(data as Sound);
+      else setSound({ id: 'preset', name: initialSound, artist: null, category: 'Viral', usage_count: 0 } as Sound);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSound]);
 
   // live drop fetch + draft fetch on mount
   useEffect(() => {
@@ -454,6 +479,7 @@ export default function CreateDropScreen({ onPosted }: { onPosted: () => void })
       row.location = location.trim() || null;
       row.mentions = mentions.length ? mentions : null;
       if (postToDrop && liveDrop) row.drop_id = liveDrop.id;
+      if (parentDropId) row.parent_drop_id = parentDropId;
 
       // expires_at is NOT sent — DB default sets created_at and expires_at (+48h)
       const { error: err } = await supabase.from('posts').insert(row);
@@ -501,6 +527,13 @@ export default function CreateDropScreen({ onPosted }: { onPosted: () => void })
             <LogoHeader subtitle="Gone in 48 hours. Make it count." />
 
             {/* Media | Text toggle */}
+            {parentDropId && (
+              <View style={styles.replyBanner}>
+                <Text style={styles.replyBannerText}>
+                  🎥 Replying to a Drop — this links back to the original and gets its own 48 hours.
+                </Text>
+              </View>
+            )}
             <View style={styles.segment}>
               {(['media', 'text'] as Mode[]).map((m) => (
                 <Pressable
@@ -1033,6 +1066,21 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     padding: 4,
     marginBottom: 16,
+  },
+  replyBanner: {
+    backgroundColor: 'rgba(139,123,255,0.14)',
+    borderWidth: 1,
+    borderColor: colors.violet,
+    borderRadius: radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginBottom: 12,
+  },
+  replyBannerText: {
+    color: colors.violet,
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 17,
   },
   segmentBtn: { flex: 1, paddingVertical: 10, borderRadius: radius.pill, alignItems: 'center' },
   segmentBtnActive: { backgroundColor: colors.accent },

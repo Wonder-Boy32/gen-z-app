@@ -17,6 +17,14 @@ export default function HomeScreen() {
   const [pendingAudio, setPendingAudio] = useState<string | null>(null);
   const [pendingTag, setPendingTag] = useState<string | null>(null);
 
+  // create-intent routing: sound page / reply-with-drop -> create tab
+  const [createIntent, setCreateIntent] = useState<{ sound?: string; replyTo?: string } | null>(null);
+
+  const handleCreateIntent = (intent: { sound?: string; replyTo?: string }) => {
+    setCreateIntent(intent);
+    setTab('post');
+  };
+
   const openFiltered = (user: string | null, audio: string | null, tag: string | null) => {
     setPendingUser(user);
     setPendingAudio(audio);
@@ -26,6 +34,7 @@ export default function HomeScreen() {
   };
 
   const handlePosted = () => {
+    setCreateIntent(null);
     setFeedKey((k) => k + 1); // remount feed so it refetches
     setTab('feed');
   };
@@ -40,6 +49,7 @@ export default function HomeScreen() {
             initialAudioMode={pendingAudio}
             initialHashtagMode={pendingTag}
             onJoinDrop={() => setTab('post')}
+            onCreateIntent={handleCreateIntent}
           />
         )}
         {tab === 'discover' && (
@@ -50,7 +60,13 @@ export default function HomeScreen() {
             onJoinDrop={() => setTab('post')}
           />
         )}
-        {tab === 'post' && <CreateDropScreen onPosted={handlePosted} />}
+        {tab === 'post' && (
+          <CreateDropScreen
+            onPosted={handlePosted}
+            initialSound={createIntent?.sound ?? null}
+            replyToDropId={createIntent?.replyTo ?? null}
+          />
+        )}
         {tab === 'chat' && <ChatsScreen />}
         {tab === 'profile' && <ProfileScreen />}
       </View>
