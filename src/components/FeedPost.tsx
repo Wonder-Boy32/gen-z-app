@@ -5,10 +5,12 @@ import {
   Image,
   Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   useWindowDimensions,
   View,
+  ViewToken,
 } from 'react-native';
 import DropVideoView, { DropEffects, DropSticker, DropTextLayer } from './DropVideoView';
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
