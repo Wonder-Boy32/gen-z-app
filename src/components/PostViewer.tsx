@@ -15,6 +15,7 @@ import { useInsets } from '../utils/useInsets';
 import FeedPost, { FeedPost as FeedPostType, setFeedUserId } from './FeedPost';
 import CommentsModal from './CommentsModal';
 import SoundPage from './SoundPage';
+import { notifyUser } from '../utils/notify';
 
 export type ViewerPost = FeedPostType;
 
@@ -58,6 +59,7 @@ export default function PostViewer({ posts, index, onClose }: Props) {
     } else {
       await supabase.from('likes').insert({ post_id: post.id, user_id: me });
       patch(post.id, (p) => ({ ...p, liked_by_me: true, likes_count: p.likes_count + 1 }));
+      notifyUser({ userId: post.user_id, actorId: me, type: 'like', postId: post.id });
     }
   };
 
@@ -74,6 +76,9 @@ export default function PostViewer({ posts, index, onClose }: Props) {
         status: post.profile?.is_private ? 'pending' : 'accepted',
       });
       patch(post.id, (p) => ({ ...p, following: !p.profile?.is_private, follow_pending: !!p.profile?.is_private }));
+      if (!post.profile?.is_private) {
+        notifyUser({ userId: post.user_id, actorId: me, type: 'follow' });
+      }
     }
   };
 
@@ -98,6 +103,7 @@ export default function PostViewer({ posts, index, onClose }: Props) {
     } else {
       await supabase.from('reposts').insert({ post_id: post.id, user_id: me });
       patch(post.id, (p) => ({ ...p, reposted_by_me: true }));
+      notifyUser({ userId: post.user_id, actorId: me, type: 'repost', postId: post.id });
     }
   };
 
@@ -108,6 +114,9 @@ export default function PostViewer({ posts, index, onClose }: Props) {
     if (post.my_reaction !== r) {
       await supabase.from('post_reactions').insert({ post_id: post.id, user_id: me, reaction: r });
       patch(post.id, (p) => ({ ...p, my_reaction: r, reactions_count: p.reactions_count + 1 }));
+      if (!post.my_reaction) {
+        notifyUser({ userId: post.user_id, actorId: me, type: 'reaction', postId: post.id });
+      }
     } else {
       patch(post.id, (p) => ({ ...p, my_reaction: null, reactions_count: Math.max(0, p.reactions_count - 1) }));
     }
@@ -194,7 +203,16 @@ export default function PostViewer({ posts, index, onClose }: Props) {
       <Pressable style={[styles.closeBtn, { top: insets.top + 10 }]} onPress={onClose} hitSlop={10}>
         <Text style={styles.closeText}>✕</Text>
       </Pressable>
-      <CommentsModal post={commentPost} onClose={() => setCommentPost(null)} onPosted={() => {}} />
+      <CommentsModal
+        post={commentPost}
+        onClose={() => setCommentPost(null)}
+        onPosted={() => {
+          const me = meRef.current;
+          if (commentPost && me) {
+            notifyUser({ userId: commentPost.user_id, actorId: me, type: 'comment', postId: commentPost.id });
+          }
+        }}
+      />
       {sound && <SoundPage name={sound} onClose={() => setSound(null)} onUseSound={() => {}} />}
     </View>
   );

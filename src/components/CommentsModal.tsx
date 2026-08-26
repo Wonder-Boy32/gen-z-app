@@ -12,6 +12,7 @@ import {
 import { useInsets } from '../utils/useInsets';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
+import { notifyUser } from '../utils/notify';
 
 type CommentRow = {
   id: string;
@@ -28,6 +29,15 @@ type CommentNode = CommentRow & {
 
 type SortKey = 'newest' | 'discussed' | 'top';
 
+async function fetchPostOwner(postId: string): Promise<string | null> {
+  try {
+    const { data } = await supabase.from('posts').select('user_id').eq('id', postId).maybeSingle();
+    return (data as { user_id?: string } | null)?.user_id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 const SORTS: { key: SortKey; label: string }[] = [
   { key: 'discussed', label: 'Most discussed' },
   { key: 'newest', label: 'Newest' },
@@ -35,7 +45,7 @@ const SORTS: { key: SortKey; label: string }[] = [
 ];
 
 type Props = {
-  post: { id: string } | null;
+  post: { id: string; user_id?: string } | null;
   onClose: () => void;
   onPosted: () => void;
   onReplyWithDrop?: () => void;
@@ -115,10 +125,24 @@ export default function CommentsModal({ post, onClose, onPosted, onReplyWithDrop
       setReplyingTo(null);
       onPosted();
       if (inserted.parent_id) {
-        // reply: refresh the tree so the reply count updates
+        // reply: notify the comment owner, then refresh the tree
+        const { data: parentRow } = await supabase
+          .from('comments')
+          .select('user_id')
+          .eq('id', inserted.parent_id)
+          .maybeSingle();
+        const parentOwner = (parentRow as { user_id?: string } | null)?.user_id;
+        if (parentOwner) {
+          notifyUser({ userId: parentOwner, actorId: user.id, type: 'reply', postId: post.id, commentId: inserted.id });
+        }
         load();
       } else {
         setRoots((prev) => [...prev, { ...inserted, replies: [], reply_count: 0 }]);
+        // notify the post owner (fetch owner id if the caller didn't pass it)
+        const ownerId = post.user_id ?? (await fetchPostOwner(post.id));
+        if (ownerId) {
+          notifyUser({ userId: ownerId, actorId: user.id, type: 'comment', postId: post.id, commentId: inserted.id });
+        }
       }
     }
     setSending(false);

@@ -13,6 +13,7 @@ import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import Avatar from './Avatar';
 import Icon from './ui/Icon';
+import { notifyUser } from '../utils/notify';
 import { fmtCount } from './FeedPost';
 
 type PeekProfile = {
@@ -94,6 +95,9 @@ export default function ProfilePeekModal({
         .from('follows')
         .insert({ follower_id: me.id, following_id: user.id, status: profile.is_private ? 'pending' : 'accepted' });
       setFollowing(true);
+      if (!profile.is_private) {
+        notifyUser({ userId: user.id, actorId: me.id, type: 'follow' });
+      }
     }
   };
 

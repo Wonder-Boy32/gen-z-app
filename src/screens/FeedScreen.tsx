@@ -4,6 +4,7 @@ import {
   FlatList,
   Image,
   Pressable,
+  ScrollView,
   Share,
   StyleSheet,
   Text,
@@ -21,6 +22,8 @@ import FeedPost, { setFeedUserId } from '../components/FeedPost';
 import CommentsModal from '../components/CommentsModal';
 import ChainModal from '../components/ChainModal';
 import SoundPage from '../components/SoundPage';
+import NotificationsModal from '../components/NotificationsModal';
+import { notifyUser } from '../utils/notify';
 import DropExperienceScreen from './DropExperienceScreen';
 import PublicProfileScreen from './PublicProfileScreen';
 import ProfilePeekModal from '../components/ProfilePeekModal';
@@ -135,7 +138,29 @@ export default function FeedScreen({
   const [peek, setPeek] = useState<{ id: string; username: string } | null>(null);
   const [myRegion, setMyRegion] = useState<string | null>(null);
   const [storyUsers, setStoryUsers] = useState<StoryUser[]>([]);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const myIdRef = useRef<string | null>(null);
+
+  const loadUnread = useCallback(async () => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      setUnreadCount(0);
+      return;
+    }
+    const { count } = await supabase
+      .from('notifications')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id)
+      .eq('read', false);
+    setUnreadCount(count ?? 0);
+  }, []);
+
+  useEffect(() => {
+    loadUnread();
+  }, [loadUnread]);
   const watchRef = useRef<Map<string, { start: number; reported: boolean }>>(new Map());
 
   // banner entrance + live halo animations
@@ -540,6 +565,7 @@ export default function FeedScreen({
     } else {
       const { error } = await supabase.from('likes').insert({ post_id: post.id, user_id: me });
       if (error) load();
+      notifyUser({ userId: post.user_id, actorId: me, type: 'like', postId: post.id });
     }
   };
 
@@ -567,6 +593,9 @@ export default function FeedScreen({
         status: privateAccount ? 'pending' : 'accepted',
       });
       if (error) load();
+      if (!privateAccount) {
+        notifyUser({ userId: post.user_id, actorId: me, type: 'follow' });
+      }
     }
   };
 
@@ -588,6 +617,7 @@ export default function FeedScreen({
       await supabase.from('reposts').delete().eq('post_id', post.id).eq('user_id', me);
     } else {
       await supabase.from('reposts').insert({ post_id: post.id, user_id: me });
+      notifyUser({ userId: post.user_id, actorId: me, type: 'repost', postId: post.id });
     }
   };
 
@@ -603,6 +633,9 @@ export default function FeedScreen({
     await supabase.from('post_reactions').delete().eq('post_id', post.id).eq('user_id', me);
     if (reaction) {
       await supabase.from('post_reactions').insert({ post_id: post.id, user_id: me, reaction });
+      if (!post.my_reaction) {
+        notifyUser({ userId: post.user_id, actorId: me, type: 'reaction', postId: post.id });
+      }
     }
   };
 
@@ -733,8 +766,23 @@ export default function FeedScreen({
         <LogoHeader compact transparent />
       </View>
 
-      {/* primary feed modes */}
-      <View style={[styles.modeBar, { top: insets.top + 46 }]}>
+      {/* notifications bell */}
+      <Pressable style={[styles.bellBtn, { top: insets.top + 10 }]} onPress={() => setNotifOpen(true)} hitSlop={8}>
+        <Icon name="notifications-outline" size={22} color={colors.logoWhite} />
+        {unreadCount > 0 && (
+          <View style={styles.bellBadge}>
+            <Text style={styles.bellBadgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
+          </View>
+        )}
+      </Pressable>
+
+      {/* primary feed modes — scrollable so every chip fits on small screens */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={[styles.modeBar, { top: insets.top + 50 }]}
+        contentContainerStyle={styles.modeBarContent}
+      >
         {MODES.map((m) => (
           <Pressable
             key={m.key}
@@ -751,7 +799,7 @@ export default function FeedScreen({
             <Text style={[styles.modeChipText, mode === m.key && styles.modeChipTextActive]}>{m.label}</Text>
           </Pressable>
         ))}
-      </View>
+      </ScrollView>
 
       {storiesVisible && (
         <View style={[styles.storiesWrap, { top: insets.top + 88 }]}>
@@ -949,11 +997,15 @@ export default function FeedScreen({
       <CommentsModal
         post={commentPost}
         onClose={() => setCommentPost(null)}
-        onPosted={() =>
+        onPosted={() => {
           setPosts((prev) =>
             prev.map((p) => (p.id === commentPost?.id ? { ...p, comments_count: p.comments_count + 1 } : p))
-          )
-        }
+          );
+          const me = myIdRef.current;
+          if (commentPost && me) {
+            notifyUser({ userId: commentPost.user_id, actorId: me, type: 'comment', postId: commentPost.id });
+          }
+        }}
         onReplyWithDrop={() => {
           if (commentPost) onCreateIntent?.({ replyTo: commentPost.id });
           setCommentPost(null);
@@ -1013,6 +1065,15 @@ export default function FeedScreen({
           setPublicProfile({ id, username });
         }}
       />
+
+      <NotificationsModal
+        visible={notifOpen}
+        onClose={() => {
+          setNotifOpen(false);
+          loadUnread();
+        }}
+        onChanged={loadUnread}
+      />
     </View>
   );
 }
@@ -1062,10 +1123,38 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 11,
+    flexGrow: 0,
+  },
+  modeBarContent: {
     flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+  },
+  bellBtn: {
+    position: 'absolute',
+    right: 14,
+    zIndex: 13,
+    backgroundColor: colors.overlay,
+    borderRadius: 999,
+    padding: 9,
+  },
+  bellBadge: {
+    position: 'absolute',
+    top: -3,
+    right: -3,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-    paddingHorizontal: 6,
+    paddingHorizontal: 4,
+  },
+  bellBadgeText: {
+    color: colors.bg,
+    fontSize: 10,
+    fontWeight: '800',
   },
   modeChip: {
     flexDirection: 'row',

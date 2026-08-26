@@ -13,6 +13,7 @@ import {
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import Icon from '../components/ui/Icon';
+import { notifyUser } from '../utils/notify';
 import { TOP_INSET } from '../utils/useInsets';
 import Button from '../components/Button';
 import Avatar from '../components/Avatar';
@@ -110,6 +111,9 @@ export default function PublicProfileScreen({
         following_id: userId,
         status: privateAccount ? 'pending' : 'accepted',
       });
+      if (!privateAccount) {
+        notifyUser({ userId, actorId: me, type: 'follow' });
+      }
     }
   };
 
