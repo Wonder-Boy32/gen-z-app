@@ -52,6 +52,8 @@ type FeedPostRow = {
   filters: any;
   text_layers: any;
   stickers: any;
+  text_bg: string | null;
+  text_color: string | null;
   likes_count: number;
   comments_count: number;
   views_count: number;
