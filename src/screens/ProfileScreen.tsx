@@ -47,6 +47,10 @@ type Post = {
   text_color: string | null;
   caption: string | null;
   audio: string | null;
+  sound: string | null;
+  sound_url: string | null;
+  sound_start: number | null;
+  sound_end: number | null;
   effects: any;
   filters: any;
   text_layers: any;
@@ -110,7 +114,7 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
         supabase
           .from('posts')
           .select(
-            'id, user_id, media_url, media_type, media_items, cover_url, text_bg, text_color, caption, audio, effects, filters, text_layers, stickers, parent_drop_id, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region)'
+            'id, user_id, media_url, media_type, media_items, cover_url, text_bg, text_color, caption, audio, sound, sound_url, sound_start, sound_end, effects, filters, text_layers, stickers, parent_drop_id, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region)'
           )
           .eq('user_id', user.id)
           .is('parent_drop_id', null) // reply-with-drop posts are comments, not grid content
@@ -118,14 +122,14 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
         supabase
           .from('reposts')
           .select(
-            'post_id, post:posts!reposts_post_id_fkey(id, user_id, media_url, media_type, media_items, cover_url, text_bg, text_color, caption, audio, effects, filters, text_layers, stickers, parent_drop_id, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region))'
+            'post_id, post:posts!reposts_post_id_fkey(id, user_id, media_url, media_type, media_items, cover_url, text_bg, text_color, caption, audio, sound, sound_url, sound_start, sound_end, effects, filters, text_layers, stickers, parent_drop_id, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region))'
           )
           .eq('user_id', user.id)
           .order('created_at', { ascending: false }),
         supabase
           .from('saved_posts')
           .select(
-            'post_id, post:posts!saved_posts_post_id_fkey(id, user_id, media_url, media_type, media_items, cover_url, text_bg, text_color, caption, audio, effects, filters, text_layers, stickers, parent_drop_id, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region))'
+            'post_id, post:posts!saved_posts_post_id_fkey(id, user_id, media_url, media_type, media_items, cover_url, text_bg, text_color, caption, audio, sound, sound_url, sound_start, sound_end, effects, filters, text_layers, stickers, parent_drop_id, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region))'
           )
           .eq('user_id', user.id)
           .order('created_at', { ascending: false }),

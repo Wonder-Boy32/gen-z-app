@@ -15,7 +15,7 @@ import {
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import LogoHeader from '../components/LogoHeader';
-import { useInsets } from '../utils/useInsets';
+import { TOP_INSET, useInsets } from '../utils/useInsets';
 import DropCountdown from '../components/DropCountdown';
 import Icon, { IconName } from '../components/ui/Icon';
 import FeedPost, { setFeedUserId } from '../components/FeedPost';
@@ -51,6 +51,10 @@ type FeedPostRow = {
   media_items: { url: string; type: string }[] | null;
   content: string | null;
   audio: string | null;
+  sound: string | null;
+  sound_url: string | null;
+  sound_start: number | null;
+  sound_end: number | null;
   caption: string | null;
   effects: any;
   filters: any;
@@ -119,6 +123,9 @@ export default function FeedScreen({
 }) {
   const { height } = useWindowDimensions();
   const insets = useInsets();
+  // never let the top nav slide under the status bar — fallback for
+  // builds where the safe-area module reports zero insets
+  const safeTop = Math.max(insets.top, TOP_INSET);
   const [mode, setMode] = useState<FeedMode>('foryou');
   const [posts, setPosts] = useState<FeedPostFull[]>([]);
   const [loading, setLoading] = useState(true);
@@ -706,7 +713,7 @@ export default function FeedScreen({
     null;
 
   // keep the video inside the frame: below the mode chips, above the tab bar
-  const feedTop = insets.top + 80;
+  const feedTop = safeTop + 80;
   const feedBottom = insets.bottom > 0 ? 60 + insets.bottom : 76;
 
   const renderItem = ({ item, index }: { item: FeedPostFull; index: number }) => (
@@ -763,13 +770,13 @@ export default function FeedScreen({
 
   return (
     <View style={styles.container}>
-      <View style={[styles.topScrim, { height: insets.top + 108 }]} pointerEvents="none" />
-      <View style={[styles.topBrand, { paddingTop: insets.top + 8 }]} pointerEvents="none">
+      <View style={[styles.topScrim, { height: safeTop + 108 }]} pointerEvents="none" />
+      <View style={[styles.topBrand, { paddingTop: safeTop + 8 }]} pointerEvents="none">
         <LogoHeader compact transparent />
       </View>
 
       {/* notifications bell */}
-      <Pressable style={[styles.bellBtn, { top: insets.top + 10 }]} onPress={() => setNotifOpen(true)} hitSlop={8}>
+      <Pressable style={[styles.bellBtn, { top: safeTop + 10 }]} onPress={() => setNotifOpen(true)} hitSlop={8}>
         <Icon name="notifications-outline" size={22} color={colors.logoWhite} />
         {unreadCount > 0 && (
           <View style={styles.bellBadge}>
@@ -782,7 +789,7 @@ export default function FeedScreen({
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        style={[styles.modeBar, { top: insets.top + 50 }]}
+        style={[styles.modeBar, { top: safeTop + 50 }]}
         contentContainerStyle={styles.modeBarContent}
       >
         {MODES.map((m) => (
@@ -804,7 +811,7 @@ export default function FeedScreen({
       </ScrollView>
 
       {storiesVisible && (
-        <View style={[styles.storiesWrap, { top: insets.top + 88 }]}>
+        <View style={[styles.storiesWrap, { top: safeTop + 88 }]}>
           <FlatList
             data={storyUsers}
             horizontal
@@ -838,7 +845,7 @@ export default function FeedScreen({
             style={[
             styles.dropBanner,
             {
-              top: storiesVisible ? insets.top + 176 : insets.top + 100,
+              top: storiesVisible ? safeTop + 176 : safeTop + 100,
               opacity: bannerAnim,
               transform: [{ translateY: bannerSlide }],
             },
@@ -905,7 +912,7 @@ export default function FeedScreen({
 
       {(userMode || audioMode || hashtagMode) && (
         <Pressable
-          style={[styles.dropBanner, { top: insets.top + 100 }]}
+          style={[styles.dropBanner, { top: safeTop + 100 }]}
           onPress={() => {
             setUserMode(null);
             setAudioMode(null);

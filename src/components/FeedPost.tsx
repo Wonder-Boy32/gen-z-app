@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import DropVideoView, { DropEffects, DropSticker, DropTextLayer } from './DropVideoView';
+import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { colors, shadows } from '../theme';
 import Avatar from './Avatar';
 import Icon, { IconName } from './ui/Icon';
@@ -23,6 +24,10 @@ export type FeedPost = {
   media_items: { url: string; type: string }[] | null;
   content: string | null;
   audio: string | null;
+  sound: string | null;
+  sound_url: string | null;
+  sound_start: number | null;
+  sound_end: number | null;
   caption: string | null;
   effects: DropEffects | null;
   filters: { id?: string; label?: string }[] | null;
@@ -102,6 +107,32 @@ export default function FeedPost({
   const [holdPause, setHoldPause] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showReasons, setShowReasons] = useState(false);
+
+  // ---------- attached sound track (plays over the video) ----------
+  const soundUrl = post.media_type === 'video' ? post.sound_url : null;
+  const soundPlayer = useAudioPlayer(soundUrl ?? null);
+  const soundStatus = useAudioPlayerStatus(soundPlayer);
+  const soundActive = isActive && !holdPause && !!post.sound_url;
+
+  useEffect(() => {
+    if (soundActive) {
+      const st = post.sound_start ?? 0;
+      const ct = soundStatus.currentTime;
+      const end = post.sound_end;
+      if (ct < st || (end && ct >= end)) soundPlayer.seekTo(st);
+      soundPlayer.play();
+    } else {
+      soundPlayer.pause();
+    }
+  }, [soundActive, post.sound_start, post.sound_end, post.sound_url, soundPlayer]);
+
+  // auto-stop at the trimmed end, ready to loop from the start
+  useEffect(() => {
+    if (soundStatus.playing && post.sound_end && soundStatus.currentTime >= post.sound_end - 0.15) {
+      soundPlayer.pause();
+      soundPlayer.seekTo(post.sound_start ?? 0);
+    }
+  }, [soundStatus.currentTime, soundStatus.playing, post.sound_end, post.sound_start, soundPlayer]);
 
   const showHeart = () => {
     heartAnim.setValue(0);
@@ -254,10 +285,12 @@ export default function FeedPost({
             <TimeLeft expiresAt={post.expires_at} onExpired={onExpired} />
           </View>
 
-          {!!post.audio && (
+          {!!(post.audio ?? post.sound) && (
             <Pressable style={styles.audioChip} onPress={onOpenSound}>
               <Icon name="musical-note" size={13} color={colors.cyan} />
-              <Text style={styles.audioText}>{post.audio}</Text>
+              <Text style={styles.audioText} numberOfLines={1}>
+                {post.sound ?? post.audio}
+              </Text>
               <Text style={styles.audioCta}> ›</Text>
             </Pressable>
           )}
@@ -441,7 +474,17 @@ function MediaArea({
   onHoldEnd?: () => void;
 }) {
   if (post.media_type === 'video' && post.media_url) {
-    return <VideoMedia post={post} isActive={isActive} paused={paused} onTap={onTap} onHoldStart={onHoldStart} onHoldEnd={onHoldEnd} />;
+    return (
+      <VideoMedia
+        post={post}
+        isActive={isActive}
+        paused={paused}
+        forceMute={!!post.sound_url}
+        onTap={onTap}
+        onHoldStart={onHoldStart}
+        onHoldEnd={onHoldEnd}
+      />
+    );
   }
   if (post.media_items && post.media_items.length > 1) {
     return <CarouselMedia items={post.media_items} />;
@@ -461,6 +504,7 @@ function VideoMedia({
   post,
   isActive,
   paused,
+  forceMute = false,
   onTap,
   onHoldStart,
   onHoldEnd,
@@ -468,6 +512,7 @@ function VideoMedia({
   post: FeedPost;
   isActive: boolean;
   paused: boolean;
+  forceMute?: boolean;
   onTap?: () => void;
   onHoldStart?: () => void;
   onHoldEnd?: () => void;
@@ -483,6 +528,7 @@ function VideoMedia({
       paused={paused}
       showProgress
       showMute
+      forceMute={forceMute}
       onTap={onTap}
       onHoldStart={onHoldStart}
       onHoldEnd={onHoldEnd}

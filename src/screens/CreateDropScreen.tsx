@@ -539,6 +539,7 @@ export default function CreateDropScreen({
       }
 
       row.sound = sound?.name ?? null;
+      row.audio = sound?.name ?? null; // feed chip + audio mode read `audio`
       row.sound_artist = sound?.artist ?? null;
       row.sound_url = sound?.url ?? null;
       row.sound_start = sound?.start ?? 0;

@@ -62,6 +62,8 @@ type Props = {
   showMute?: boolean;
   contentFit?: 'cover' | 'contain';
   style?: any;
+  /** start the video muted (used when an added sound track plays instead) */
+  forceMute?: boolean;
   /** tap layer above the video (double-tap to like etc.) — the native
    *  player surface swallows touches, so callers pass handlers here */
   onTap?: () => void;
@@ -81,6 +83,7 @@ export default function DropVideoView({
   showMute = true,
   contentFit = 'cover',
   style,
+  forceMute = false,
   onTap,
   onHoldStart,
   onHoldEnd,
@@ -133,6 +136,14 @@ export default function DropVideoView({
   useEffect(() => {
     setMuted(player.muted);
   }, [player]);
+
+  // force-mute when an added sound track is playing instead
+  useEffect(() => {
+    if (forceMute && !player.muted) {
+      player.muted = true;
+      setMuted(true);
+    }
+  }, [forceMute, player]);
 
   const toggleMute = () => {
     player.muted = !player.muted;
