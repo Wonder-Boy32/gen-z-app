@@ -46,7 +46,14 @@ export default function Button({
         {loading ? (
           <ActivityIndicator color={variant === 'primary' ? colors.bg : colors.accent} />
         ) : (
-          <Text style={[styles.text, styles[`text_${variant}`]]}>{title}</Text>
+          <Text
+            style={[styles.text, styles[`text_${variant}`]]}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.75}
+          >
+            {title}
+          </Text>
         )}
       </Pressable>
     </Animated.View>
@@ -58,8 +65,16 @@ const styles = StyleSheet.create({
     width: '100%',
     borderRadius: radius.pill,
     paddingVertical: 15,
+    paddingHorizontal: 16,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  text: {
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+    textAlign: 'center',
+    flexShrink: 1,
   },
   primary: {
     backgroundColor: colors.accent,
@@ -89,11 +104,6 @@ const styles = StyleSheet.create({
   },
   pressed: {
     opacity: 0.85,
-  },
-  text: {
-    fontSize: 16,
-    fontWeight: '700',
-    letterSpacing: 0.3,
   },
   text_primary: {
     color: colors.bg,
