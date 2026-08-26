@@ -493,7 +493,7 @@ function MediaArea({
       />
     );
   }
-  if (post.media_items && post.media_items.length > 1) {
+  if (Array.isArray(post.media_items) && post.media_items.length > 1) {
     return <CarouselMedia items={post.media_items} />;
   }
   if (post.media_url) {
@@ -548,23 +548,28 @@ function CarouselMedia({ items }: { items: { url: string; type: string }[] }) {
   const [index, setIndex] = useState(0);
   return (
     <View style={styles.fill}>
-      <FlatList
-        data={items}
-        keyExtractor={(it, i) => `${it.url}-${i}`}
+      <ScrollView
         horizontal
         pagingEnabled
+        nestedScrollEnabled
+        directionalLockEnabled
         showsHorizontalScrollIndicator={false}
         style={styles.carousel}
-        getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
         onMomentumScrollEnd={(e) =>
           setIndex(Math.round(e.nativeEvent.contentOffset.x / width))
         }
-        renderItem={({ item }) => (
-          <Image source={{ uri: item.url }} style={[styles.carouselImage, { width }]} resizeMode="cover" />
-        )}
-      />
+      >
+        {items.map((it, i) => (
+          <Image
+            key={`${it.url}-${i}`}
+            source={{ uri: it.url }}
+            style={[styles.carouselImage, { width }]}
+            resizeMode="cover"
+          />
+        ))}
+      </ScrollView>
       {items.length > 1 && (
-        <View style={styles.dots}>
+        <View style={styles.dots} pointerEvents="none">
           {items.map((it, i) => (
             <View key={i} style={[styles.dot, i === index && styles.dotActive]} />
           ))}
