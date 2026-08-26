@@ -15,7 +15,12 @@ export function hasNativeFFmpeg(): boolean {
   if (!checked) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      nativeFFmpeg = require('ffmpeg-kit-react-native');
+      const mod = require('ffmpeg-kit-react-native');
+      // The JS wrapper loads even when the native side is absent (Expo Go) —
+      // only trust it if the actual native module exists.
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { NativeModules } = require('react-native');
+      nativeFFmpeg = NativeModules?.FFmpegKitReactNativeModule ? mod : null;
     } catch {
       nativeFFmpeg = null;
     }
