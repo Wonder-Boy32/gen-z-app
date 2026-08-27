@@ -11,7 +11,11 @@
       "expo-image-picker",
       "expo-video",
       "expo-audio",
-      "expo-dev-client"
+      "expo-dev-client",
+      [
+        "expo-media-library",
+        { "photosPermission": "Allow Gen Z to save your anonymous cards to your photo library." }
+      ]
     ],
     "android": {
       "package": "com.genz.app",

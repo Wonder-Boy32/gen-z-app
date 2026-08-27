@@ -18,6 +18,7 @@
     "expo-dev-client": "~57.0.16",
     "expo-file-system": "^57.0.6",
     "expo-image-picker": "~57.0.14",
+    "expo-media-library": "^57.0.4",
     "expo-video": "~57.0.3",
     "ffmpeg-kit-react-native": "^6.0.2",
     "react": "19.2.3",
