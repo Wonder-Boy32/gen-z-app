@@ -212,7 +212,7 @@ export default function CreateDropScreen({
   useEffect(() => {
     if (!capturePlayer) return;
     const sub = capturePlayer.addListener('timeUpdate', ({ currentTime }: { currentTime: number }) => {
-      if (currentTime >= 0.4) capturePlayer.pause();
+      if (currentTime >= 2.5) capturePlayer.pause();
     });
     return () => sub.remove();
   }, [capturePlayer]);
@@ -230,13 +230,21 @@ export default function CreateDropScreen({
   const captureCoverNow = useCallback(async (): Promise<string | null> => {
     if (!coverCaptureRef.current || !capturePlayer) return null;
     try {
-      capturePlayer.currentTime = 0;
+      capturePlayer.pause();
+      capturePlayer.currentTime = 0.5; // a real frame — not the (often black) first frame
+      await new Promise((r) => setTimeout(r, 250)); // let the seek land
       capturePlayer.play();
-      await new Promise((r) => setTimeout(r, 700));
+      // wait until the frame is actually decoded (with a safety timeout)
+      const start = Date.now();
+      while (capturePlayer.currentTime < 0.55 && Date.now() - start < 3000) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      // let the texture finish drawing before the screenshot
+      await new Promise((r) => setTimeout(r, 400));
       capturePlayer.pause();
       const uri = await captureRef(coverCaptureRef.current, {
         format: 'jpg',
-        quality: 0.7,
+        quality: 0.85,
         result: 'tmpfile',
       });
       return uri;
@@ -517,14 +525,18 @@ export default function CreateDropScreen({
           if (isVideo && i === 0) {
             let coverSrc: string | null = coverUri;
             if (!coverSrc) {
-              try {
-                coverSrc = await captureCoverNow();
-              } catch {}
-            }
-            if (!coverSrc && hasNativeFFmpeg()) {
-              try {
-                coverSrc = await extractVideoCover(asset.uri);
-              } catch {}
+              // native builds: ffmpeg extracts a perfect frame; Expo Go:
+              // frame-aware view-shot (skips black first frames)
+              if (hasNativeFFmpeg()) {
+                try {
+                  coverSrc = await extractVideoCover(asset.uri);
+                } catch {}
+              }
+              if (!coverSrc) {
+                try {
+                  coverSrc = await captureCoverNow();
+                } catch {}
+              }
             }
             if (coverSrc) {
               try {
