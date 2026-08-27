@@ -42,6 +42,7 @@ type StoryUser = {
   id: string;
   username: string;
   avatar_url: string | null;
+  following?: boolean;
 };
 
 type FeedPostRow = {
@@ -148,6 +149,8 @@ export default function FeedScreen({
   const [storyUsers, setStoryUsers] = useState<StoryUser[]>([]);
   const [notifOpen, setNotifOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [liveCount, setLiveCount] = useState(0);
+  const [expiringCount, setExpiringCount] = useState(0);
   const myIdRef = useRef<string | null>(null);
 
   const loadUnread = useCallback(async () => {
@@ -245,14 +248,16 @@ export default function FeedScreen({
   );
 
   const loadSuggestions = useCallback(async (me: string | null) => {
-    const [hid, mut, blk] = await Promise.all([
+    const [hid, mut, blk, fws] = await Promise.all([
       supabase.from('hidden_posts').select('post_id'),
       supabase.from('muted_users').select('muted_id'),
       supabase.from('blocks').select('blocked_id').eq('blocker_id', me ?? ''),
+      supabase.from('follows').select('following_id').eq('follower_id', me ?? ''),
     ]);
     const hidden = new Set((hid.data ?? []).map((x) => x.post_id));
     const muted = new Set((mut.data ?? []).map((x) => x.muted_id));
     const blocked = new Set((blk.data ?? []).map((x) => x.blocked_id));
+    const followed = new Set((fws.data ?? []).map((x) => x.following_id));
     const { data: profs } = await supabase
       .from('profiles')
       .select('id, username, avatar_url')
@@ -260,9 +265,9 @@ export default function FeedScreen({
       .order('created_at', { ascending: false })
       .limit(12);
     setSuggestions(
-      ((profs ?? []) as { id: string; username: string; avatar_url: string | null }[]).filter(
-        (u) => !hidden.has(u.id) && !muted.has(u.id) && !blocked.has(u.id)
-      )
+      ((profs ?? []) as { id: string; username: string; avatar_url: string | null }[])
+        .filter((u) => !hidden.has(u.id) && !muted.has(u.id) && !blocked.has(u.id))
+        .map((u) => ({ ...u, following: followed.has(u.id) }))
     );
   }, []);
 
@@ -492,6 +497,27 @@ export default function FeedScreen({
 
     if (!posts.length) loadSuggestions(user?.id ?? null);
 
+    // chip badges: LIVE dot (final 10 min) + EXPIRING count (next 6 hours)
+    const nowIso = new Date().toISOString();
+    const liveIso = new Date(Date.now() + 10 * 60000).toISOString();
+    const expIso = new Date(Date.now() + 6 * 3600000).toISOString();
+    const [{ count: liveC }, { count: expC }] = await Promise.all([
+      supabase
+        .from('posts')
+        .select('id', { count: 'exact', head: true })
+        .is('parent_drop_id', null)
+        .gt('expires_at', nowIso)
+        .lte('expires_at', liveIso),
+      supabase
+        .from('posts')
+        .select('id', { count: 'exact', head: true })
+        .is('parent_drop_id', null)
+        .gte('expires_at', nowIso)
+        .lte('expires_at', expIso),
+    ]);
+    setLiveCount(liveC ?? 0);
+    setExpiringCount(expC ?? 0);
+
     const { data: dropData } = await supabase
       .from('drops')
       .select('*')
@@ -650,6 +676,15 @@ export default function FeedScreen({
   };
 
   const removePost = (id: string) => setPosts((prev) => prev.filter((p) => p.id !== id));
+
+  // follow straight from the suggestion cards (empty-feed onboarding)
+  const followUser = async (id: string) => {
+    const me = myIdRef.current;
+    if (!me || me === id) return;
+    await supabase.from('follows').insert({ follower_id: me, following_id: id, status: 'accepted' });
+    notifyUser({ userId: id, actorId: me, type: 'follow' });
+    setSuggestions((prev) => prev.map((s) => (s.id === id ? { ...s, following: true } : s)));
+  };
 
   // personalization actions — all real, all persisted
   const personalize = async (post: FeedPostFull, action: 'hide' | 'mute' | 'block' | 'notinterested' | 'report' | 'delete') => {
@@ -824,6 +859,22 @@ export default function FeedScreen({
           >
             <Icon name={m.icon} size={13} color={mode === m.key ? colors.accent : colors.textMuted} />
             <Text style={[styles.modeChipText, mode === m.key && styles.modeChipTextActive]}>{m.label}</Text>
+            {m.key === 'live' && liveCount > 0 && (
+              <View style={styles.liveChipWrap}>
+                <Animated.View
+                  style={[
+                    styles.liveChipHalo,
+                    { opacity: haloPulse.interpolate({ inputRange: [0, 1], outputRange: [0.2, 0.55] }) },
+                  ]}
+                />
+                <View style={styles.liveChipDot} />
+              </View>
+            )}
+            {m.key === 'expiring' && expiringCount > 0 && (
+              <View style={styles.expChipBadge}>
+                <Text style={styles.expChipBadgeText}>{expiringCount > 9 ? '9+' : expiringCount}</Text>
+              </View>
+            )}
           </Pressable>
         ))}
       </ScrollView>
@@ -980,13 +1031,20 @@ export default function FeedScreen({
           windowSize={5}
           ListEmptyComponent={
             <View style={styles.emptyBox}>
+              {mode === 'following' && (
+                <View style={styles.emptyIconWrap}>
+                  <Icon name="people" size={26} color={colors.accent} />
+                </View>
+              )}
               <Text style={styles.emptyTitle}>{emptyCopy.title}</Text>
               <Text style={styles.emptyText}>{emptyCopy.text}</Text>
               {suggestions.length > 0 && (
                 <View style={styles.suggestWrap}>
                   <View style={styles.suggestTitleRow}>
                     <Icon name="flame" size={15} color={colors.accent} />
-                    <Text style={styles.suggestTitle}>Discover something new</Text>
+                    <Text style={styles.suggestTitle}>
+                      {mode === 'following' ? 'People you might like' : 'Discover something new'}
+                    </Text>
                   </View>
                   <FlatList
                     data={suggestions}
@@ -1008,9 +1066,24 @@ export default function FeedScreen({
                         <Text style={styles.suggestName} numberOfLines={1}>
                           @{item.username}
                         </Text>
-                        <View style={styles.suggestBtn}>
-                          <Text style={styles.suggestBtnText}>View drops</Text>
-                        </View>
+                        <Pressable
+                          style={[styles.suggestBtn, item.following && styles.suggestBtnFollowing]}
+                          onPress={() => {
+                            if (!item.following) followUser(item.id);
+                          }}
+                          hitSlop={4}
+                        >
+                          <Icon
+                            name={item.following ? 'checkmark' : 'add'}
+                            size={12}
+                            color={item.following ? colors.accent : colors.bg}
+                          />
+                          <Text
+                            style={[styles.suggestBtnText, item.following && styles.suggestBtnTextFollowing]}
+                          >
+                            {item.following ? 'Following' : 'Follow'}
+                          </Text>
+                        </Pressable>
                       </Pressable>
                     )}
                   />
@@ -1201,6 +1274,39 @@ const styles = StyleSheet.create({
   },
   modeChipText: { color: colors.textMuted, fontSize: 11.5, fontWeight: '700' },
   modeChipTextActive: { color: colors.accent },
+  liveChipWrap: {
+    width: 10,
+    height: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 1,
+  },
+  liveChipHalo: {
+    position: 'absolute',
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: colors.danger,
+  },
+  liveChipDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: colors.danger,
+  },
+  expChipBadge: {
+    minWidth: 17,
+    height: 17,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.accentSoft,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    marginLeft: 2,
+  },
+  expChipBadgeText: { color: colors.accent, fontSize: 9.5, fontWeight: '800' },
   storiesWrap: {
     position: 'absolute',
     left: 0,
