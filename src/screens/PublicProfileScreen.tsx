@@ -19,6 +19,7 @@ import Button from '../components/Button';
 import Avatar from '../components/Avatar';
 import PostViewer from '../components/PostViewer';
 import ChatThread from './ChatThread';
+import AnonymousSendScreen from './AnonymousSendScreen';
 
 type Profile = {
   id: string;
@@ -89,6 +90,7 @@ export default function PublicProfileScreen({
   const [threadId, setThreadId] = useState<string | null>(null);
   const [chatBusy, setChatBusy] = useState(false);
   const [viewer, setViewer] = useState<number | null>(null);
+  const [anonOpen, setAnonOpen] = useState(false);
   const myIdRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
@@ -228,6 +230,19 @@ export default function PublicProfileScreen({
     return posts;
   }, [posts, filter]);
 
+  // anonymous message flow
+  if (anonOpen) {
+    return (
+      <Modal visible animationType="slide" onRequestClose={() => setAnonOpen(false)} statusBarTranslucent>
+        <AnonymousSendScreen
+          recipientId={userId}
+          recipientName={profile?.username ?? username}
+          onBack={() => setAnonOpen(false)}
+        />
+      </Modal>
+    );
+  }
+
   // if a chat is open, show the thread instead
   if (threadId) {
     return (
@@ -363,12 +378,19 @@ export default function PublicProfileScreen({
                       />
                       <Button variant="ghost" title="Message" onPress={openChat} style={styles.msgBtn} />
                     </View>
-                  ) : (
+                  ) : null}
+                  {!isOwn && (
+                    <Pressable style={styles.anonSendBtn} onPress={() => setAnonOpen(true)}>
+                      <Icon name="eye-off-outline" size={14} color={colors.accent} />
+                      <Text style={styles.anonSendText}>Send me an anonymous message 👀</Text>
+                    </Pressable>
+                  )}
+                  {isOwn ? (
                     <View style={styles.chip}>
                       <Icon name="person-circle-outline" size={14} color={colors.textMuted} />
                       <Text style={styles.chipText}>This is you</Text>
                     </View>
-                  )}
+                  ) : null}
 
                   {profile?.is_private && !isOwn && followState !== 'following' && (
                     <View style={styles.lockBox}>
@@ -594,6 +616,20 @@ const styles = StyleSheet.create({
   msgBtn: {
     flex: 1,
   },
+  anonSendBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    alignSelf: 'stretch',
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,122,0,0.4)',
+    backgroundColor: 'rgba(255,122,0,0.08)',
+    borderRadius: 999,
+    paddingVertical: 9,
+  },
+  anonSendText: { color: colors.accent, fontSize: 12.5, fontWeight: '800' },
   lockBox: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -4,6 +4,7 @@ import {
   FlatList,
   Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -11,6 +12,7 @@ import {
 } from 'react-native';
 import { supabase } from '../supabase/client';
 import ChatThread from './ChatThread';
+import AnonymousInboxScreen from './AnonymousInboxScreen';
 import { colors, radius } from '../theme';
 import Icon from '../components/ui/Icon';
 import { TOP_INSET } from '../utils/useInsets';
@@ -25,25 +27,66 @@ type Conv = {
   name: string | null;
   other: { id: string; username: string; avatar_url: string | null; last_seen_at: string | null } | null;
   lastMessage: string | null;
+  lastType: string;
   lastTime: string | null;
   unread: number;
   members: number;
 };
 
-export default function ChatsScreen() {
-  const [conversationId, setConversationId] = useState<string | null>(null);
+type ActiveUser = { id: string; username: string; avatar_url: string | null; following: boolean };
 
+const FILTERS: { key: 'all' | 'unread' | 'requests' | 'drops'; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'unread', label: 'Unread' },
+  { key: 'requests', label: 'Requests' },
+  { key: 'drops', label: 'Drops' },
+];
+
+export default function ChatsScreen({
+  onOpenUser,
+  onOpenCreate,
+}: {
+  onOpenUser?: (userId: string) => void;
+  onOpenCreate?: () => void;
+}) {
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [anonOpen, setAnonOpen] = useState(false);
+
+  if (anonOpen) {
+    return (
+      <AnonymousInboxScreen onBack={() => setAnonOpen(false)} onReplyWithDrop={onOpenCreate} />
+    );
+  }
   if (conversationId) {
     return <ChatThread conversationId={conversationId} onBack={() => setConversationId(null)} />;
   }
-  return <ConversationList onOpen={setConversationId} />;
+  return (
+    <ConversationList
+      onOpen={setConversationId}
+      onOpenUser={onOpenUser}
+      onOpenAnon={() => setAnonOpen(true)}
+    />
+  );
 }
 
-function ConversationList({ onOpen }: { onOpen: (id: string) => void }) {
+function ConversationList({
+  onOpen,
+  onOpenUser,
+  onOpenAnon,
+}: {
+  onOpen: (id: string) => void;
+  onOpenUser?: (userId: string) => void;
+  onOpenAnon: () => void;
+}) {
   const [convs, setConvs] = useState<Conv[]>([]);
   const [loading, setLoading] = useState(true);
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [groupModal, setGroupModal] = useState(false);
+  const [filter, setFilter] = useState<'all' | 'unread' | 'requests' | 'drops'>('all');
+  const [search, setSearch] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [activeUsers, setActiveUsers] = useState<ActiveUser[]>([]);
+  const followingRef = useRef<Set<string>>(new Set());
   const myIdRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
@@ -70,7 +113,7 @@ function ConversationList({ onOpen }: { onOpen: (id: string) => void }) {
 
     const ids = rows.map((p) => p.conversation_id);
 
-    const [{ data: others }, { data: msgs }] = await Promise.all([
+    const [{ data: others }, { data: msgs }, { data: fws }, { data: activePosts }] = await Promise.all([
       supabase
         .from('conversation_participants')
         .select('conversation_id, user_id, profile:profiles(username, avatar_url, last_seen_at)')
@@ -82,7 +125,31 @@ function ConversationList({ onOpen }: { onOpen: (id: string) => void }) {
         .in('conversation_id', ids)
         .order('created_at', { ascending: false })
         .limit(500),
+      supabase.from('follows').select('following_id').eq('follower_id', me).eq('status', 'accepted'),
+      supabase
+        .from('posts')
+        .select('user_id, profile:profiles!posts_user_id_fkey(id, username, avatar_url)')
+        .gt('expires_at', new Date().toISOString())
+        .is('parent_drop_id', null)
+        .order('created_at', { ascending: false })
+        .limit(60),
     ]);
+    followingRef.current = new Set((fws ?? []).map((f: any) => f.following_id));
+
+    // 🔥 Active Drops — distinct recent droppers (real active content only)
+    const seenU = new Set<string>();
+    const droppers: ActiveUser[] = [];
+    ((activePosts ?? []) as any[]).forEach((p: any) => {
+      if (!p.user_id || p.user_id === me || seenU.has(p.user_id)) return;
+      seenU.add(p.user_id);
+      droppers.push({
+        id: p.user_id,
+        username: p.profile?.username ?? 'unknown',
+        avatar_url: p.profile?.avatar_url ?? null,
+        following: followingRef.current.has(p.user_id),
+      });
+    });
+    setActiveUsers(droppers.slice(0, 12));
 
     const memberCount = new Map<string, number>();
     (others ?? []).forEach((o: any) => {
@@ -123,6 +190,7 @@ function ConversationList({ onOpen }: { onOpen: (id: string) => void }) {
           name: conv.name ?? null,
           other: otherByConv.get(r.conversation_id) ?? null,
           lastMessage: last ? previewOf(last) : null,
+          lastType: last?.msg_type ?? 'text',
           lastTime: last ? fmtTime(last.created_at) : null,
           unread: unreadByConv.get(r.conversation_id) ?? 0,
           members: (memberCount.get(r.conversation_id) ?? 0) + 1,
@@ -201,25 +269,65 @@ function ConversationList({ onOpen }: { onOpen: (id: string) => void }) {
     onOpen(conv.id);
   };
 
+  const shown = convs.filter((c) => {
+    if (filter === 'unread' && c.unread === 0) return false;
+    if (filter === 'requests' && !(c.type === 'direct' && c.other && !followingRef.current.has(c.other.id) && c.unread > 0))
+      return false;
+    if (filter === 'drops' && c.lastType !== 'drop') return false;
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      const name = c.type === 'group' ? (c.name ?? '') : (c.other?.username ?? '');
+      if (!name.toLowerCase().includes(q) && !(c.lastMessage ?? '').toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <LogoHeader />
-        <Pressable style={styles.newBtn} onPress={() => setNewChatOpen(true)}>
-          <Icon name="add" size={14} color={colors.bg} />
-          <Text style={styles.newBtnText}>New chat</Text>
+        <Pressable style={styles.headerIconBtn} onPress={() => setSearchOpen((v) => !v)} hitSlop={6}>
+          <Icon name="search" size={18} color={colors.text} />
         </Pressable>
-        <Pressable style={[styles.newBtn, styles.newGroupBtn]} onPress={() => setGroupModal(true)}>
-          <Icon name="people" size={14} color={colors.bg} />
-          <Text style={styles.newBtnText}>New group</Text>
+        <Pressable style={styles.headerIconBtn} onPress={() => setNewChatOpen(true)} hitSlop={6}>
+          <Icon name="add" size={19} color={colors.accent} />
         </Pressable>
+        <Pressable style={styles.headerIconBtn} onPress={() => setGroupModal(true)} hitSlop={6}>
+          <Icon name="people" size={17} color={colors.text} />
+        </Pressable>
+      </View>
+
+      {searchOpen && (
+        <View style={styles.searchWrap}>
+          <Icon name="search" size={15} color={colors.textMuted} />
+          <TextInput
+            style={styles.chatSearchInput}
+            placeholder="Search chats, messages, drops..."
+            placeholderTextColor={colors.textMuted}
+            value={search}
+            onChangeText={setSearch}
+            autoFocus
+          />
+        </View>
+      )}
+
+      <View style={styles.tabsRow}>
+        {FILTERS.map((f) => (
+          <Pressable
+            key={f.key}
+            style={[styles.tabChip, filter === f.key && styles.tabChipActive]}
+            onPress={() => setFilter(f.key)}
+          >
+            <Text style={[styles.tabChipText, filter === f.key && styles.tabChipTextActive]}>{f.label}</Text>
+          </Pressable>
+        ))}
       </View>
 
       {loading ? (
         <ActivityIndicator color={colors.accent} style={styles.loader} />
       ) : (
         <FlatList
-          data={convs}
+          data={shown}
           keyExtractor={(c) => c.id}
           renderItem={({ item }) => (
             <Pressable style={styles.convRow} onPress={() => onOpen(item.id)}>
@@ -252,8 +360,46 @@ function ConversationList({ onOpen }: { onOpen: (id: string) => void }) {
               </View>
             </Pressable>
           )}
+          ListHeaderComponent={
+            <>
+              {activeUsers.length > 0 && (
+                <View style={styles.activeSection}>
+                  <Text style={styles.sectionLabel}>🔥 Active Drops</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.activeRow}>
+                    {activeUsers.map((u) => (
+                      <Pressable
+                        key={u.id}
+                        style={styles.activeItem}
+                        onPress={() => onOpenUser?.(u.id)}
+                      >
+                        <View style={[styles.activeRing, u.following && styles.activeRingFollowed]}>
+                          <Avatar url={u.avatar_url} name={u.username} size={46} />
+                        </View>
+                        <Text style={styles.activeName} numberOfLines={1}>
+                          @{u.username}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+
+              <Pressable style={styles.anonCard} onPress={onOpenAnon}>
+                <View style={styles.anonIcon}>
+                  <Icon name="eye-off-outline" size={18} color={colors.accent} />
+                </View>
+                <View style={styles.anonInfo}>
+                  <Text style={styles.anonTitle}>🕵️ Anonymous Inbox</Text>
+                  <Text style={styles.anonSub}>Messages without names — see who's curious 👀</Text>
+                </View>
+                <Icon name="chevron-forward" size={16} color={colors.textMuted} />
+              </Pressable>
+            </>
+          }
           ListEmptyComponent={
-            <Text style={styles.empty}>No chats yet. Start one — or create a group.</Text>
+            <Text style={styles.empty}>
+              {search.trim() || filter !== 'all' ? 'Nothing here.' : 'No chats yet. Start one — or create a group.'}
+            </Text>
           }
         />
       )}
@@ -274,14 +420,15 @@ function ConversationList({ onOpen }: { onOpen: (id: string) => void }) {
 }
 
 function previewOf(m: { content: string | null; msg_type: string }): string {
+  if (m.msg_type === 'drop') return '🔥 [Drop]';
   if (m.content) return m.content;
   switch (m.msg_type) {
     case 'image':
-      return 'Image';
+      return '📷 Photo';
     case 'video':
-      return 'Video';
+      return '🎬 Video';
     case 'voice':
-      return 'Voice message';
+      return '🎤 Voice message';
     case 'gif':
       return 'GIF';
     default:
@@ -607,4 +754,83 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: 14,
   },
+  headerIconBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(255,255,255,0.07)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 8,
+  },
+  searchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 10,
+    backgroundColor: colors.surfaceInput,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.pill,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  chatSearchInput: { flex: 1, color: colors.text, fontSize: 13.5, padding: 0 },
+  tabsRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingBottom: 10 },
+  tabChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  tabChipActive: { backgroundColor: colors.accent },
+  tabChipText: { color: colors.textMuted, fontSize: 12.5, fontWeight: '700' },
+  tabChipTextActive: { color: colors.bg, fontWeight: '800' },
+  activeSection: { marginBottom: 6 },
+  sectionLabel: {
+    color: colors.text,
+    fontSize: 13.5,
+    fontWeight: '900',
+    paddingHorizontal: 16,
+    marginBottom: 10,
+    marginTop: 4,
+  },
+  activeRow: { paddingHorizontal: 16, gap: 14, paddingBottom: 4 },
+  activeItem: { alignItems: 'center', width: 62 },
+  activeRing: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.25)',
+    padding: 2,
+    marginBottom: 4,
+  },
+  activeRingFollowed: { borderColor: colors.accent },
+  activeName: { color: colors.textMuted, fontSize: 10.5, fontWeight: '600', maxWidth: 62 },
+  anonCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginHorizontal: 16,
+    marginTop: 10,
+    marginBottom: 6,
+    backgroundColor: 'rgba(255,122,0,0.09)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,122,0,0.35)',
+    borderRadius: radius.lg,
+    padding: 13,
+  },
+  anonIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(255,122,0,0.16)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  anonInfo: { flex: 1 },
+  anonTitle: { color: colors.accent, fontSize: 14, fontWeight: '900' },
+  anonSub: { color: colors.textMuted, fontSize: 11.5, marginTop: 2 },
 });

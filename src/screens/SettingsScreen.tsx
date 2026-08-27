@@ -18,6 +18,7 @@ import { TOP_INSET } from '../utils/useInsets';
 import Button from '../components/Button';
 import Avatar from '../components/Avatar';
 import AvatarPickerModal from '../components/AvatarPickerModal';
+import AnonymousSettingsModal from '../components/AnonymousSettingsModal';
 
 type Profile = {
   username: string;
@@ -45,6 +46,7 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
   const [editOpen, setEditOpen] = useState(false);
   const [usernameOpen, setUsernameOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
+  const [anonOpen, setAnonOpen] = useState(false);
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -247,6 +249,11 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
         </Section>
 
         <Section title="Account">
+          <Row
+            label="🕵️ Anonymous Messages"
+            detail="Control who can message you anonymously"
+            onPress={() => setAnonOpen(true)}
+          />
           <Row label="Help & Support" detail="genz.support@placeholder.com" onPress={() => {}} />
           <Pressable style={styles.logoutBtn} onPress={logout}>
             <Text style={styles.logoutText}>Log out</Text>
@@ -272,6 +279,7 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
         }}
       />
       <ChangePasswordModal visible={passwordOpen} onClose={() => setPasswordOpen(false)} onSave={changePassword} />
+      <AnonymousSettingsModal visible={anonOpen} onClose={() => setAnonOpen(false)} />
     </View>
   );
 }

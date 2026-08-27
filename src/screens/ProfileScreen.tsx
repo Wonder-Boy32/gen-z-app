@@ -22,6 +22,7 @@ import AvatarPickerModal from '../components/AvatarPickerModal';
 import PostViewer from '../components/PostViewer';
 import PeopleScreen from './PeopleScreen';
 import SettingsScreen from './SettingsScreen';
+import AnonymousSettingsModal from '../components/AnonymousSettingsModal';
 
 type Profile = {
   username: string;
@@ -97,6 +98,7 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
   const [editing, setEditing] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [anonSettingsOpen, setAnonSettingsOpen] = useState(false);
   const [peopleMode, setPeopleMode] = useState<'followers' | 'following' | null>(null);
 
   const load = useCallback(async () => {
@@ -178,6 +180,12 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
     });
   };
 
+  const shareAnonLink = () => {
+    Share.share({
+      message: `Send me an anonymous message on Gen Z 👀 — I won't know it's you. Open Gen Z → my profile → "Send me an anonymous message".`,
+    });
+  };
+
   const achievements = useAchievements(profile, posts, totalLikes);
   const activePosts = posts; // RLS already returns only unexpired posts
 
@@ -254,6 +262,17 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
               <View style={styles.btnRow}>
                 <Button variant="secondary" title="Edit profile" onPress={() => setEditing(true)} style={styles.halfBtn} />
                 <Button variant="secondary" title="Share profile" onPress={() => setShareOpen(true)} style={styles.halfBtn} />
+              </View>
+
+              <View style={styles.anonRow}>
+                <Pressable style={styles.anonRowBtn} onPress={() => setAnonSettingsOpen(true)}>
+                  <Icon name="eye-off-outline" size={14} color={colors.accent} />
+                  <Text style={styles.anonRowText}>Anonymous messages</Text>
+                </Pressable>
+                <Pressable style={styles.anonRowBtn} onPress={shareAnonLink}>
+                  <Icon name="share-social-outline" size={14} color={colors.accent} />
+                  <Text style={styles.anonRowText}>Share link</Text>
+                </Pressable>
               </View>
 
               {achievements.length > 0 && (
@@ -387,6 +406,8 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
       />
 
       <ShareProfileModal visible={shareOpen} profile={profile} onClose={() => setShareOpen(false)} onShare={shareProfile} />
+
+      <AnonymousSettingsModal visible={anonSettingsOpen} onClose={() => setAnonSettingsOpen(false)} />
 
       {viewer && (
         <View style={styles.viewerWrap}>
@@ -693,6 +714,25 @@ const styles = StyleSheet.create({
     width: '48%',
     marginHorizontal: '1%',
   },
+  anonRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10,
+    width: '100%',
+  },
+  anonRowBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255,122,0,0.35)',
+    backgroundColor: 'rgba(255,122,0,0.08)',
+    borderRadius: 999,
+    paddingVertical: 8,
+  },
+  anonRowText: { color: colors.accent, fontSize: 12, fontWeight: '800' },
   achievements: {
     flexDirection: 'row',
     flexWrap: 'wrap',

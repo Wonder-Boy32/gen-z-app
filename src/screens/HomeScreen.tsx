@@ -67,7 +67,12 @@ export default function HomeScreen() {
             replyToDropId={createIntent?.replyTo ?? null}
           />
         )}
-        {tab === 'chat' && <ChatsScreen />}
+        {tab === 'chat' && (
+          <ChatsScreen
+            onOpenUser={(id) => openFiltered(id, null, null)}
+            onOpenCreate={() => handleCreateIntent({})}
+          />
+        )}
         {tab === 'profile' && (
           <ProfileScreen
             onOpenDropsFeed={(userId) => {
