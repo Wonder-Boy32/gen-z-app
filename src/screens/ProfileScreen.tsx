@@ -289,6 +289,7 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
                           <Image
                             source={{ uri: item.cover_url ?? item.media_url! }}
                             style={styles.dropMedia}
+                            resizeMode="cover"
                           />
                         ) : item.media_type === 'video' ? (
                           <View style={[styles.dropMedia, styles.dropVideoPh]}>
@@ -300,6 +301,11 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
                         ) : (
                           <View style={[styles.dropMedia, styles.dropTextBg, item.text_bg ? { backgroundColor: item.text_bg } : null]}>
                             <Text style={[styles.dropText, item.text_color ? { color: item.text_color } : null]} numberOfLines={3}>{item.content}</Text>
+                          </View>
+                        )}
+                        {item.media_type === 'video' && (
+                          <View style={styles.cardPlayBadge}>
+                            <Icon name="play" size={16} color={colors.logoWhite} />
                           </View>
                         )}
                         <View style={styles.dropInfo}>
@@ -334,7 +340,7 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
               delayLongPress={450}
             >
               {item.cover_url || (item.media_type === 'image' && item.media_url) ? (
-                <Image source={{ uri: item.cover_url ?? item.media_url! }} style={styles.tileImage} />
+                <Image source={{ uri: item.cover_url ?? item.media_url! }} style={styles.tileImage} resizeMode="cover" />
               ) : item.media_type === 'video' ? (
                 <View style={[styles.tileImage, styles.tileVideoPh]}>
                   <View style={styles.statRow}>
@@ -761,6 +767,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#0A1220',
+  },
+  cardPlayBadge: {
+    position: 'absolute',
+    top: '38%',
+    alignSelf: 'center',
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.4)',
   },
   viewerWrap: {
     position: 'absolute',
