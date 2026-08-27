@@ -4,6 +4,7 @@ import {
   Animated,
   FlatList,
   Image,
+  Modal,
   Pressable,
   ScrollView,
   Share,
@@ -96,6 +97,30 @@ export type FeedPostFull = FeedPostRow & {
 };
 
 type FeedMode = 'following' | 'foryou' | 'live' | 'expiring' | 'around';
+type LiveSection = 'blowing' | 'watching' | 'talked' | 'fresh' | 'creators';
+type FeedPrefs = {
+  content: ('video' | 'photo' | 'text' | 'chains')[];
+  show: 'everyone' | 'following' | 'new';
+  location: 'global' | 'country' | 'around';
+  sort: 'recommended' | 'fresh';
+};
+
+const LIVE_SECTIONS: { key: LiveSection; label: string }[] = [
+  { key: 'blowing', label: '🔥 Blowing Up' },
+  { key: 'watching', label: "👀 Everyone's Watching" },
+  { key: 'talked', label: '💬 Most Talked About' },
+  { key: 'fresh', label: '⚡ Just Dropped' },
+  { key: 'creators', label: '🎯 Rising Creators' },
+];
+const EXP_SECTIONS: { key: '6h' | '1h' | 'gone'; label: string }[] = [
+  { key: '6h', label: '🔥 Under 6 hours' },
+  { key: '1h', label: '🚨 Under 1 hour' },
+  { key: 'gone', label: '💨 Almost gone' },
+];
+const AROUND_SCOPES: { key: 'region' | 'global'; label: string }[] = [
+  { key: 'region', label: '📍 Region' },
+  { key: 'global', label: '🌎 Global' },
+];
 
 const MODES: { key: FeedMode; label: string; icon: IconName }[] = [
   { key: 'following', label: 'Following', icon: 'people-outline' },
@@ -151,9 +176,22 @@ export default function FeedScreen({
   const [unreadCount, setUnreadCount] = useState(0);
   const [liveCount, setLiveCount] = useState(0);
   const [expiringCount, setExpiringCount] = useState(0);
+  const [activeCount, setActiveCount] = useState(0);
   const [aroundFallback, setAroundFallback] = useState(false);
+  const [followingCount, setFollowingCount] = useState(0);
+  const [hasFollows, setHasFollows] = useState(false);
   const myIdRef = useRef<string | null>(null);
   const seenIds = useRef<Set<string>>(new Set());
+
+  // ---- feed preferences (applied in load + rank, all real signals) ----
+  const DEFAULT_PREFS: FeedPrefs = { content: [], show: 'everyone', location: 'global', sort: 'recommended' };
+  const [feedPrefs, setFeedPrefs] = useState<FeedPrefs>(DEFAULT_PREFS);
+  const [prefsOpen, setPrefsOpen] = useState(false);
+
+  // ---- sub-filter state: Live sections, Expiring categories, Around scope ----
+  const [liveSection, setLiveSection] = useState<LiveSection>('blowing');
+  const [expFilter, setExpFilter] = useState<'6h' | '1h' | 'gone'>('6h');
+  const [aroundScope, setAroundScope] = useState<'region' | 'global'>('region');
 
   const loadUnread = useCallback(async () => {
     const {
@@ -180,6 +218,18 @@ export default function FeedScreen({
   const bannerAnim = useRef(new Animated.Value(0)).current;
   const bannerSlide = useRef(new Animated.Value(-14)).current;
   const haloPulse = useRef(new Animated.Value(0)).current;
+  // always-on pulse for the LIVE dot on the rail (FOMO, independent of the banner)
+  const railDotPulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(railDotPulse, { toValue: 1, duration: 900, useNativeDriver: true }),
+        Animated.timing(railDotPulse, { toValue: 0, duration: 900, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [railDotPulse]);
 
   useEffect(() => {
     if (!activeDrop) return;
@@ -205,23 +255,66 @@ export default function FeedScreen({
 
   // rank a page of drops with real signals (no fake numbers)
   const rankRows = useCallback(
-    (rows: FeedPostRow[], m: FeedMode, pulseMap: Map<string, Pulse>, tagMap: Map<string, Set<string>>, notInterested: Set<string>) => {
+    (
+      rows: FeedPostRow[],
+      m: FeedMode,
+      pulseMap: Map<string, Pulse>,
+      tagMap: Map<string, Set<string>>,
+      notInterested: Set<string>,
+      opts: { sort?: 'recommended' | 'fresh'; liveSection?: LiveSection } = {}
+    ) => {
       const now = Date.now();
       const velocityOf = (p: Pulse) => p.views30 * 0.7 + p.likes30 * 2.2 + p.comments30 * 3.2;
       const engagementOf = (r: FeedPostRow) =>
         Math.log1p(r.likes_count) * 1.1 + Math.log1p(r.comments_count) * 1.6 + r.views_count * 0.03;
+
+      // Rising Creators: creator-level velocity (sum across their posts on this page)
+      let creatorVelocity = new Map<string, number>();
+      if (m === 'live' && opts.liveSection === 'creators') {
+        const acc = new Map<string, number>();
+        rows.forEach((r) => {
+          const p = pulseMap.get(r.id) ?? { views30: 0, likes30: 0, comments30: 0, rising: false, trending: false };
+          acc.set(r.user_id, (acc.get(r.user_id) ?? 0) + velocityOf(p));
+        });
+        creatorVelocity = acc;
+      }
 
       const scored = rows.map((r) => {
         const pulse = pulseMap.get(r.id) ?? { views30: 0, likes30: 0, comments30: 0, rising: false, trending: false };
         const ageH = Math.max(0, (now - new Date(r.created_at).getTime()) / H);
         let score = 0;
         if (m === 'foryou') {
-          const freshness = 2 * Math.exp(-ageH / 14);
-          const dampen = [...(tagMap.get(r.id) ?? [])].some((t) => notInterested.has(t)) ? 2.5 : 0;
-          score = freshness + velocityOf(pulse) + engagementOf(r) - dampen;
+          if (opts.sort === 'fresh') {
+            score = -ageH;
+          } else {
+            const freshness = 2 * Math.exp(-ageH / 14);
+            const dampen = [...(tagMap.get(r.id) ?? [])].some((t) => notInterested.has(t)) ? 2.5 : 0;
+            score = freshness + velocityOf(pulse) + engagementOf(r) - dampen;
+          }
         } else if (m === 'live') {
           const freshness = 3 * Math.exp(-ageH / 6);
-          score = velocityOf(pulse) * 3 + freshness + Math.log1p(r.likes_count + r.comments_count + 1);
+          const velocity = velocityOf(pulse);
+          switch (opts.liveSection ?? 'blowing') {
+            case 'watching':
+              // 👀 Everyone's Watching — real watch velocity
+              score = (pulse.views30 ?? 0) * 2 + freshness * 0.4 + Math.log1p(r.views_count) * 0.4;
+              break;
+            case 'talked':
+              // 💬 Most Talked About — real conversation velocity
+              score = (pulse.comments30 ?? 0) * 4 + Math.log1p(r.comments_count) * 2 + freshness * 0.3;
+              break;
+            case 'fresh':
+              // ⚡ Just Dropped — newest first
+              score = -ageH;
+              break;
+            case 'creators':
+              // 🎯 Rising Creators — creator-level acceleration
+              score = (creatorVelocity.get(r.user_id) ?? 0) * 2 + freshness;
+              break;
+            default:
+              // 🔥 Blowing Up — engagement velocity
+              score = velocity * 3 + freshness + Math.log1p(r.likes_count + r.comments_count + 1);
+          }
         } else {
           score = now - new Date(r.created_at).getTime();
         }
@@ -333,14 +426,25 @@ export default function FeedScreen({
     } else if (mode === 'following') {
       if (!following.size) {
         setPosts([]);
+        setHasFollows(false);
+        setFollowingCount(0);
         setLoading(false);
         loadSuggestions(user?.id ?? null);
         return;
       }
+      setHasFollows(true);
       query = query.in('user_id', [...following]);
+      // real count of active drops from people you follow (header pill)
+      const { count } = await supabase
+        .from('posts')
+        .select('id', { count: 'exact', head: true })
+        .is('parent_drop_id', null)
+        .in('user_id', [...following])
+        .gt('expires_at', new Date().toISOString());
+      setFollowingCount(count ?? 0);
     } else if (mode === 'expiring') {
       const nowIso = new Date().toISOString();
-      const soon = new Date(Date.now() + 3 * H).toISOString();
+      const soon = new Date(Date.now() + 6 * H).toISOString();
       query = supabase
         .from('posts')
         .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region)')
@@ -348,7 +452,7 @@ export default function FeedScreen({
         .gte('expires_at', nowIso)
         .lte('expires_at', soon)
         .order('expires_at', { ascending: true })
-        .limit(60);
+        .limit(80);
     } else if (mode === 'around') {
       // broad region discovery — only the user-set region string, no location data
       if (user) {
@@ -356,6 +460,10 @@ export default function FeedScreen({
         aroundRegion = (mep as any)?.region ?? null;
       }
       setMyRegion(aroundRegion);
+    } else if (feedPrefs.location !== 'global' && user) {
+      // location preference applies to every tab (Country / Around me)
+      const { data: mep } = await supabase.from('profiles').select('region').eq('id', user.id).maybeSingle();
+      aroundRegion = (mep as any)?.region ?? null;
     }
 
     const { data, error } = await query;
@@ -367,9 +475,35 @@ export default function FeedScreen({
     let rows = ((data ?? []) as FeedPostRow[]).filter(
       (p) => !hidden.has(p.id) && !muted.has(p.user_id) && !blocked.has(p.user_id)
     );
-    // Around You: region-locked when possible, otherwise fall back to
-    // global picks with a "showing global" note instead of an empty feed
-    if (mode === 'around') {
+
+    // feed preferences — content types (empty selection = show everything)
+    if (feedPrefs.content.length) {
+      const wantVideo = feedPrefs.content.includes('video');
+      const wantPhoto = feedPrefs.content.includes('photo');
+      const wantText = feedPrefs.content.includes('text');
+      rows = rows.filter((p) => {
+        const isVideo = p.media_type === 'video' && !!p.media_url;
+        const isPhoto =
+          p.media_type === 'image' || !!p.media_url || (Array.isArray(p.media_items) && p.media_items.length > 0);
+        const isText = !p.media_url && !p.media_items && !!p.content;
+        if (isVideo && !wantVideo) return false;
+        if (isPhoto && !wantPhoto) return false;
+        if (isText && !wantText) return false;
+        return true;
+      });
+    }
+
+    // feed preferences — who to show
+    if (feedPrefs.show === 'following' && following.size) {
+      rows = rows.filter((p) => following.has(p.user_id));
+    } else if (feedPrefs.show === 'new') {
+      rows = rows.filter((p) => !following.has(p.user_id));
+    }
+
+    // Around You scope + location preference: region-locked unless Global
+    const regionLocked =
+      (mode === 'around' && aroundScope === 'region') || (mode !== 'around' && feedPrefs.location !== 'global');
+    if (regionLocked) {
       if (aroundRegion) {
         const local = rows.filter(
           (p) => (p.profile?.region ?? '').toLowerCase() === aroundRegion.toLowerCase()
@@ -386,6 +520,14 @@ export default function FeedScreen({
     } else {
       setAroundFallback(false);
     }
+
+    // Expiring categories — real countdown buckets
+    if (mode === 'expiring') {
+      const nowMs = Date.now();
+      const cap = expFilter === '1h' ? H : expFilter === 'gone' ? 10 * 60000 : 6 * H;
+      rows = rows.filter((p) => new Date(p.expires_at).getTime() - nowMs <= cap);
+    }
+
     const ids = rows.map((p) => p.id);
 
     // real velocity counters (privacy-safe views)
@@ -488,7 +630,10 @@ export default function FeedScreen({
       reasons: reasonRows[i] ?? [],
     }));
 
-    let ranked = rankRows(rows, mode, pulseMap, tagMap, notInterested);
+    let ranked = rankRows(rows, mode, pulseMap, tagMap, notInterested, {
+      sort: feedPrefs.sort,
+      liveSection,
+    });
     // For You: never repeat a post you've already watched this session
     // (fall back to repeats only when the fresh pool would be too thin)
     if (mode === 'foryou') {
@@ -520,7 +665,7 @@ export default function FeedScreen({
     const nowIso = new Date().toISOString();
     const liveIso = new Date(Date.now() + 10 * 60000).toISOString();
     const expIso = new Date(Date.now() + 6 * 3600000).toISOString();
-    const [{ count: liveC }, { count: expC }] = await Promise.all([
+    const [{ count: liveC }, { count: expC }, { count: activeC }] = await Promise.all([
       supabase
         .from('posts')
         .select('id', { count: 'exact', head: true })
@@ -533,9 +678,15 @@ export default function FeedScreen({
         .is('parent_drop_id', null)
         .gte('expires_at', nowIso)
         .lte('expires_at', expIso),
+      supabase
+        .from('posts')
+        .select('id', { count: 'exact', head: true })
+        .is('parent_drop_id', null)
+        .gt('expires_at', nowIso),
     ]);
     setLiveCount(liveC ?? 0);
     setExpiringCount(expC ?? 0);
+    setActiveCount(activeC ?? 0);
 
     const { data: dropData } = await supabase
       .from('drops')
@@ -547,7 +698,7 @@ export default function FeedScreen({
 
     setLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, dropMode, userMode, audioMode, hashtagMode, rankRows, loadSuggestions]);
+  }, [mode, dropMode, userMode, audioMode, hashtagMode, feedPrefs, liveSection, expFilter, aroundScope, rankRows, loadSuggestions]);
 
   useEffect(() => {
     load();
@@ -788,8 +939,12 @@ export default function FeedScreen({
     storyUsers.find((u) => u.id === userMode)?.username ??
     null;
 
-  // keep the video inside the frame: below the mode chips, above the tab bar
-  const feedTop = safeTop + 80;
+  // layout: brand → subtitle → discovery rail → sub-filter rows (Live/Expiring/Around)
+  const hasSubRows = mode === 'live' || mode === 'expiring' || mode === 'around';
+  const railTop = safeTop + 64;
+  const subTop = safeTop + 106;
+  const feedTop = hasSubRows ? safeTop + 168 : safeTop + 112;
+  const bannerTop = hasSubRows ? safeTop + 184 : safeTop + 128;
   const feedBottom = insets.bottom > 0 ? 60 + insets.bottom : 76;
 
   const renderItem = ({ item, index }: { item: FeedPostFull; index: number }) => (
@@ -819,8 +974,10 @@ export default function FeedScreen({
 
   const emptyCopy = {
     following: {
-      title: 'Follow creators to fill your feed',
-      text: 'The drops of people you follow appear here for 48 hours.',
+      title: hasFollows ? "✓ You're all caught up" : 'Follow creators to fill your feed',
+      text: hasFollows
+        ? 'Check back when your people drop something new.'
+        : 'The drops of people you follow appear here for 48 hours.',
     },
     foryou: {
       title: 'Your Feed is warming up…',
@@ -846,7 +1003,7 @@ export default function FeedScreen({
 
   return (
     <View style={styles.container}>
-      <View style={[styles.topScrim, { height: safeTop + 108 }]} pointerEvents="none" />
+      <View style={[styles.topScrim, { height: safeTop + 176 }]} pointerEvents="none" />
       <View style={[styles.topBrand, { paddingTop: safeTop + 8 }]} pointerEvents="none">
         <LogoHeader compact transparent />
       </View>
@@ -861,9 +1018,158 @@ export default function FeedScreen({
         )}
       </Pressable>
 
-      {/* primary feed modes — scrollable so every chip fits on small screens */}
+      {/* subtitle — "what's happening right now?" */}
+      <View style={[styles.subtitle, { top: safeTop + 44 }]} pointerEvents="none">
+        <Text style={styles.subtitleText}>What's happening right now?</Text>
+      </View>
+
+      {/* compact discovery rail — text tabs, orange underline for active, edge fades */}
+      <View style={[styles.railWrap, { top: railTop, height: 40 }]}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.railScroll}
+          contentContainerStyle={styles.railContent}
+        >
+          {MODES.map((m) => {
+            const active = mode === m.key;
+            return (
+              <Pressable
+                key={m.key}
+                style={[styles.railItem, active && styles.railItemActive]}
+                onPress={() => {
+                  setMode(m.key);
+                  setUserMode(null);
+                  setAudioMode(null);
+                  setHashtagMode(null);
+                  setDropMode(null);
+                }}
+                hitSlop={4}
+              >
+                <View style={styles.railLabelRow}>
+                  {m.key === 'live' && liveCount > 0 && (
+                    <Animated.View
+                      style={[styles.railLiveDot, { opacity: railDotPulse.interpolate({ inputRange: [0, 1], outputRange: [0.35, 1] }) }]}
+                    />
+                  )}
+                  <Text style={[styles.railText, active && styles.railTextActive]}>
+                    {m.key === 'around' && mode === 'around' ? (myRegion ?? 'Near You') : m.label}
+                  </Text>
+                  {m.key === 'expiring' && expiringCount > 0 && (
+                    <View style={styles.railExpBadge}>
+                      <Text style={styles.railExpBadgeText}>{expiringCount > 9 ? '9+' : expiringCount}</Text>
+                    </View>
+                  )}
+                </View>
+                {active && <View style={styles.railUnderline} />}
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+
+        {/* filter / preferences entry */}
+        <Pressable style={[styles.railFilterBtn, { top: railTop }]} onPress={() => setPrefsOpen(true)} hitSlop={6}>
+          <Icon name="options-outline" size={16} color={colors.logoWhite} style={styles.railFilterIcon} />
+        </Pressable>
+
+        {/* edge fades so it's obvious more tabs exist */}
+        <View style={[styles.fadeEdge, styles.fadeLeft, { top: railTop }]} pointerEvents="none">
+          {[0.75, 0.5, 0.3, 0.15, 0.06].map((o, i) => (
+            <View key={i} style={[styles.fadeStrip, { backgroundColor: `rgba(6,10,22,${o})` }]} />
+          ))}
+        </View>
+        <View style={[styles.fadeEdge, styles.fadeRight, { top: railTop }]} pointerEvents="none">
+          {[0.06, 0.15, 0.3, 0.5, 0.75].map((o, i) => (
+            <View key={i} style={[styles.fadeStrip, { backgroundColor: `rgba(6,10,22,${o})` }]} />
+          ))}
+        </View>
+      </View>
+
+      {/* Following: real new-drops count header */}
+      {mode === 'following' && followingCount > 0 && (
+        <View style={[styles.followHeader, { top: safeTop + 106 }]} pointerEvents="none">
+          <Text style={styles.followHeaderText}>
+            🔥 {followingCount} new Drop{followingCount === 1 ? '' : 's'}
+          </Text>
+        </View>
+      )}
+
+      {/* Live / Expiring / Around sub-filter rows — real data, real ranking */}
+      {hasSubRows && (
+        <View style={[styles.subRow, { top: subTop }]}>
+          {mode === 'live' && (
+            <>
+              <View style={styles.subTaglineRow}>
+                <View style={styles.subLiveDotWrap}>
+                  <View style={styles.subLiveDot} />
+                </View>
+                <Text style={styles.subTagline}>LIVE NOW · {liveCount || 0} Drops active right now</Text>
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.subChips}>
+                {LIVE_SECTIONS.map((s) => (
+                  <Pressable
+                    key={s.key}
+                    style={[styles.subChip, liveSection === s.key && styles.subChipActive]}
+                    onPress={() => setLiveSection(s.key)}
+                  >
+                    <Text style={[styles.subChipText, liveSection === s.key && styles.subChipTextActive]}>
+                      {s.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </>
+          )}
+          {mode === 'expiring' && (
+            <>
+              <View style={styles.subTaglineRow}>
+                <Icon name="hourglass-outline" size={13} color={colors.accent} />
+                <Text style={styles.subTagline}>EXPIRING — WATCH IT NOW OR IT'S GONE</Text>
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.subChips}>
+                {EXP_SECTIONS.map((s) => (
+                  <Pressable
+                    key={s.key}
+                    style={[styles.subChip, expFilter === s.key && styles.subChipActive]}
+                    onPress={() => setExpFilter(s.key)}
+                  >
+                    <Text style={[styles.subChipText, expFilter === s.key && styles.subChipTextActive]}>
+                      {s.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </>
+          )}
+          {mode === 'around' && (
+            <>
+              <View style={styles.subTaglineRow}>
+                <Icon name="location" size={13} color={colors.accent} />
+                <Text style={styles.subTagline}>
+                  {myRegion ? `${myRegion} Pulse · ${activeCount || 0} Drops active on GEN Z` : 'Around You — set your region in your profile'}
+                </Text>
+              </View>
+              <View style={styles.subChips}>
+                {AROUND_SCOPES.map((s) => (
+                  <Pressable
+                    key={s.key}
+                    style={[styles.subChip, aroundScope === s.key && styles.subChipActive]}
+                    onPress={() => setAroundScope(s.key)}
+                  >
+                    <Text style={[styles.subChipText, aroundScope === s.key && styles.subChipTextActive]}>
+                      {s.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </>
+          )}
+        </View>
+      )}
+
+      {/* Around You: fallback note when the region scope has nothing */}
       {mode === 'around' && aroundFallback && (
-        <View style={[styles.aroundNote, { top: safeTop + 96 }]} pointerEvents="none">
+        <View style={[styles.aroundNote, { top: safeTop + 172 }]} pointerEvents="none">
           <Icon name="globe-outline" size={12} color={colors.textMuted} />
           <Text style={styles.aroundNoteText}>
             {myRegion
@@ -873,50 +1179,8 @@ export default function FeedScreen({
         </View>
       )}
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={[styles.modeBar, { top: safeTop + 50 }]}
-        contentContainerStyle={styles.modeBarContent}
-      >
-        {MODES.map((m) => (
-          <Pressable
-            key={m.key}
-            style={[styles.modeChip, mode === m.key && styles.modeChipActive]}
-            onPress={() => {
-              setMode(m.key);
-              setUserMode(null);
-              setAudioMode(null);
-              setHashtagMode(null);
-              setDropMode(null);
-            }}
-          >
-            <Icon name={m.icon} size={13} color={mode === m.key ? colors.accent : colors.textMuted} />
-            <Text style={[styles.modeChipText, mode === m.key && styles.modeChipTextActive]}>
-              {m.key === 'around' && mode === 'around' ? (myRegion ?? 'Near You') : m.label}
-            </Text>
-            {m.key === 'live' && liveCount > 0 && (
-              <View style={styles.liveChipWrap}>
-                <Animated.View
-                  style={[
-                    styles.liveChipHalo,
-                    { opacity: haloPulse.interpolate({ inputRange: [0, 1], outputRange: [0.2, 0.55] }) },
-                  ]}
-                />
-                <View style={styles.liveChipDot} />
-              </View>
-            )}
-            {m.key === 'expiring' && expiringCount > 0 && (
-              <View style={styles.expChipBadge}>
-                <Text style={styles.expChipBadgeText}>{expiringCount > 9 ? '9+' : expiringCount}</Text>
-              </View>
-            )}
-          </Pressable>
-        ))}
-      </ScrollView>
-
       {storiesVisible && (
-        <View style={[styles.storiesWrap, { top: safeTop + 88 }]}>
+        <View style={[styles.storiesWrap, { top: safeTop + 118 }]}>
           <FlatList
             data={storyUsers}
             horizontal
@@ -950,7 +1214,7 @@ export default function FeedScreen({
             style={[
             styles.dropBanner,
             {
-              top: storiesVisible ? safeTop + 176 : safeTop + 100,
+              top: storiesVisible ? safeTop + 196 : bannerTop,
               opacity: bannerAnim,
               transform: [{ translateY: bannerSlide }],
             },
@@ -1017,7 +1281,7 @@ export default function FeedScreen({
 
       {(userMode || audioMode || hashtagMode) && (
         <Pressable
-          style={[styles.dropBanner, { top: safeTop + 100 }]}
+          style={[styles.dropBanner, { top: bannerTop }]}
           onPress={() => {
             setUserMode(null);
             setAudioMode(null);
@@ -1202,6 +1466,16 @@ export default function FeedScreen({
         }}
       />
 
+      <FeedPrefsModal
+        visible={prefsOpen}
+        initial={feedPrefs}
+        onClose={() => setPrefsOpen(false)}
+        onApply={(p) => {
+          setFeedPrefs(p);
+          setPrefsOpen(false);
+        }}
+      />
+
       <NotificationsModal
         visible={notifOpen}
         onClose={() => {
@@ -1236,6 +1510,148 @@ function SkeletonFeed({ height }: { height: number }) {
   );
 }
 
+function FeedPrefsModal({
+  visible,
+  initial,
+  onClose,
+  onApply,
+}: {
+  visible: boolean;
+  initial: FeedPrefs;
+  onClose: () => void;
+  onApply: (p: FeedPrefs) => void;
+}) {
+  const [content, setContent] = useState<string[]>(initial.content);
+  const [show, setShow] = useState<FeedPrefs['show']>(initial.show);
+  const [location, setLocation] = useState<FeedPrefs['location']>(initial.location);
+  const [sort, setSort] = useState<FeedPrefs['sort']>(initial.sort);
+
+  // re-sync the draft every time the sheet opens
+  useEffect(() => {
+    if (visible) {
+      setContent(initial.content);
+      setShow(initial.show);
+      setLocation(initial.location);
+      setSort(initial.sort);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+
+  const toggleContent = (t: string) =>
+    setContent((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
+
+  const CONTENT_OPTS = [
+    { key: 'video', label: 'Videos' },
+    { key: 'photo', label: 'Photos' },
+    { key: 'text', label: 'Text' },
+    { key: 'chains', label: 'Drop Chains' },
+  ];
+  const SHOW_OPTS: { key: FeedPrefs['show']; label: string }[] = [
+    { key: 'everyone', label: 'Everyone' },
+    { key: 'following', label: 'People I follow' },
+    { key: 'new', label: 'New creators' },
+  ];
+  const LOC_OPTS: { key: FeedPrefs['location']; label: string }[] = [
+    { key: 'global', label: 'Global' },
+    { key: 'country', label: 'Country' },
+    { key: 'around', label: 'Around me' },
+  ];
+  const SORT_OPTS: { key: FeedPrefs['sort']; label: string }[] = [
+    { key: 'recommended', label: 'Recommended' },
+    { key: 'fresh', label: 'Freshest' },
+  ];
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.prefsOverlay} onPress={onClose}>
+        <Pressable style={styles.prefsSheet} onPress={() => {}}>
+          <View style={styles.prefsTitleRow}>
+            <Icon name="options-outline" size={18} color={colors.accent} />
+            <Text style={styles.prefsTitle}>Feed preferences</Text>
+          </View>
+
+          <Text style={styles.prefsSectionLabel}>Content</Text>
+          <View style={styles.prefsChipRow}>
+            {CONTENT_OPTS.map((o) => {
+              const on = content.includes(o.key);
+              return (
+                <Pressable
+                  key={o.key}
+                  style={[styles.prefsChip, on && styles.prefsChipActive]}
+                  onPress={() => toggleContent(o.key)}
+                >
+                  <Text style={[styles.prefsChipText, on && styles.prefsChipTextActive]}>
+                    {on ? `☑ ${o.label}` : `☐ ${o.label}`}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Text style={styles.prefsSectionLabel}>Show me</Text>
+          <View style={styles.prefsRow}>
+            {SHOW_OPTS.map((o) => (
+              <Pressable
+                key={o.key}
+                style={[styles.prefsRowBtn, show === o.key && styles.prefsRowActive]}
+                onPress={() => setShow(o.key)}
+              >
+                <Text style={[styles.prefsRowText, show === o.key && styles.prefsRowTextActive]}>{o.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <Text style={styles.prefsSectionLabel}>Location</Text>
+          <View style={styles.prefsRow}>
+            {LOC_OPTS.map((o) => (
+              <Pressable
+                key={o.key}
+                style={[styles.prefsRowBtn, location === o.key && styles.prefsRowActive]}
+                onPress={() => setLocation(o.key)}
+              >
+                <Text style={[styles.prefsRowText, location === o.key && styles.prefsRowTextActive]}>{o.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <Text style={styles.prefsSectionLabel}>Sort</Text>
+          <View style={styles.prefsRow}>
+            {SORT_OPTS.map((o) => (
+              <Pressable
+                key={o.key}
+                style={[styles.prefsRowBtn, sort === o.key && styles.prefsRowActive]}
+                onPress={() => setSort(o.key)}
+              >
+                <Text style={[styles.prefsRowText, sort === o.key && styles.prefsRowTextActive]}>{o.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <View style={styles.prefsBtnRow}>
+            <Pressable
+              style={styles.prefsReset}
+              onPress={() => {
+                setContent([]);
+                setShow('everyone');
+                setLocation('global');
+                setSort('recommended');
+              }}
+            >
+              <Text style={styles.prefsResetText}>Reset</Text>
+            </Pressable>
+            <Pressable
+              style={styles.prefsDone}
+              onPress={() => onApply({ content: content as FeedPrefs['content'], show, location, sort })}
+            >
+              <Text style={styles.prefsDoneText}>Apply</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   topScrim: {
@@ -1254,19 +1670,246 @@ const styles = StyleSheet.create({
     zIndex: 12,
     alignItems: 'center',
   },
-  modeBar: {
+  subtitle: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 12,
+    alignItems: 'center',
+  },
+  subtitleText: {
+    color: colors.textMuted,
+    fontSize: 11.5,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+  },
+  railWrap: {
     position: 'absolute',
     left: 0,
     right: 0,
     zIndex: 11,
-    flexGrow: 0,
   },
-  modeBarContent: {
+  railScroll: { flexGrow: 0 },
+  railContent: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 22,
+    paddingHorizontal: 20,
+    paddingRight: 52,
+  },
+  railItem: {
+    alignItems: 'center',
+    paddingBottom: 2,
+  },
+  railItemActive: { opacity: 1 },
+  railLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    height: 30,
+  },
+  railText: {
+    color: 'rgba(214,222,238,0.62)',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  railTextActive: {
+    color: colors.accent,
+    textShadowColor: 'rgba(255,122,0,0.45)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 12,
+  },
+  railUnderline: {
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: colors.accent,
+    alignSelf: 'stretch',
+    marginTop: 3,
+    ...shadows.glow,
+  },
+  railLiveDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: colors.danger,
+  },
+  railExpBadge: {
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,122,0,0.18)',
+    borderWidth: 1,
+    borderColor: colors.accent,
+  },
+  railExpBadgeText: { color: colors.accent, fontSize: 9.5, fontWeight: '800' },
+  railFilterBtn: {
+    position: 'absolute',
+    right: 10,
+    zIndex: 14,
+    backgroundColor: 'rgba(13,20,38,0.85)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.16)',
+    borderRadius: 999,
+    width: 30,
+    height: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  railFilterIcon: {
+    textShadowColor: 'rgba(0,0,0,0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+  },
+  fadeEdge: {
+    position: 'absolute',
+    height: 40,
+    width: 20,
+    zIndex: 13,
+    flexDirection: 'row',
+    overflow: 'hidden',
+  },
+  fadeLeft: { left: 0 },
+  fadeRight: { right: 44 },
+  fadeStrip: { width: 4, height: '100%' },
+  followHeader: {
+    position: 'absolute',
+    alignSelf: 'center',
+    zIndex: 10,
+    backgroundColor: 'rgba(13,20,38,0.88)',
+    borderWidth: 1,
+    borderColor: colors.accent,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    ...shadows.glow,
+  },
+  followHeaderText: { color: colors.accent, fontSize: 12, fontWeight: '800' },
+  subRow: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 10,
+    paddingHorizontal: 16,
+  },
+  subTaglineRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 16,
+    marginBottom: 7,
   },
+  subLiveDotWrap: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255,92,124,0.25)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  subLiveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.danger,
+  },
+  subTagline: { color: colors.textMuted, fontSize: 11, fontWeight: '700', letterSpacing: 0.3 },
+  subChips: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingBottom: 4,
+  },
+  subChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+    backgroundColor: 'rgba(13,20,38,0.8)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  subChipActive: {
+    borderColor: colors.accent,
+    backgroundColor: 'rgba(255,122,0,0.16)',
+  },
+  subChipText: { color: 'rgba(214,222,238,0.62)', fontSize: 11.5, fontWeight: '700' },
+  subChipTextActive: { color: colors.accent },
+  prefsOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(4,8,18,0.72)',
+    justifyContent: 'flex-end',
+  },
+  prefsSheet: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    padding: 20,
+    paddingBottom: 34,
+    borderTopWidth: 1,
+    borderColor: colors.border,
+  },
+  prefsTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 18 },
+  prefsTitle: { color: colors.text, fontSize: 18, fontWeight: '800' },
+  prefsSectionLabel: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    marginTop: 14,
+    marginBottom: 8,
+  },
+  prefsChipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  prefsChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceAlt,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  prefsChipActive: {
+    borderColor: colors.accent,
+    backgroundColor: 'rgba(255,122,0,0.14)',
+  },
+  prefsChipText: { color: colors.textMuted, fontSize: 13, fontWeight: '700' },
+  prefsChipTextActive: { color: colors.accent },
+  prefsRow: { flexDirection: 'row', gap: 8 },
+  prefsRowBtn: {
+    flex: 1,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceAlt,
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  prefsRowActive: {
+    borderColor: colors.accent,
+    backgroundColor: 'rgba(255,122,0,0.12)',
+  },
+  prefsRowText: { color: colors.textMuted, fontSize: 12.5, fontWeight: '700' },
+  prefsRowTextActive: { color: colors.accent },
+  prefsBtnRow: { flexDirection: 'row', gap: 10, marginTop: 22 },
+  prefsReset: {
+    flex: 1,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  prefsResetText: { color: colors.textMuted, fontSize: 14, fontWeight: '700' },
+  prefsDone: {
+    flex: 2,
+    borderRadius: 12,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    paddingVertical: 12,
+    ...shadows.glow,
+  },
+  prefsDoneText: { color: colors.bg, fontSize: 14, fontWeight: '800' },
   bellBtn: {
     position: 'absolute',
     right: 14,
@@ -1292,57 +1935,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
   },
-  modeChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: 'rgba(13,20,38,0.82)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.14)',
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  modeChipActive: {
-    backgroundColor: 'rgba(255,122,0,0.22)',
-    borderColor: colors.accent,
-    ...shadows.glow,
-  },
-  modeChipText: { color: colors.textMuted, fontSize: 11.5, fontWeight: '700' },
-  modeChipTextActive: { color: colors.accent },
-  liveChipWrap: {
-    width: 10,
-    height: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 1,
-  },
-  liveChipHalo: {
-    position: 'absolute',
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: colors.danger,
-  },
-  liveChipDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
-    backgroundColor: colors.danger,
-  },
-  expChipBadge: {
-    minWidth: 17,
-    height: 17,
-    borderRadius: 9,
-    paddingHorizontal: 4,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.accentSoft,
-    borderWidth: 1,
-    borderColor: colors.accent,
-    marginLeft: 2,
-  },
-  expChipBadgeText: { color: colors.accent, fontSize: 9.5, fontWeight: '800' },
   aroundNote: {
     position: 'absolute',
     left: 16,
