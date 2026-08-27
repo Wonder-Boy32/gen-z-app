@@ -34,6 +34,9 @@ export default function PostViewer({ posts, index, onClose }: Props) {
   const [commentPost, setCommentPost] = useState<ViewerPost | null>(null);
   const [sound, setSound] = useState<string | null>(null);
   const meRef = useRef<string | null>(null);
+  // the FlatList's REAL height (window height can differ by system bars/insets —
+  // a single pixel of mismatch makes pagingEnabled land between pages)
+  const [listH, setListH] = useState(height);
 
   useEffect(() => {
     (async () => {
@@ -175,11 +178,11 @@ export default function PostViewer({ posts, index, onClose }: Props) {
   }, []);
 
   const renderItem = ({ item, index: i }: { item: ViewerPost; index: number }) => (
-    <View style={{ height }}>
+    <View style={{ height: listH }}>
       <FeedPost
         post={item}
         isActive={i === current}
-        height={height}
+        height={listH}
         contentTop={0}
         contentBottom={28}
         onLike={() => toggleLike(item)}
@@ -202,7 +205,7 @@ export default function PostViewer({ posts, index, onClose }: Props) {
   );
 
   return (
-    <View style={styles.fill}>
+    <View style={styles.fill} onLayout={(e) => setListH(e.nativeEvent.layout.height)}>
       <FlatList
         data={items}
         keyExtractor={(p) => p.id}
@@ -212,7 +215,9 @@ export default function PostViewer({ posts, index, onClose }: Props) {
         onViewableItemsChanged={onViewable}
         viewabilityConfig={{ itemVisiblePercentThreshold: 60 }}
         initialScrollIndex={index}
-        getItemLayout={(_, i) => ({ length: height, offset: height * i, index: i })}
+        getItemLayout={(_, i) => ({ length: listH, offset: listH * i, index: i })}
+        snapToInterval={listH}
+        decelerationRate="fast"
         initialNumToRender={1}
         maxToRenderPerBatch={2}
         windowSize={2}
