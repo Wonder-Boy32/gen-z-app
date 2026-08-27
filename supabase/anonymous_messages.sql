@@ -44,34 +44,40 @@ create index if not exists anon_msgs_sender_idx on public.anonymous_messages (se
 create index if not exists anon_msgs_expires_idx on public.anonymous_messages (expires_at);
 
 -- Public (recipient-facing) view — sender_id and identity are ABSENT.
--- security_invoker = the caller's RLS applies to the view rows.
+-- security_invoker = the CALLER's RLS (base table) applies to view rows.
+-- NOTE: policies live on the BASE TABLE only (Postgres forbids policies on views).
 create or replace view public.anonymous_messages_public
   with (security_invoker = true) as
   select id, recipient_id, content, media_url, voice_url, message_type,
          reaction, expires_at, read_at, created_at
   from public.anonymous_messages;
 
--- Revoke direct table access from app roles (sender identity unreachable)
-revoke select, insert, update, delete on public.anonymous_messages from anon, authenticated;
--- Grant the safe view only
-grant select on public.anonymous_messages_public to anon, authenticated;
+-- --- Base-table RLS (applies automatically through the invoker view) ---
+alter table public.anonymous_messages enable row level security;
 
--- Recipient RLS: you only see messages addressed to you
-drop policy if exists "anon_msgs_select_own" on public.anonymous_messages_public;
-create policy "anon_msgs_select_own" on public.anonymous_messages_public
+drop policy if exists "anon_msgs_select_own" on public.anonymous_messages;
+create policy "anon_msgs_select_own" on public.anonymous_messages
   for select using (recipient_id = auth.uid());
 
--- Recipient updates (read receipts, reactions) on the view
-grant update on public.anonymous_messages_public to anon, authenticated;
-drop policy if exists "anon_msgs_update_own" on public.anonymous_messages_public;
-create policy "anon_msgs_update_own" on public.anonymous_messages_public
+drop policy if exists "anon_msgs_update_own" on public.anonymous_messages;
+create policy "anon_msgs_update_own" on public.anonymous_messages
   for update using (recipient_id = auth.uid()) with check (recipient_id = auth.uid());
 
--- Recipient deletes (delete the message)
-grant delete on public.anonymous_messages_public to anon, authenticated;
-drop policy if exists "anon_msgs_delete_own" on public.anonymous_messages_public;
-create policy "anon_msgs_delete_own" on public.anonymous_messages_public
+drop policy if exists "anon_msgs_delete_own" on public.anonymous_messages;
+create policy "anon_msgs_delete_own" on public.anonymous_messages
   for delete using (recipient_id = auth.uid());
+
+-- --- Grants: recipient can read/update/delete their rows, but the
+--     sender_id COLUMN is never granted (column-level privilege) ---
+revoke select, insert, update, delete on public.anonymous_messages from anon, authenticated;
+grant select (id, recipient_id, content, media_url, voice_url, message_type,
+              reaction, expires_at, read_at, created_at)
+  on public.anonymous_messages to anon, authenticated;
+grant update (reaction, read_at) on public.anonymous_messages to anon, authenticated;
+grant delete on public.anonymous_messages to anon, authenticated;
+
+-- View grants (callers query the view; inserts only via the RPC below)
+grant select, update, delete on public.anonymous_messages_public to anon, authenticated;
 
 -- ------------------------------------------------------------
 -- 3) ANONYMOUS SETTINGS — recipient controls
