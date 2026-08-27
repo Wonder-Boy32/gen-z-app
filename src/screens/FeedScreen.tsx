@@ -151,7 +151,9 @@ export default function FeedScreen({
   const [unreadCount, setUnreadCount] = useState(0);
   const [liveCount, setLiveCount] = useState(0);
   const [expiringCount, setExpiringCount] = useState(0);
+  const [aroundFallback, setAroundFallback] = useState(false);
   const myIdRef = useRef<string | null>(null);
+  const seenIds = useRef<Set<string>>(new Set());
 
   const loadUnread = useCallback(async () => {
     const {
@@ -354,11 +356,6 @@ export default function FeedScreen({
         aroundRegion = (mep as any)?.region ?? null;
       }
       setMyRegion(aroundRegion);
-      if (!aroundRegion) {
-        setPosts([]);
-        setLoading(false);
-        return;
-      }
     }
 
     const { data, error } = await query;
@@ -370,8 +367,24 @@ export default function FeedScreen({
     let rows = ((data ?? []) as FeedPostRow[]).filter(
       (p) => !hidden.has(p.id) && !muted.has(p.user_id) && !blocked.has(p.user_id)
     );
-    if (mode === 'around' && aroundRegion) {
-      rows = rows.filter((p) => (p.profile?.region ?? '').toLowerCase() === aroundRegion.toLowerCase());
+    // Around You: region-locked when possible, otherwise fall back to
+    // global picks with a "showing global" note instead of an empty feed
+    if (mode === 'around') {
+      if (aroundRegion) {
+        const local = rows.filter(
+          (p) => (p.profile?.region ?? '').toLowerCase() === aroundRegion.toLowerCase()
+        );
+        if (local.length > 0) {
+          rows = local;
+          setAroundFallback(false);
+        } else {
+          setAroundFallback(true);
+        }
+      } else {
+        setAroundFallback(true);
+      }
+    } else {
+      setAroundFallback(false);
     }
     const ids = rows.map((p) => p.id);
 
@@ -475,7 +488,13 @@ export default function FeedScreen({
       reasons: reasonRows[i] ?? [],
     }));
 
-    const ranked = rankRows(rows, mode, pulseMap, tagMap, notInterested);
+    let ranked = rankRows(rows, mode, pulseMap, tagMap, notInterested);
+    // For You: never repeat a post you've already watched this session
+    // (fall back to repeats only when the fresh pool would be too thin)
+    if (mode === 'foryou') {
+      const fresh = ranked.filter((p) => !seenIds.current.has(p.id));
+      if (fresh.length >= 3) ranked = fresh;
+    }
     setPosts(ranked);
 
     if (!userMode && !dropMode && !audioMode && !hashtagMode && mode === 'foryou') {
@@ -571,6 +590,10 @@ export default function FeedScreen({
       const item = viewableItems[0].item as FeedPostFull;
       // finalize previous watch
       if (prevIdx !== idx && posts[prevIdx]) finalizeWatch(posts[prevIdx].id);
+      // remember every post you've actually watched (For You no-repeat)
+      viewableItems.forEach((v) => {
+        if (v.item && (v.item as FeedPostFull).id) seenIds.current.add((v.item as FeedPostFull).id);
+      });
       setActiveIndex(idx);
       recordView(item);
       if (!watchRef.current.has(item.id)) {
@@ -839,6 +862,17 @@ export default function FeedScreen({
       </Pressable>
 
       {/* primary feed modes — scrollable so every chip fits on small screens */}
+      {mode === 'around' && aroundFallback && (
+        <View style={[styles.aroundNote, { top: safeTop + 96 }]} pointerEvents="none">
+          <Icon name="globe-outline" size={12} color={colors.textMuted} />
+          <Text style={styles.aroundNoteText}>
+            {myRegion
+              ? `Nothing near ${myRegion} yet — showing global picks`
+              : 'Set your region to see drops near you — showing global picks'}
+          </Text>
+        </View>
+      )}
+
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -858,7 +892,9 @@ export default function FeedScreen({
             }}
           >
             <Icon name={m.icon} size={13} color={mode === m.key ? colors.accent : colors.textMuted} />
-            <Text style={[styles.modeChipText, mode === m.key && styles.modeChipTextActive]}>{m.label}</Text>
+            <Text style={[styles.modeChipText, mode === m.key && styles.modeChipTextActive]}>
+              {m.key === 'around' && mode === 'around' ? (myRegion ?? 'Near You') : m.label}
+            </Text>
             {m.key === 'live' && liveCount > 0 && (
               <View style={styles.liveChipWrap}>
                 <Animated.View
@@ -1307,6 +1343,22 @@ const styles = StyleSheet.create({
     marginLeft: 2,
   },
   expChipBadgeText: { color: colors.accent, fontSize: 9.5, fontWeight: '800' },
+  aroundNote: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    zIndex: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(13,20,38,0.9)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  aroundNoteText: { color: colors.textMuted, fontSize: 11, fontWeight: '600', flex: 1 },
   storiesWrap: {
     position: 'absolute',
     left: 0,
