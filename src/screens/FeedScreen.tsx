@@ -44,7 +44,6 @@ type StoryUser = {
   username: string;
   avatar_url: string | null;
   following: boolean;
-  following?: boolean;
 };
 
 type FeedPostRow = {
