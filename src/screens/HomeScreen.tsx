@@ -1,5 +1,8 @@
-import React, { useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, Linking, StyleSheet, Text, View } from 'react-native';
+import { supabase } from '../supabase/client';
+import { parseAnonLink } from '../utils/deeplink';
+import AnonymousSendScreen from './AnonymousSendScreen';
 import TabBar, { Tab } from '../components/TabBar';
 import FeedScreen from './FeedScreen';
 import CreateDropScreen from './CreateDropScreen';
@@ -38,6 +41,38 @@ export default function HomeScreen() {
     setFeedKey((k) => k + 1); // remount feed so it refetches
     setTab('feed');
   };
+
+  // ---- deep links: genz://anon/@user and https://genz.app/anon/@user ----
+  const [anonDraft, setAnonDraft] = useState<string | null>(null); // username from the link
+  const [anonRecipient, setAnonRecipient] = useState<{ id: string; name: string } | null>(null);
+
+  const resolveAnonLink = async (username: string) => {
+    const { data } = await supabase
+      .from('profiles')
+      .select('id, username')
+      .or(`username.eq.${username},username.eq.${username.toLowerCase()}`)
+      .maybeSingle();
+    if (data?.id) {
+      setAnonRecipient({ id: data.id, name: data.username ?? username });
+    } else {
+      setAnonDraft(null);
+    }
+  };
+
+  useEffect(() => {
+    const handleUrl = (e: { url: string }) => {
+      const name = parseAnonLink(e.url);
+      if (name) {
+        setAnonDraft(name);
+        resolveAnonLink(name);
+      }
+    };
+    Linking.getInitialURL().then((url) => {
+      if (url) handleUrl({ url });
+    });
+    const sub = Linking.addEventListener('url', handleUrl);
+    return () => sub.remove();
+  }, []);
 
   return (
     <View style={styles.container}>
@@ -86,6 +121,27 @@ export default function HomeScreen() {
         )}
       </View>
       <TabBar tab={tab} onChange={setTab} />
+
+      {/* deep-link anonymous send overlay (opens from a link, any tab, cold start) */}
+      {(anonDraft || anonRecipient) && (
+        <View style={styles.anonOverlay}>
+          {anonRecipient ? (
+            <AnonymousSendScreen
+              recipientId={anonRecipient.id}
+              recipientName={anonRecipient.name}
+              onBack={() => {
+                setAnonDraft(null);
+                setAnonRecipient(null);
+              }}
+            />
+          ) : (
+            <View style={styles.anonLoading}>
+              <ActivityIndicator color={colors.accent} />
+              <Text style={styles.anonLoadingText}>Opening anonymous send…</Text>
+            </View>
+          )}
+        </View>
+      )}
     </View>
   );
 }
@@ -98,4 +154,15 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
   },
+  anonOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 50,
+    backgroundColor: colors.bg,
+  },
+  anonLoading: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
+  anonLoadingText: { color: colors.textMuted, fontSize: 13, fontWeight: '700' },
 });

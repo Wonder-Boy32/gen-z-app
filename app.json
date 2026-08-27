@@ -6,6 +6,7 @@
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
+    "scheme": "genz",
     "icon": "./assets/icon-launcher.png",
     "plugins": [
       "expo-image-picker",
@@ -28,6 +29,16 @@
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "data": [
+            { "scheme": "genz", "host": "anon" },
+            { "scheme": "https", "host": "genz.app", "pathPrefix": "/anon" }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
       ]
     },
     "ios": {
