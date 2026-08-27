@@ -71,10 +71,12 @@ export default function PublicProfileScreen({
   userId,
   username,
   onClose,
+  onFollowChanged,
 }: {
   userId: string;
   username: string;
   onClose: () => void;
+  onFollowChanged?: (userId: string, following: boolean, pending: boolean) => void;
 }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [posts, setPosts] = useState<Post[]>([]);
@@ -158,6 +160,7 @@ export default function PublicProfileScreen({
       setFollowState('none');
       setFollowers((v) => Math.max(0, v - 1));
       await supabase.from('follows').delete().eq('follower_id', me).eq('following_id', userId);
+      onFollowChanged?.(userId, false, false);
     } else {
       const privateAccount = profile?.is_private ?? false;
       setFollowState(privateAccount ? 'pending' : 'following');
@@ -167,6 +170,7 @@ export default function PublicProfileScreen({
         following_id: userId,
         status: privateAccount ? 'pending' : 'accepted',
       });
+      onFollowChanged?.(userId, !privateAccount, privateAccount);
       if (!privateAccount) {
         notifyUser({ userId, actorId: me, type: 'follow' });
       }

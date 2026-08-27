@@ -779,24 +779,29 @@ export default function FeedScreen({
     }
   };
 
+  // keep Follow state in sync across EVERY post by the same creator
+  // (and the suggestion cards) — no more stale "Follow" buttons
+  const setCreatorFollow = useCallback((userId: string, following: boolean, pending: boolean) => {
+    setPosts((prev) =>
+      prev.map((p) => (p.user_id === userId ? { ...p, following, follow_pending: pending } : p))
+    );
+    setSuggestions((prev) => prev.map((s) => (s.id === userId ? { ...s, following } : s)));
+  }, []);
+
   const toggleFollow = async (post: FeedPostFull) => {
     const me = myIdRef.current;
     if (!me || me === post.user_id) return;
     if (post.following) {
-      setPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, following: false } : p)));
+      setCreatorFollow(post.user_id, false, false);
       const { error } = await supabase.from('follows').delete().eq('follower_id', me).eq('following_id', post.user_id);
       if (error) load();
     } else if (post.follow_pending) {
-      setPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, follow_pending: false } : p)));
+      setCreatorFollow(post.user_id, false, false);
       const { error } = await supabase.from('follows').delete().eq('follower_id', me).eq('following_id', post.user_id);
       if (error) load();
     } else {
       const privateAccount = post.profile?.is_private ?? false;
-      setPosts((prev) =>
-        prev.map((p) =>
-          p.id === post.id ? { ...p, following: !privateAccount, follow_pending: privateAccount } : p
-        )
-      );
+      setCreatorFollow(post.user_id, !privateAccount, privateAccount);
       const { error } = await supabase.from('follows').insert({
         follower_id: me,
         following_id: post.user_id,
@@ -858,6 +863,7 @@ export default function FeedScreen({
     await supabase.from('follows').insert({ follower_id: me, following_id: id, status: 'accepted' });
     notifyUser({ userId: id, actorId: me, type: 'follow' });
     setSuggestions((prev) => prev.map((s) => (s.id === id ? { ...s, following: true } : s)));
+    setCreatorFollow(id, true, false);
   };
 
   // personalization actions — all real, all persisted
@@ -1174,7 +1180,7 @@ export default function FeedScreen({
 
       {/* Around You: fallback note when the region scope has nothing */}
       {mode === 'around' && aroundFallback && (
-        <View style={[styles.aroundNote, { top: safeTop + 172 }]} pointerEvents="none">
+        <View style={[styles.aroundNote, { top: safeTop + 184 }]} pointerEvents="none">
           <Icon name="globe-outline" size={12} color={colors.textMuted} />
           <Text style={styles.aroundNoteText}>
             {myRegion
@@ -1460,12 +1466,14 @@ export default function FeedScreen({
           userId={publicProfile.id}
           username={publicProfile.username}
           onClose={() => setPublicProfile(null)}
+          onFollowChanged={setCreatorFollow}
         />
       )}
 
       <ProfilePeekModal
         user={peek}
         onClose={() => setPeek(null)}
+        onFollowChanged={setCreatorFollow}
         onOpenFull={(id, username) => {
           setPeek(null);
           setPublicProfile({ id, username });

@@ -49,10 +49,12 @@ export default function ProfilePeekModal({
   user,
   onClose,
   onOpenFull,
+  onFollowChanged,
 }: {
   user: { id: string; username: string } | null;
   onClose: () => void;
   onOpenFull: (id: string, username: string) => void;
+  onFollowChanged?: (userId: string, following: boolean, pending: boolean) => void;
 }) {
   const [profile, setProfile] = useState<PeekProfile | null>(null);
   const [posts, setPosts] = useState<PeekPost[]>([]);
@@ -91,11 +93,13 @@ export default function ProfilePeekModal({
     if (following) {
       await supabase.from('follows').delete().eq('follower_id', me.id).eq('following_id', user.id);
       setFollowing(false);
+      onFollowChanged?.(user.id, false, false);
     } else {
       await supabase
         .from('follows')
         .insert({ follower_id: me.id, following_id: user.id, status: profile.is_private ? 'pending' : 'accepted' });
       setFollowing(true);
+      onFollowChanged?.(user.id, true, profile.is_private);
       if (!profile.is_private) {
         notifyUser({ userId: user.id, actorId: me.id, type: 'follow' });
       }
