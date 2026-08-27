@@ -180,8 +180,8 @@ export default function PostViewer({ posts, index, onClose }: Props) {
         post={item}
         isActive={i === current}
         height={height}
-        contentTop={insets.top}
-        contentBottom={insets.bottom + 24}
+        contentTop={0}
+        contentBottom={28}
         onLike={() => toggleLike(item)}
         onFollow={() => toggleFollow(item)}
         onComment={() => setCommentPost(item)}
@@ -213,8 +213,9 @@ export default function PostViewer({ posts, index, onClose }: Props) {
         viewabilityConfig={{ itemVisiblePercentThreshold: 60 }}
         initialScrollIndex={index}
         getItemLayout={(_, i) => ({ length: height, offset: height * i, index: i })}
-        initialNumToRender={2}
-        windowSize={3}
+        initialNumToRender={1}
+        maxToRenderPerBatch={2}
+        windowSize={2}
       />
       <Pressable style={[styles.closeBtn, { top: insets.top + 10 }]} onPress={onClose} hitSlop={10}>
         <Text style={styles.closeText}>✕</Text>
