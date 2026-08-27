@@ -635,7 +635,7 @@ export default function FeedScreen({
       reasons: reasonRows[i] ?? [],
     }));
 
-    let ranked = rankRows(rows, mode, pulseMap, tagMap, notInterested, {
+    let ranked = rankRows(enriched, mode, pulseMap, tagMap, notInterested, {
       sort: feedPrefs.sort,
       liveSection,
     });
