@@ -391,13 +391,19 @@ export default function FeedScreen({
     const notInterested = new Set((notInt.data ?? []).map((x) => x.tag));
 
     let following = new Set<string>();
+    let pendingFollows = new Set<string>();
     if (user) {
+      // fetch BOTH statuses: accepted -> Following, pending -> Requested.
+      // Previously only accepted was loaded, so private-account follows
+      // showed "Follow" again after every reload.
       const { data: f } = await supabase
         .from('follows')
-        .select('following_id')
-        .eq('follower_id', user.id)
-        .eq('status', 'accepted');
-      following = new Set((f ?? []).map((x) => x.following_id));
+        .select('following_id, status')
+        .eq('follower_id', user.id);
+      (f ?? []).forEach((x: any) => {
+        if (x.status === 'accepted') following.add(x.following_id);
+        else if (x.status === 'pending') pendingFollows.add(x.following_id);
+      });
     }
 
     let aroundRegion: string | null = null;
@@ -620,7 +626,7 @@ export default function FeedScreen({
       ...p,
       liked_by_me: liked.has(p.id),
       following: following.has(p.user_id),
-      follow_pending: pending.has(p.user_id),
+      follow_pending: pendingFollows.has(p.user_id),
       saved_by_me: saved.has(p.id),
       reposted_by_me: reposted.has(p.id),
       my_reaction: myReaction.get(p.id) ?? null,
@@ -807,8 +813,12 @@ export default function FeedScreen({
         following_id: post.user_id,
         status: privateAccount ? 'pending' : 'accepted',
       });
-      if (error) load();
-      if (!privateAccount) {
+      if (error) {
+        // surface RLS/DB failures instead of silently reverting the UI
+        console.warn('follow insert failed', error.code, error.message);
+        load();
+      }
+      if (!privateAccount && !error) {
         notifyUser({ userId: post.user_id, actorId: me, type: 'follow' });
       }
     }
@@ -860,7 +870,10 @@ export default function FeedScreen({
   const followUser = async (id: string) => {
     const me = myIdRef.current;
     if (!me || me === id) return;
-    await supabase.from('follows').insert({ follower_id: me, following_id: id, status: 'accepted' });
+    const { error } = await supabase
+      .from('follows')
+      .insert({ follower_id: me, following_id: id, status: 'accepted' });
+    if (error) console.warn('follow (suggestion) insert failed', error.code, error.message);
     notifyUser({ userId: id, actorId: me, type: 'follow' });
     setSuggestions((prev) => prev.map((s) => (s.id === id ? { ...s, following: true } : s)));
     setCreatorFollow(id, true, false);
