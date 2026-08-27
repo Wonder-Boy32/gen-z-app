@@ -107,6 +107,7 @@ export default function FeedPost({
   const lastTap = useRef(0);
   const heartAnim = useRef(new Animated.Value(0)).current;
   const [holdPause, setHoldPause] = useState(false);
+  const [tapPaused, setTapPaused] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showReasons, setShowReasons] = useState(false);
 
@@ -114,7 +115,7 @@ export default function FeedPost({
   const soundUrl = post.sound_url;
   const soundPlayer = useAudioPlayer(soundUrl ?? null);
   const soundStatus = useAudioPlayerStatus(soundPlayer);
-  const soundActive = isActive && !holdPause && !!post.sound_url;
+  const soundActive = isActive && !holdPause && !tapPaused && !!post.sound_url;
 
   useEffect(() => {
     if (soundActive) {
@@ -152,6 +153,13 @@ export default function FeedPost({
       showHeart();
     } else {
       lastTap.current = now;
+      // single tap = pause/play for videos (waits to make sure it wasn't
+      // the first half of a double-tap before toggling)
+      setTimeout(() => {
+        if (lastTap.current === now && post.media_type === 'video') {
+          setTapPaused((p) => !p);
+        }
+      }, 300);
     }
   };
 
@@ -196,7 +204,7 @@ export default function FeedPost({
           <MediaArea
             post={post}
             isActive={isActive}
-            paused={holdPause}
+            paused={holdPause || tapPaused}
             onTap={handleTap}
             onHoldStart={() => setHoldPause(true)}
             onHoldEnd={() => setHoldPause(false)}
