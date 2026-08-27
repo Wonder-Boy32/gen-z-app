@@ -97,10 +97,22 @@ export default function DropVideoView({
   const filterTint = filters?.[0]?.id ? getFilterTint(filters[0].id) : null;
   const effectTint = effects?.effect ? EFFECT_TINTS[effects.effect] ?? null : null;
 
-  const player = useVideoPlayer({ uri: url }, (p) => {
+  // create the player WITHOUT a source — the video only loads when this
+  // item becomes active. Keeps at most ONE native video player alive in
+  // paging feeds/viewers, which removes scroll lag.
+  const player = useVideoPlayer(null, (p) => {
     p.loop = true;
     p.playbackRate = speed;
   });
+
+  // load the source only for the active item; release/pause everything else
+  useEffect(() => {
+    if (isActive && url) {
+      player.replace({ uri: url });
+    } else {
+      player.pause();
+    }
+  }, [isActive, url, player]);
 
   // trim loop + progress
   useEffect(() => {
