@@ -15,7 +15,17 @@ export default function MediaPickerSheet({ visible, assets, onClose, onPicked }:
   const pickCamera = async () => {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) return;
-    const res = await ImagePicker.launchCameraAsync({ mediaTypes: ['images', 'videos'], quality: 0.8 });
+    const res = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.8 });
+    if (!res.canceled) onPicked([...assets, ...res.assets]);
+  };
+
+  const pickVideo = async () => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) return;
+    const res = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['videos'],
+      videoMaxDuration: 60,
+    });
     if (!res.canceled) onPicked([...assets, ...res.assets]);
   };
 
@@ -51,11 +61,15 @@ export default function MediaPickerSheet({ visible, assets, onClose, onPicked }:
 
           <View style={styles.actionRow}>
             <Pressable style={styles.actionBtn} onPress={pickCamera}>
-              <Text style={styles.actionIcon}>📷</Text>
+              <Icon name="camera-outline" size={24} color={colors.text} />
               <Text style={styles.actionText}>Camera</Text>
             </Pressable>
+            <Pressable style={styles.actionBtn} onPress={pickVideo}>
+              <Icon name="videocam-outline" size={24} color={colors.text} />
+              <Text style={styles.actionText}>Video</Text>
+            </Pressable>
             <Pressable style={styles.actionBtn} onPress={pickGallery}>
-              <Text style={styles.actionIcon}>🖼</Text>
+              <Icon name="images-outline" size={24} color={colors.text} />
               <Text style={styles.actionText}>Gallery</Text>
             </Pressable>
           </View>
@@ -124,15 +138,13 @@ const styles = StyleSheet.create({
   },
   actionBtn: {
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: colors.surfaceAlt,
     borderWidth: 1,
     borderColor: colors.borderStrong,
     borderRadius: radius.md,
     paddingVertical: 14,
-    width: '46%',
-  },
-  actionIcon: {
-    fontSize: 26,
+    width: '30%',
   },
   actionText: {
     color: colors.text,

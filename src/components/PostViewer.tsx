@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { supabase } from '../supabase/client';
 import { colors } from '../theme';
-import { useInsets } from '../utils/useInsets';
+import { TOP_INSET, useInsets } from '../utils/useInsets';
 import FeedPost, { FeedPost as FeedPostType, setFeedUserId } from './FeedPost';
 import CommentsModal from './CommentsModal';
 import SoundPage from './SoundPage';
@@ -217,7 +217,7 @@ export default function PostViewer({ posts, index, onClose }: Props) {
         maxToRenderPerBatch={2}
         windowSize={2}
       />
-      <Pressable style={[styles.closeBtn, { top: insets.top + 10 }]} onPress={onClose} hitSlop={10}>
+      <Pressable style={[styles.closeBtn, { top: Math.max(insets.top, TOP_INSET) + 10 }]} onPress={onClose} hitSlop={10}>
         <Text style={styles.closeText}>✕</Text>
       </Pressable>
       <CommentsModal
