@@ -17,6 +17,7 @@ import { notifyUser } from '../utils/notify';
 import { TOP_INSET } from '../utils/useInsets';
 import Button from '../components/Button';
 import Avatar from '../components/Avatar';
+import PostViewer from '../components/PostViewer';
 import ChatThread from './ChatThread';
 
 type Profile = {
@@ -35,12 +36,31 @@ type Profile = {
 
 type Post = {
   id: string;
+  user_id: string;
   media_url: string | null;
   media_type: 'video' | 'image' | null;
+  media_items: { url: string; type: string }[] | null;
+  cover_url: string | null;
+  text_bg: string | null;
+  text_color: string | null;
+  caption: string | null;
+  audio: string | null;
+  sound: string | null;
+  sound_url: string | null;
+  sound_start: number | null;
+  sound_end: number | null;
+  effects: any;
+  filters: any;
+  text_layers: any;
+  stickers: any;
+  parent_drop_id: string | null;
   content: string | null;
+  drop_id: string | null;
   views_count: number;
   likes_count: number;
+  comments_count: number;
   expires_at: string;
+  created_at: string;
 };
 
 type Filter = 'all' | 'video' | 'text';
@@ -66,6 +86,7 @@ export default function PublicProfileScreen({
   const [filter, setFilter] = useState<Filter>('all');
   const [threadId, setThreadId] = useState<string | null>(null);
   const [chatBusy, setChatBusy] = useState(false);
+  const [viewer, setViewer] = useState<number | null>(null);
   const myIdRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
@@ -114,7 +135,9 @@ export default function PublicProfileScreen({
     // active content — RLS hides private accounts' posts from non-followers
     const { data: postRows } = await supabase
       .from('posts')
-      .select('id, media_url, media_type, content, views_count, likes_count, expires_at')
+      .select(
+        'id, user_id, media_url, media_type, media_items, cover_url, text_bg, text_color, caption, audio, sound, sound_url, sound_start, sound_end, effects, filters, text_layers, stickers, parent_drop_id, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region)'
+      )
       .eq('user_id', userId)
       .is('parent_drop_id', null)
       .order('created_at', { ascending: false });
@@ -365,8 +388,8 @@ export default function PublicProfileScreen({
                 </View>
               </View>
             }
-            renderItem={({ item }) => (
-              <View style={styles.tile}>
+            renderItem={({ item, index: i }) => (
+              <Pressable style={styles.tile} onPress={() => setViewer(i)}>
                 {item.media_url ? (
                   <Image source={{ uri: item.media_url }} style={styles.tileImage} />
                 ) : (
@@ -386,7 +409,7 @@ export default function PublicProfileScreen({
                     <Text style={styles.tileBadgeText}>{fmtCount(item.likes_count)}</Text>
                   </View>
                 )}
-              </View>
+              </Pressable>
             )}
             ListEmptyComponent={
               <Text style={styles.empty}>
@@ -398,6 +421,12 @@ export default function PublicProfileScreen({
               </Text>
             }
           />
+        )}
+
+        {viewer !== null && (
+          <View style={styles.viewerWrap}>
+            <PostViewer posts={visiblePosts as any} index={viewer} onClose={() => setViewer(null)} />
+          </View>
         )}
       </View>
     </Modal>
@@ -435,6 +464,15 @@ const styles = StyleSheet.create({
   },
   loader: {
     flex: 1,
+  },
+  viewerWrap: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 30,
+    backgroundColor: colors.bg,
   },
   content: {
     padding: 14,
