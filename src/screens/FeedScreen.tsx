@@ -43,6 +43,7 @@ type StoryUser = {
   id: string;
   username: string;
   avatar_url: string | null;
+  following: boolean;
   following?: boolean;
 };
 
@@ -659,7 +660,12 @@ export default function FeedScreen({
         const p = s.profile;
         if (!p || p.id === user?.id || seen.has(p.id)) return;
         seen.add(p.id);
-        users.push({ id: p.id, username: p.username, avatar_url: p.avatar_url });
+        users.push({
+          id: p.id,
+          username: p.username,
+          avatar_url: p.avatar_url,
+          following: following.has(p.id),
+        });
       });
       setStoryUsers(users.slice(0, 12));
     }
@@ -791,6 +797,7 @@ export default function FeedScreen({
       prev.map((p) => (p.user_id === userId ? { ...p, following, follow_pending: pending } : p))
     );
     setSuggestions((prev) => prev.map((s) => (s.id === userId ? { ...s, following } : s)));
+    setStoryUsers((prev) => prev.map((s) => (s.id === userId ? { ...s, following } : s)));
   }, []);
 
   const toggleFollow = async (post: FeedPostFull) => {
@@ -1212,7 +1219,7 @@ export default function FeedScreen({
             contentContainerStyle={styles.storiesContent}
             renderItem={({ item }) => (
               <Pressable style={styles.storyItem} onPress={() => setUserMode(item.id)}>
-                <View style={styles.storyRing}>
+                <View style={[styles.storyRing, item.following && styles.storyRingFollowed]}>
                   {item.avatar_url ? (
                     <Image source={{ uri: item.avatar_url }} style={styles.storyAvatar} />
                   ) : (
@@ -1989,8 +1996,11 @@ const styles = StyleSheet.create({
     height: 56,
     borderRadius: 28,
     borderWidth: 2,
-    borderColor: colors.accent,
+    borderColor: 'rgba(255,255,255,0.28)',
     padding: 2,
+  },
+  storyRingFollowed: {
+    borderColor: colors.accent,
     ...shadows.glow,
   },
   storyAvatar: { width: 48, height: 48, borderRadius: 24 },
