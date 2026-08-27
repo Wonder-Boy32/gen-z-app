@@ -1003,7 +1003,12 @@ export default function FeedScreen({
 
   return (
     <View style={styles.container}>
-      <View style={[styles.topScrim, { height: safeTop + 176 }]} pointerEvents="none" />
+      {/* top readability scrim — fades to transparent below the nav, no hard navy band */}
+      <View style={[styles.topScrim, { height: feedTop + 6 }]} pointerEvents="none">
+        {[0.45, 0.45, 0.43, 0.4, 0.36, 0.31, 0.25, 0.18, 0.12, 0.06, 0].map((o, i) => (
+          <View key={i} style={{ flex: 1, backgroundColor: `rgba(6,10,22,${o})` }} />
+        ))}
+      </View>
       <View style={[styles.topBrand, { paddingTop: safeTop + 8 }]} pointerEvents="none">
         <LogoHeader compact transparent />
       </View>
@@ -1661,7 +1666,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 9,
-    backgroundColor: 'rgba(6,10,22,0.45)',
   },
   topBrand: {
     position: 'absolute',
