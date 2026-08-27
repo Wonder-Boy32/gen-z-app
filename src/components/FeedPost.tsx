@@ -168,24 +168,41 @@ export default function FeedPost({
   const heartScale = heartAnim.interpolate({ inputRange: [0, 0.3, 1], outputRange: [0.2, 1.2, 1] });
   const heartOpacity = heartAnim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 1, 0] });
 
+  const isCarousel = Array.isArray(post.media_items) && post.media_items.length > 1;
+
   return (
     <View style={[styles.post, { height }]}>
-      <Pressable
-        style={[styles.media, { top: contentTop, bottom: contentBottom }]}
-        onPress={handleTap}
-        delayLongPress={350}
-        onLongPress={() => setHoldPause(true)}
-        onPressOut={() => setHoldPause(false)}
-      >
-        <MediaArea
-          post={post}
-          isActive={isActive}
-          paused={holdPause}
-          onTap={handleTap}
-          onHoldStart={() => setHoldPause(true)}
-          onHoldEnd={() => setHoldPause(false)}
-        />
-      </Pressable>
+      {isCarousel ? (
+        // carousel must NOT sit inside a Pressable — on Android a Pressable
+        // becomes the touch responder and starves the inner ScrollView, so
+        // swiping dies. It gets its own non-blocking double-tap detection.
+        <View style={[styles.media, { top: contentTop, bottom: contentBottom }]}>
+          <CarouselMedia
+            items={post.media_items}
+            onDoubleTap={() => {
+              if (!post.liked_by_me) onLike();
+              showHeart();
+            }}
+          />
+        </View>
+      ) : (
+        <Pressable
+          style={[styles.media, { top: contentTop, bottom: contentBottom }]}
+          onPress={handleTap}
+          delayLongPress={350}
+          onLongPress={() => setHoldPause(true)}
+          onPressOut={() => setHoldPause(false)}
+        >
+          <MediaArea
+            post={post}
+            isActive={isActive}
+            paused={holdPause}
+            onTap={handleTap}
+            onHoldStart={() => setHoldPause(true)}
+            onHoldEnd={() => setHoldPause(false)}
+          />
+        </Pressable>
+      )}
 
       <Animated.View
         pointerEvents="none"
@@ -545,11 +562,35 @@ function VideoMedia({
   );
 }
 
-function CarouselMedia({ items }: { items: { url: string; type: string }[] }) {
+function CarouselMedia({ items, onDoubleTap }: { items: { url: string; type: string }[]; onDoubleTap?: () => void }) {
   const { width } = useWindowDimensions();
   const [index, setIndex] = useState(0);
+  const lastTap = useRef(0);
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
+
+  // plain touch events (not a responder) — detects double-tap WITHOUT
+  // blocking the ScrollView's swipes
+  const onTouchStart = (e: any) => {
+    touchStart.current = { x: e.nativeEvent.pageX, y: e.nativeEvent.pageY };
+  };
+  const onTouchEnd = (e: any) => {
+    const t = e.nativeEvent.changedTouches?.[0];
+    const end = t ? { x: t.pageX, y: t.pageY } : null;
+    const start = touchStart.current;
+    touchStart.current = null;
+    const moved = start && end ? Math.hypot(end.x - start.x, end.y - start.y) : 0;
+    if (moved > 12) return; // it was a swipe, not a tap
+    const now = Date.now();
+    if (now - lastTap.current < 300) {
+      lastTap.current = 0;
+      onDoubleTap?.();
+    } else {
+      lastTap.current = now;
+    }
+  };
+
   return (
-    <View style={styles.fill}>
+    <View style={styles.fill} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
       <ScrollView
         horizontal
         pagingEnabled
