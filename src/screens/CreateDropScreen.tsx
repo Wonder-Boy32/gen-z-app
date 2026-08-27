@@ -168,7 +168,12 @@ export default function CreateDropScreen({
   const [error, setError] = useState<string | null>(null);
   const [livePulse] = useState(new Animated.Value(1));
 
-  const firstIsVideo = assets.length > 0 && (assets[0].mimeType?.startsWith('video') ?? false);
+  // Android camera captures often report mimeType: null — detect video by
+  // file extension as a fallback so recorded clips get a cover + correct type
+  const isVideoAsset = (a: any): boolean =>
+    (a?.mimeType?.startsWith('video') ?? false) || /\.(mp4|mov|m4v|webm|3gp)$/i.test(a?.fileName ?? a?.uri ?? '');
+
+  const firstIsVideo = assets.length > 0 && isVideoAsset(assets[0]);
   const firstVideoUri = firstIsVideo ? assets[0].uri : null;
   const coverSource = firstVideoUri; // what the hidden cover-capture player plays
   const player = useVideoPlayer(firstVideoUri ? { uri: firstVideoUri } : null, (p) => {
@@ -288,7 +293,7 @@ export default function CreateDropScreen({
   }, [mentionQuery]);
 
   const hasMedia = assets.length > 0;
-  const imagesOnly = assets.every((a) => !(a.mimeType?.startsWith('video') ?? false));
+  const imagesOnly = assets.every((a) => !isVideoAsset(a));
   const hasAnyContent = hasMedia || content.trim().length > 0 || caption.trim().length > 0;
 
   const ratioOf = RATIOS.find((r) => r.id === ratio)?.ratio ?? null;
@@ -469,7 +474,7 @@ export default function CreateDropScreen({
         const items: { url: string; type: string }[] = [];
         for (let i = 0; i < assets.length; i++) {
           const asset = assets[i];
-          const isVideo = asset.mimeType?.startsWith('video') ?? false;
+          const isVideo = isVideoAsset(asset);
           let uri = asset.uri;
 
           // Native builds: bake trim/speed/rotation/filter/voiceover into the
