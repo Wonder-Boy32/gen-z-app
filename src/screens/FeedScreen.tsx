@@ -220,6 +220,15 @@ export default function FeedScreen({
   const haloPulse = useRef(new Animated.Value(0)).current;
   // always-on pulse for the LIVE dot on the rail (FOMO, independent of the banner)
   const railDotPulse = useRef(new Animated.Value(0)).current;
+  // stories row: fade out when scrolling past the first post (video stays clean)
+  const storyFade = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    Animated.timing(storyFade, {
+      toValue: activeIndex > 0 ? 0 : 1,
+      duration: 180,
+      useNativeDriver: true,
+    }).start();
+  }, [activeIndex, storyFade]);
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
@@ -1209,7 +1218,10 @@ export default function FeedScreen({
       )}
 
       {storiesVisible && (
-        <View style={[styles.storiesWrap, { top: safeTop + 118 }]}>
+        <Animated.View
+          style={[styles.storiesWrap, { top: safeTop + 118, opacity: storyFade }]}
+          pointerEvents={activeIndex > 0 ? 'none' : 'auto'}
+        >
           <FlatList
             data={storyUsers}
             horizontal
@@ -1235,7 +1247,7 @@ export default function FeedScreen({
               </Pressable>
             )}
           />
-        </View>
+        </Animated.View>
       )}
 
       {activeDrop && (
