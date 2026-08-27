@@ -589,7 +589,6 @@ export default function FeedScreen({
     let reposted = new Set<string>();
     let myReaction = new Map<string, string>();
     let reactionCounts = new Map<string, number>();
-    let pending = new Set<string>();
 
     if (user && ids.length) {
       const [l, s, r, rp] = await Promise.all([
