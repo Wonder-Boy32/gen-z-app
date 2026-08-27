@@ -942,9 +942,9 @@ export default function FeedScreen({
   // layout: brand → subtitle → discovery rail → sub-filter rows (Live/Expiring/Around)
   const hasSubRows = mode === 'live' || mode === 'expiring' || mode === 'around';
   const railTop = safeTop + 64;
-  const subTop = safeTop + 106;
-  const feedTop = hasSubRows ? safeTop + 168 : safeTop + 112;
-  const bannerTop = hasSubRows ? safeTop + 184 : safeTop + 128;
+  const subTop = safeTop + 112;
+  const feedTop = hasSubRows ? safeTop + 176 : safeTop + 118;
+  const bannerTop = hasSubRows ? safeTop + 192 : safeTop + 134;
   const feedBottom = insets.bottom > 0 ? 60 + insets.bottom : 76;
 
   const renderItem = ({ item, index }: { item: FeedPostFull; index: number }) => (
@@ -1336,7 +1336,7 @@ export default function FeedScreen({
           getItemLayout={(_, index) => ({ length: height, offset: height * index, index })}
           windowSize={5}
           ListEmptyComponent={
-            <View style={styles.emptyBox}>
+            <View style={[styles.emptyBox, { paddingTop: feedTop + 30 }]}>
               {mode === 'following' && (
                 <View style={styles.emptyIconWrap}>
                   <Icon name="people" size={26} color={colors.accent} />
@@ -2069,7 +2069,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 40,
-    paddingTop: 60,
     paddingBottom: 120,
     backgroundColor: colors.bg,
   },
