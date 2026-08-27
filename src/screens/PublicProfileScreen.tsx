@@ -85,7 +85,28 @@ export default function PublicProfileScreen({
       supabase.from('follows').select('following_id', { count: 'exact', head: true }).eq('follower_id', userId),
     ]);
 
-    setProfile((prof as Profile | null) ?? null);
+    // the full profile query can fail on databases missing newer columns —
+    // fall back to the core columns so the name + pic ALWAYS show
+    let profData: Profile | null = null;
+    if (prof?.data) {
+      profData = prof.data as unknown as Profile;
+    } else {
+      const core = await supabase
+        .from('profiles')
+        .select('id, username, display_name, avatar_url, bio, is_private, created_at')
+        .eq('id', userId)
+        .maybeSingle();
+      if (core?.data) {
+        profData = {
+          ...(core.data as unknown as Profile),
+          location: null,
+          pronouns: null,
+          verified: false,
+          streak_count: 0,
+        };
+      }
+    }
+    setProfile(profData);
     setFollowState((myFollow?.data?.status as 'pending' | 'accepted') === 'accepted' ? 'following' : myFollow?.data?.status === 'pending' ? 'pending' : 'none');
     setFollowers(fw.count ?? 0);
     setFollowing(fl.count ?? 0);
@@ -168,6 +189,7 @@ export default function PublicProfileScreen({
   const shareProfile = () => {
     Share.share({
       message: `Check out @${profile?.username ?? username} on Gen Z — every story, gone in 48 hours!`,
+
     });
   };
 
@@ -211,6 +233,7 @@ export default function PublicProfileScreen({
           <Text style={styles.headerTitle} numberOfLines={1}>
             @{profile?.username ?? username}
           </Text>
+
           <Pressable onPress={shareProfile} style={styles.shareBtn} hitSlop={8}>
             <Icon name="share-social-outline" size={20} color={colors.text} />
           </Pressable>
@@ -231,7 +254,7 @@ export default function PublicProfileScreen({
                   <View style={styles.avatarWrap}>
                     <Avatar
                       url={profile?.avatar_url}
-                      name={profile?.display_name || profile?.username || 'G'}
+                      name={profile?.display_name || profile?.username || username || 'G'}
                       size={88}
                       ring
                     />
@@ -244,11 +267,11 @@ export default function PublicProfileScreen({
 
                   <View style={styles.nameRow}>
                     <Text style={styles.displayName} numberOfLines={1}>
-                      {profile?.display_name || profile?.username || 'Gen Z user'}
+                      {profile?.display_name || profile?.username || username || 'Gen Z user'}
                     </Text>
                     {profile?.verified && <Icon name="checkmark-circle" size={17} color={colors.accent} />}
                   </View>
-                  <Text style={styles.username}>@{profile?.username ?? 'unknown'}</Text>
+                  <Text style={styles.username}>@{profile?.username ?? username}</Text>
 
                   {/* info chips */}
                   <View style={styles.chipRow}>
