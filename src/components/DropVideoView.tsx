@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { colors } from '../theme';
 import Icon from './ui/Icon';
-import { getFilterTint } from './create/FilterCarousel';
+import { getFilterGlow, getFilterTint } from './create/FilterCarousel';
 
 // ============================================================
 // DropVideoView — plays a drop's video and applies its stored
@@ -94,7 +94,9 @@ export default function DropVideoView({
   const trim = effects?.trim && effects.trim.end > effects.trim.start ? effects.trim : null;
   const speed = effects?.speed && effects.speed > 0 ? effects.speed : 1;
   const rotation = effects?.rotation ?? 0;
-  const filterTint = filters?.[0]?.id ? getFilterTint(filters[0].id) : null;
+  const filterId = filters?.[0]?.id ?? null;
+  const filterTint = filterId ? getFilterTint(filterId) : null;
+  const filterGlow = filterId ? getFilterGlow(filterId) : null;
   const effectTint = effects?.effect ? EFFECT_TINTS[effects.effect] ?? null : null;
 
   // create the player WITHOUT a source — the video only loads when this
@@ -168,6 +170,7 @@ export default function DropVideoView({
         <VideoView player={player} style={styles.fill} contentFit={contentFit} nativeControls={false} />
         {effectTint && <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: effectTint }]} />}
         {filterTint && <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: filterTint }]} />}
+        {filterGlow && <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: filterGlow }]} />}
       </View>
 
       {onTap && (
