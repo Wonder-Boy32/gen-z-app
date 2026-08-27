@@ -1319,6 +1319,7 @@ export default function FeedScreen({
           showsVerticalScrollIndicator={false}
           snapToInterval={height}
           decelerationRate="fast"
+          contentContainerStyle={styles.feedContent}
           onViewableItemsChanged={onViewable}
           viewabilityConfig={viewabilityConfig}
           refreshing={refreshing}
@@ -1695,7 +1696,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     gap: 22,
     paddingHorizontal: 20,
-    paddingRight: 52,
+    paddingRight: 68,
   },
   railItem: {
     alignItems: 'center',
@@ -2064,8 +2065,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 40,
+    paddingTop: 60,
+    paddingBottom: 120,
     backgroundColor: colors.bg,
   },
+  feedContent: { flexGrow: 1 },
   emptyTitle: { color: colors.text, fontSize: 20, fontWeight: '700' },
   emptyText: { color: colors.textMuted, fontSize: 14, textAlign: 'center', marginTop: 10, lineHeight: 20 },
   suggestWrap: { marginTop: 24, width: '100%' },
