@@ -325,15 +325,25 @@ function NewGroupModal({
         data: { user },
       } = await supabase.auth.getUser();
       if (!user) return;
+      // follows has TWO FKs to profiles — embedding profile:profiles() is
+      // ambiguous and returns zero rows; fetch the two queries separately
       const { data } = await supabase
         .from('follows')
-        .select('following_id, profile:profiles(username)')
+        .select('following_id')
         .eq('follower_id', user.id)
         .eq('status', 'accepted')
         .limit(100);
-      setCandidates(
-        ((data ?? []) as any[]).map((f) => ({ id: f.following_id, username: f.profile?.username ?? 'unknown' }))
-      );
+      const ids = ((data ?? []) as { following_id: string }[]).map((f) => f.following_id);
+      let names = new Map<string, string>();
+      if (ids.length) {
+        const { data: profs } = await supabase
+          .from('profiles')
+          .select('id, username')
+          .in('id', ids)
+          .limit(100);
+        names = new Map(((profs ?? []) as { id: string; username: string }[]).map((p) => [p.id, p.username]));
+      }
+      setCandidates(ids.map((id) => ({ id, username: names.get(id) ?? 'unknown' })));
     })();
   }, [visible]);
 

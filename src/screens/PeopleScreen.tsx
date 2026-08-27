@@ -45,37 +45,43 @@ export default function PeopleScreen({
     const myFollows = await supabase.from('follows').select('following_id').eq('follower_id', me).limit(500);
     const myFollowing = new Set((myFollows.data ?? []).map((f) => f.following_id));
 
-    if (mode === 'followers') {
-      const { data } = await supabase
-        .from('follows')
-        .select('follower_id, status, profile:profiles(username, avatar_url)')
-        .eq('following_id', me)
+    // NOTE: never embed profile:profiles(...) on `follows` — the table has TWO
+    // FKs to profiles (follower_id + following_id), which makes the join
+    // ambiguous and PostgREST returns zero rows. Fetch rows + profiles separately.
+    const keyCol = mode === 'followers' ? 'follower_id' : 'following_id';
+    const { data } = await supabase
+      .from('follows')
+      .select(`${keyCol}, status`)
+      .eq(mode === 'followers' ? 'following_id' : 'follower_id', me)
+      .limit(500);
+    const ids = ((data ?? []) as any[]).map((f) => f[keyCol]).filter(Boolean);
+    let profMap = new Map<string, { username: string; avatar_url: string | null }>();
+    if (ids.length) {
+      const { data: profs } = await supabase
+        .from('profiles')
+        .select('id, username, avatar_url')
+        .in('id', ids)
         .limit(500);
-      setRows(
-        ((data ?? []) as any[]).map((f) => ({
-          id: f.follower_id,
-          username: f.profile?.username ?? 'unknown',
-          avatar_url: f.profile?.avatar_url ?? null,
-          status: f.status,
-        }))
+      profMap = new Map(
+        ((profs ?? []) as { id: string; username: string; avatar_url: string | null }[]).map((p) => [
+          p.id,
+          { username: p.username, avatar_url: p.avatar_url },
+        ])
       );
-      setMutuals(new Set((data ?? []).filter((f: any) => myFollowing.has(f.follower_id)).map((f: any) => f.follower_id)));
-    } else {
-      const { data } = await supabase
-        .from('follows')
-        .select('following_id, status, profile:profiles(username, avatar_url)')
-        .eq('follower_id', me)
-        .limit(500);
-      setRows(
-        ((data ?? []) as any[]).map((f) => ({
-          id: f.following_id,
-          username: f.profile?.username ?? 'unknown',
-          avatar_url: f.profile?.avatar_url ?? null,
-          status: f.status,
-        }))
-      );
-      setMutuals(new Set());
     }
+    setRows(
+      ((data ?? []) as any[]).map((f) => ({
+        id: f[keyCol],
+        username: profMap.get(f[keyCol])?.username ?? 'unknown',
+        avatar_url: profMap.get(f[keyCol])?.avatar_url ?? null,
+        status: f.status,
+      }))
+    );
+    setMutuals(
+      mode === 'followers'
+        ? new Set((data ?? []).filter((f: any) => myFollowing.has(f.follower_id)).map((f: any) => f.follower_id))
+        : new Set()
+    );
     setLoading(false);
   }, [mode]);
 
