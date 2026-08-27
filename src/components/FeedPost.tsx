@@ -178,7 +178,7 @@ export default function FeedPost({
         // swiping dies. It gets its own non-blocking double-tap detection.
         <View style={[styles.media, { top: contentTop, bottom: contentBottom }]}>
           <CarouselMedia
-            items={post.media_items}
+            items={post.media_items!}
             onDoubleTap={() => {
               if (!post.liked_by_me) onLike();
               showHeart();
