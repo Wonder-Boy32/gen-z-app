@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
-    "icon": "./assets/icon.png",
+    "icon": "./assets/icon-launcher.png",
     "plugins": [
       "expo-image-picker",
       "expo-video",
@@ -15,6 +15,10 @@
     ],
     "android": {
       "package": "com.genz.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon-launcher.png",
+        "backgroundColor": "#8A88C3"
+      },
       "permissions": [
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",
