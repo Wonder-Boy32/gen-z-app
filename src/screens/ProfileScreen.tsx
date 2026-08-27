@@ -23,6 +23,7 @@ import PostViewer from '../components/PostViewer';
 import PeopleScreen from './PeopleScreen';
 import SettingsScreen from './SettingsScreen';
 import AnonymousSettingsModal from '../components/AnonymousSettingsModal';
+import AnonymousCardModal from '../components/AnonymousCardModal';
 
 type Profile = {
   username: string;
@@ -81,7 +82,13 @@ type Tab = 'active' | 'videos' | 'reposts' | 'saved';
 
 const H48 = 48 * 3600 * 1000;
 
-export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (userId: string) => void }) {
+export default function ProfileScreen({
+  onOpenDropsFeed,
+  onPostToFeed,
+}: {
+  onOpenDropsFeed?: (userId: string) => void;
+  onPostToFeed?: (uri: string) => void;
+}) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [myId, setMyId] = useState<string | null>(null);
   const [viewer, setViewer] = useState<{ list: (Post | RepostRow)[]; index: number } | null>(null);
@@ -99,6 +106,7 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
   const [shareOpen, setShareOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [anonSettingsOpen, setAnonSettingsOpen] = useState(false);
+  const [anonCardOpen, setAnonCardOpen] = useState(false);
   const [peopleMode, setPeopleMode] = useState<'followers' | 'following' | null>(null);
 
   const load = useCallback(async () => {
@@ -180,11 +188,7 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
     });
   };
 
-  const shareAnonLink = () => {
-    Share.share({
-      message: `Send me an anonymous message on Gen Z 👀 — I won't know it's you. Open Gen Z → my profile → "Send me an anonymous message".`,
-    });
-  };
+  const shareAnonLink = () => setAnonCardOpen(true);
 
   const achievements = useAchievements(profile, posts, totalLikes);
   const activePosts = posts; // RLS already returns only unexpired posts
@@ -408,6 +412,16 @@ export default function ProfileScreen({ onOpenDropsFeed }: { onOpenDropsFeed?: (
       <ShareProfileModal visible={shareOpen} profile={profile} onClose={() => setShareOpen(false)} onShare={shareProfile} />
 
       <AnonymousSettingsModal visible={anonSettingsOpen} onClose={() => setAnonSettingsOpen(false)} />
+
+      {anonCardOpen && profile && (
+        <AnonymousCardModal
+          visible
+          username={profile.username}
+          kind="link"
+          onClose={() => setAnonCardOpen(false)}
+          onPostToFeed={(uri) => onPostToFeed?.(uri)}
+        />
+      )}
 
       {viewer && (
         <View style={styles.viewerWrap}>

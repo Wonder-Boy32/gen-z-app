@@ -108,10 +108,12 @@ export default function CreateDropScreen({
   onPosted,
   initialSound = null,
   replyToDropId = null,
+  initialMediaUri = null,
 }: {
   onPosted: () => void;
   initialSound?: string | null;
   replyToDropId?: string | null;
+  initialMediaUri?: string | null;
 }) {
   const [step, setStep] = useState<Step>('create');
   const [mode, setMode] = useState<Mode>('media');
@@ -257,6 +259,22 @@ export default function CreateDropScreen({
   useEffect(() => {
     if (replyToDropId) setParentDropId(replyToDropId);
   }, [replyToDropId]);
+
+  // create-intent: a pre-captured image (e.g. anonymous-message card)
+  useEffect(() => {
+    if (!initialMediaUri || assets.length) return;
+    setMode('media');
+    setAssets([
+      {
+        uri: initialMediaUri,
+        mimeType: 'image/png',
+        fileName: 'anonymous-card.png',
+        width: 1080,
+        height: 1460,
+      } as ImagePicker.ImagePickerAsset,
+    ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialMediaUri]);
 
   // create-intent: sound preselected from the Sound page
   useEffect(() => {

@@ -15,6 +15,7 @@ import { colors, radius } from '../theme';
 import Icon from '../components/ui/Icon';
 import { TOP_INSET } from '../utils/useInsets';
 import AnonymousSettingsModal from '../components/AnonymousSettingsModal';
+import AnonymousCardModal from '../components/AnonymousCardModal';
 
 type AnonMsg = {
   id: string;
@@ -54,15 +55,19 @@ function fmtAgo(iso: string): string {
 export default function AnonymousInboxScreen({
   onBack,
   onReplyWithDrop,
+  onPostToFeed,
 }: {
   onBack: () => void;
   onReplyWithDrop?: () => void;
+  onPostToFeed?: (uri: string) => void;
 }) {
   const [msgs, setMsgs] = useState<AnonMsg[]>([]);
   const [loading, setLoading] = useState(true);
+  const [myUsername, setMyUsername] = useState('you');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [menuFor, setMenuFor] = useState<AnonMsg | null>(null);
   const [reportFor, setReportFor] = useState<AnonMsg | null>(null);
+  const [cardFor, setCardFor] = useState<AnonMsg | null>(null);
 
   const load = useCallback(async () => {
     const {
@@ -72,6 +77,8 @@ export default function AnonymousInboxScreen({
       setLoading(false);
       return;
     }
+    const { data: me } = await supabase.from('profiles').select('username').eq('id', user.id).maybeSingle();
+    if (me?.username) setMyUsername(me.username);
     const { data } = await supabase
       .from('anonymous_messages_public')
       .select('*')
@@ -175,12 +182,20 @@ export default function AnonymousInboxScreen({
           })}
         </View>
 
-        {onReplyWithDrop && (
-          <Pressable style={styles.replyBtn} onPress={onReplyWithDrop}>
-            <Icon name="flame" size={13} color={colors.accent} />
-            <Text style={styles.replyBtnText}>Reply with Drop</Text>
-          </Pressable>
-        )}
+        <View style={styles.cardActions}>
+          {onReplyWithDrop && (
+            <Pressable style={styles.replyBtn} onPress={onReplyWithDrop}>
+              <Icon name="flame" size={13} color={colors.accent} />
+              <Text style={styles.replyBtnText}>Reply with Drop</Text>
+            </Pressable>
+          )}
+          {onPostToFeed && (
+            <Pressable style={[styles.replyBtn, styles.postBtn]} onPress={() => setCardFor(item)}>
+              <Icon name="download-outline" size={13} color={colors.accent} />
+              <Text style={styles.replyBtnText}>Post as Drop</Text>
+            </Pressable>
+          )}
+        </View>
       </Pressable>
     );
   };
@@ -220,6 +235,17 @@ export default function AnonymousInboxScreen({
       )}
 
       <AnonymousSettingsModal visible={settingsOpen} onClose={() => setSettingsOpen(false)} />
+
+      {cardFor && (
+        <AnonymousCardModal
+          visible
+          username={myUsername}
+          message={cardFor.content}
+          kind="message"
+          onClose={() => setCardFor(null)}
+          onPostToFeed={(uri) => onPostToFeed?.(uri)}
+        />
+      )}
 
       {/* ••• menu */}
       <Modal visible={!!menuFor} transparent animationType="fade" onRequestClose={() => setMenuFor(null)}>
@@ -331,6 +357,8 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   replyBtnText: { color: colors.accent, fontSize: 12, fontWeight: '800' },
+  cardActions: { flexDirection: 'row', gap: 8, marginTop: 12, flexWrap: 'wrap' },
+  postBtn: { backgroundColor: 'rgba(255,122,0,0.12)' },
   emptyWrap: { alignItems: 'center', paddingTop: 80, paddingHorizontal: 30 },
   emptyIcon: {
     width: 64,

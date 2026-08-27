@@ -17,10 +17,10 @@ export default function HomeScreen() {
   const [pendingAudio, setPendingAudio] = useState<string | null>(null);
   const [pendingTag, setPendingTag] = useState<string | null>(null);
 
-  // create-intent routing: sound page / reply-with-drop -> create tab
-  const [createIntent, setCreateIntent] = useState<{ sound?: string; replyTo?: string } | null>(null);
+  // create-intent routing: sound page / reply-with-drop / anon card -> create tab
+  const [createIntent, setCreateIntent] = useState<{ sound?: string; replyTo?: string; mediaUri?: string } | null>(null);
 
-  const handleCreateIntent = (intent: { sound?: string; replyTo?: string }) => {
+  const handleCreateIntent = (intent: { sound?: string; replyTo?: string; mediaUri?: string }) => {
     setCreateIntent(intent);
     setTab('post');
   };
@@ -65,12 +65,14 @@ export default function HomeScreen() {
             onPosted={handlePosted}
             initialSound={createIntent?.sound ?? null}
             replyToDropId={createIntent?.replyTo ?? null}
+            initialMediaUri={createIntent?.mediaUri ?? null}
           />
         )}
         {tab === 'chat' && (
           <ChatsScreen
             onOpenUser={(id) => openFiltered(id, null, null)}
             onOpenCreate={() => handleCreateIntent({})}
+            onPostToFeed={(uri) => handleCreateIntent({ mediaUri: uri })}
           />
         )}
         {tab === 'profile' && (
@@ -79,6 +81,7 @@ export default function HomeScreen() {
               setPendingUser(userId);
               setTab('feed');
             }}
+            onPostToFeed={(uri) => handleCreateIntent({ mediaUri: uri })}
           />
         )}
       </View>

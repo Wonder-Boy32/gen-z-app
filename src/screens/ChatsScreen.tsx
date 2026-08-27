@@ -45,16 +45,22 @@ const FILTERS: { key: 'all' | 'unread' | 'requests' | 'drops'; label: string }[]
 export default function ChatsScreen({
   onOpenUser,
   onOpenCreate,
+  onPostToFeed,
 }: {
   onOpenUser?: (userId: string) => void;
   onOpenCreate?: () => void;
+  onPostToFeed?: (uri: string) => void;
 }) {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [anonOpen, setAnonOpen] = useState(false);
 
   if (anonOpen) {
     return (
-      <AnonymousInboxScreen onBack={() => setAnonOpen(false)} onReplyWithDrop={onOpenCreate} />
+      <AnonymousInboxScreen
+        onBack={() => setAnonOpen(false)}
+        onReplyWithDrop={onOpenCreate}
+        onPostToFeed={onPostToFeed}
+      />
     );
   }
   if (conversationId) {
@@ -239,14 +245,18 @@ function ConversationList({
       }
     }
 
-    const { data: conv } = await supabase
+    const { data: conv, error: convErr } = await supabase
       .from('conversations')
       .insert({ type: 'direct' })
       .select('id')
       .single();
-    if (!conv) return;
-    await supabase.from('conversation_participants').insert({ conversation_id: conv.id, user_id: me });
-    await supabase.from('conversation_participants').insert({ conversation_id: conv.id, user_id: otherId });
+    if (!conv) {
+      console.warn('conversation create failed', convErr?.message);
+      return;
+    }
+    const { error: p1 } = await supabase.from('conversation_participants').insert({ conversation_id: conv.id, user_id: me });
+    const { error: p2 } = await supabase.from('conversation_participants').insert({ conversation_id: conv.id, user_id: otherId });
+    if (p1 || p2) console.warn('participant insert failed', p1?.message ?? p2?.message);
 
     onOpen(conv.id);
     setNewChatOpen(false);
