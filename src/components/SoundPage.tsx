@@ -54,7 +54,7 @@ export default function SoundPage({
         supabase.from('sounds').select('*').eq('name', name).maybeSingle(),
         supabase
           .from('posts')
-          .select('id, media_url, media_type, content, likes_count, comments_count, created_at, profile:profiles(username)')
+          .select('id, media_url, media_type, content, likes_count, comments_count, created_at, profile:profiles(username, verified)')
           .eq('audio', name)
           .order('created_at', { ascending: false })
           .limit(40),

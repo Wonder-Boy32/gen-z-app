@@ -53,7 +53,7 @@ type Sound = {
 type Sticker = { id: string; emoji: string; x: number; y: number; size: number };
 type Drop = { id: string; prompt: string; status: string; ends_at: string };
 type Mode = 'media' | 'text';
-type Step = 'create' | 'editor' | 'preview' | 'live';
+type Step = 'hub' | 'create' | 'editor' | 'preview' | 'live';
 type Visibility = 'everyone' | 'followers' | 'only_me';
 
 const H48 = 48 * 3600 * 1000;
@@ -75,6 +75,99 @@ const RATIOS: { id: string; label: string; ratio: number | null }[] = [
   { id: '16:9', label: '16:9', ratio: 16 / 9 },
 ];
 const TEXT_DROP_COLORS = ['#0D1426', '#FF7A00', '#8B7BFF', '#FF5C7C', '#34D399', '#1E2A47'];
+
+// ---- Create hub ----------------------------------------------------------
+// Templates are recipes over state this screen ALREADY has (mode, collage,
+// picker), so every card does something real instead of being decoration.
+type HubIconName = React.ComponentProps<typeof Icon>['name'];
+
+type HubTemplate = {
+  id: string;
+  group: string;
+  title: string;
+  sub: string;
+  tint: string;
+  icon: HubIconName;
+  mode: Mode;
+  collage?: string;
+  openPicker?: boolean;
+};
+
+const HUB_FILTERS = ['For you', 'Text', 'Photos', 'Video'];
+type HubFilter = (typeof HUB_FILTERS)[number];
+
+const HUB_TEMPLATES: HubTemplate[] = [
+  {
+    id: 'quick',
+    group: 'For you',
+    title: 'Quick drop',
+    sub: 'Pick media and go',
+    tint: 'rgba(255,157,31,0.16)',
+    icon: 'flash-outline',
+    mode: 'media',
+    openPicker: true,
+  },
+  {
+    id: 'campus',
+    group: 'For you',
+    title: 'Campus moment',
+    sub: 'One photo, short caption',
+    tint: 'rgba(77,216,255,0.14)',
+    icon: 'school-outline',
+    mode: 'media',
+    openPicker: true,
+  },
+  {
+    id: 'textcard',
+    group: 'Text',
+    title: 'Text card',
+    sub: 'A line worth reading',
+    tint: 'rgba(139,123,255,0.18)',
+    icon: 'create-outline',
+    mode: 'text',
+  },
+  {
+    id: 'statement',
+    group: 'Text',
+    title: 'Bold statement',
+    sub: 'Big words, dark card',
+    tint: 'rgba(255,92,124,0.16)',
+    icon: 'chatbox-ellipses-outline',
+    mode: 'text',
+  },
+  {
+    id: 'duo',
+    group: 'Photos',
+    title: 'Duo',
+    sub: 'Two photos, side by side',
+    tint: 'rgba(52,211,153,0.15)',
+    icon: 'copy-outline',
+    mode: 'media',
+    collage: 'duo',
+    openPicker: true,
+  },
+  {
+    id: 'dump',
+    group: 'Photos',
+    title: 'Photo dump',
+    sub: 'Up to four in a grid',
+    tint: 'rgba(255,157,31,0.14)',
+    icon: 'grid-outline',
+    mode: 'media',
+    collage: 'grid',
+    openPicker: true,
+  },
+  {
+    id: 'video',
+    group: 'Video',
+    title: 'Video drop',
+    sub: 'Trim, filter, add sound',
+    tint: 'rgba(139,123,255,0.16)',
+    icon: 'videocam-outline',
+    mode: 'media',
+    openPicker: true,
+  },
+];
 
 type EditorOverlay =
   | 'trim'
@@ -115,7 +208,11 @@ export default function CreateDropScreen({
   replyToDropId?: string | null;
   initialMediaUri?: string | null;
 }) {
-  const [step, setStep] = useState<Step>('create');
+  // land on the hub, unless we were opened with an intent (sound pick,
+  // reply-with-drop, shared media) in which case go straight to creating
+  const [step, setStep] = useState<Step>(
+    replyToDropId || initialMediaUri || initialSound ? 'create' : 'hub'
+  );
   const [mode, setMode] = useState<Mode>('media');
   const [assets, setAssets] = useState<ImagePicker.ImagePickerAsset[]>([]);
   const [caption, setCaption] = useState('');
@@ -169,6 +266,8 @@ export default function CreateDropScreen({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [livePulse] = useState(new Animated.Value(1));
+  const [hubFilter, setHubFilter] = useState<HubFilter>('For you');
+  const [tagIdeas, setTagIdeas] = useState<{ tag: string; count: number }[]>([]);
 
   // Android camera captures often report mimeType: null — detect video by
   // file extension as a fallback so recorded clips get a cover + correct type
@@ -231,25 +330,30 @@ export default function CreateDropScreen({
 
   const captureCoverNow = useCallback(async (): Promise<string | null> => {
     if (!coverCaptureRef.current || !capturePlayer) return null;
-    try {
+    const grab = async (at: number): Promise<string | null> => {
       capturePlayer.pause();
-      capturePlayer.currentTime = 0.5; // a real frame — not the (often black) first frame
-      await new Promise((r) => setTimeout(r, 250)); // let the seek land
+      capturePlayer.currentTime = at; // a real frame — not the (often black) first frame
+      await new Promise((r) => setTimeout(r, 300)); // let the seek land
       capturePlayer.play();
       // wait until the frame is actually decoded (with a safety timeout)
       const start = Date.now();
-      while (capturePlayer.currentTime < 0.55 && Date.now() - start < 3000) {
+      while (capturePlayer.currentTime < at + 0.05 && Date.now() - start < 3000) {
         await new Promise((r) => setTimeout(r, 100));
       }
       // let the texture finish drawing before the screenshot
-      await new Promise((r) => setTimeout(r, 400));
+      await new Promise((r) => setTimeout(r, 700));
       capturePlayer.pause();
-      const uri = await captureRef(coverCaptureRef.current, {
+      return captureRef(coverCaptureRef.current, {
         format: 'jpg',
         quality: 0.85,
         result: 'tmpfile',
       });
-      return uri;
+    };
+    try {
+      const first = await grab(0.5);
+      if (first) return first;
+      // retry at a later frame in case the first was black/still decoding
+      return await grab(1.5);
     } catch {
       return null;
     }
@@ -509,7 +613,7 @@ export default function CreateDropScreen({
             let voLocal: string | null = null;
             if (voiceoverUrl) {
               try {
-                const fs: any = await import('expo-file-system');
+                const fs: any = await import('expo-file-system/legacy');
                 voLocal = `${fs.cacheDirectory}vo-${Date.now()}.m4a`;
                 await fs.downloadAsync(voiceoverUrl, voLocal);
               } catch {
@@ -539,7 +643,8 @@ export default function CreateDropScreen({
           items.push({ url: publicUrl, type: isVideo ? 'video' : 'image' });
 
           // cover: user-picked, else auto-capture a frame (view-shot, works
-          // everywhere), else ffmpeg frame in native builds.
+          // everywhere), else ffmpeg frame in native builds. Failures are
+          // logged (never silent) so missing covers are diagnosable.
           if (isVideo && i === 0) {
             let coverSrc: string | null = coverUri;
             if (!coverSrc) {
@@ -548,18 +653,26 @@ export default function CreateDropScreen({
               if (hasNativeFFmpeg()) {
                 try {
                   coverSrc = await extractVideoCover(asset.uri);
-                } catch {}
+                } catch (e: any) {
+                  console.warn('[cover] ffmpeg frame failed', e?.message);
+                }
               }
               if (!coverSrc) {
                 try {
                   coverSrc = await captureCoverNow();
-                } catch {}
+                } catch (e: any) {
+                  console.warn('[cover] view-shot failed', e?.message);
+                }
               }
             }
             if (coverSrc) {
               try {
                 row.cover_url = await uploadMedia(`${user.id}/cover-${Date.now()}.jpg`, coverSrc, 'image/jpeg');
-              } catch {}
+              } catch (e: any) {
+                console.warn('[cover] cover upload failed', e?.message);
+              }
+            } else {
+              console.warn('[cover] NO cover produced — video tile will use placeholder');
             }
           }
         }
@@ -624,7 +737,15 @@ export default function CreateDropScreen({
       ).start();
     } catch (e: any) {
       console.error('[publish] drop failed:', e?.code, e?.message, e?.stack);
-      setError(e?.code ? `[${e.code}] ${e.message}` : (e?.message ?? 'Drop failed — try again.'));
+      // Some native errors carry an object (or a stringified native event) as
+      // `.message` — never render that garbage. Only show real strings.
+      const raw = e?.message;
+      const msg =
+        typeof raw === 'string' && raw.trim()
+          ? raw
+          : 'Drop failed — check your connection and try again.';
+      const code = typeof e?.code === 'string' && e.code ? e.code : null;
+      setError(code ? `[${code}] ${msg}` : msg);
       setUploading(false);
     }
   };
@@ -636,6 +757,52 @@ export default function CreateDropScreen({
     ]);
   };
 
+  // an incoming intent must never land behind the hub
+  useEffect(() => {
+    if (replyToDropId || initialMediaUri || initialSound) setStep('create');
+  }, [replyToDropId, initialMediaUri, initialSound]);
+
+  // Trending tags are the community's own: any #tag anyone posts is
+  // auto-indexed into hashtags by sync_hashtags(), so this list is live.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { data } = await supabase
+        .from('hashtags')
+        .select('tag, count')
+        .order('count', { ascending: false })
+        .limit(10);
+      if (alive) setTagIdeas((data ?? []) as { tag: string; count: number }[]);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const startFresh = (m: Mode) => {
+    setMode(m);
+    setStep('create');
+  };
+
+  const applyTemplate = (t: HubTemplate) => {
+    setMode(t.mode);
+    if (t.collage) setCollage(t.collage);
+    setStep('create');
+    if (t.openPicker) setTimeout(() => setPickerOpen(true), 240);
+  };
+
+  const addTagToCaption = (tag: string) => {
+    setCaption((c) => {
+      if (c.includes(`#${tag}`)) return c;
+      const sep = c.length > 0 && !c.endsWith(' ') ? ' ' : '';
+      return `${c}${sep}#${tag} `;
+    });
+  };
+
+  const addIdeaToCaption = (text: string) => {
+    setCaption((c) => (c.trim().length > 0 ? c : text));
+  };
+
   const fmtTime = (s: number) => {
     const m = Math.floor(s / 60);
     const sec = Math.floor(s % 60);
@@ -644,12 +811,96 @@ export default function CreateDropScreen({
 
   return (
     <View style={styles.container}>
+      {step === 'hub' && (
+        <ScrollView contentContainerStyle={styles.hubContent} showsVerticalScrollIndicator={false}>
+          <LogoHeader subtitle="Gone in 48 hours. Make it count." />
+
+          <Pressable style={styles.hubPrimary} onPress={() => startFresh('media')}>
+            <View style={styles.hubPrimarySheen} pointerEvents="none" />
+            <View style={styles.statRow}>
+              <Icon name="add-circle-outline" size={22} color={colors.bg} />
+              <Text style={styles.hubPrimaryTitle}>New drop</Text>
+            </View>
+            <Text style={styles.hubPrimarySub}>Photo, video or a text card</Text>
+          </Pressable>
+
+          <View style={styles.hubRow}>
+            <Pressable
+              style={styles.hubCard}
+              onPress={() => (draft ? loadDraft() : startFresh('media'))}
+            >
+              <Icon name="albums-outline" size={18} color={colors.accent} />
+              <Text style={styles.hubCardTitle}>Drafts</Text>
+              <Text style={styles.hubCardSub} numberOfLines={1}>
+                {draft ? new Date(draft.updated_at).toLocaleDateString() : 'Nothing saved'}
+              </Text>
+            </Pressable>
+            <Pressable style={styles.hubCard} onPress={() => startFresh('text')}>
+              <Icon name="create-outline" size={18} color={colors.accent} />
+              <Text style={styles.hubCardTitle}>Text card</Text>
+              <Text style={styles.hubCardSub} numberOfLines={1}>
+                Say it in words
+              </Text>
+            </Pressable>
+          </View>
+
+          <Text style={styles.sectionTitle}>Templates</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.hubChips}
+          >
+            {HUB_FILTERS.map((f) => {
+              const active = hubFilter === f;
+              return (
+                <Pressable
+                  key={f}
+                  style={[styles.hubChip, active && styles.hubChipActive]}
+                  onPress={() => setHubFilter(f as HubFilter)}
+                >
+                  <Text style={[styles.hubChipText, active && styles.hubChipTextActive]}>{f}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.hubTemplates}
+          >
+            {HUB_TEMPLATES.filter((t) => t.group === hubFilter).map((t) => (
+              <Pressable key={t.id} style={styles.hubTemplate} onPress={() => applyTemplate(t)}>
+                <View style={[styles.hubTemplateArt, { backgroundColor: t.tint }]}>
+                  <Icon name={t.icon} size={20} color={colors.text} />
+                </View>
+                <Text style={styles.hubTemplateTitle} numberOfLines={1}>
+                  {t.title}
+                </Text>
+                <Text style={styles.hubTemplateSub} numberOfLines={2}>
+                  {t.sub}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+
+          <View style={styles.footer48Row}>
+            <Icon name="hourglass-outline" size={12} color={colors.textMuted} />
+            <Text style={styles.footer48}>Every drop disappears after 48 hours.</Text>
+          </View>
+        </ScrollView>
+      )}
+
       {step === 'create' && (
         <KeyboardAvoidingView
           style={styles.flex}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
           <ScrollView contentContainerStyle={styles.createContent} keyboardShouldPersistTaps="handled">
+            <Pressable style={styles.hubBack} onPress={() => setStep('hub')} hitSlop={8}>
+              <Icon name="chevron-back" size={17} color={colors.textMuted} />
+              <Text style={styles.hubBackText}>Templates</Text>
+            </Pressable>
             <LogoHeader subtitle="Gone in 48 hours. Make it count." />
 
             {/* Media | Text toggle */}
@@ -1029,6 +1280,60 @@ export default function CreateDropScreen({
               value={caption}
               onChangeText={setCaption}
             />
+
+            {/* Real suggestions: the live Drop prompt, plus tags the community
+                has actually been posting (auto-indexed by sync_hashtags). */}
+            {(!!liveDrop || tagIdeas.length > 0) && (
+              <View style={styles.ideaWrap}>
+                <View style={styles.statRow}>
+                  <Icon name="bulb-outline" size={13} color={colors.accent} />
+                  <Text style={styles.ideaLabel}>
+                    {liveDrop ? 'Ideas for this drop' : 'Tags people are using'}
+                  </Text>
+                </View>
+
+                {liveDrop && (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.ideaChips}
+                  >
+                    <Pressable
+                      style={styles.ideaChip}
+                      onPress={() => addIdeaToCaption(liveDrop.prompt)}
+                    >
+                      <Text style={styles.ideaChipText} numberOfLines={1}>
+                        {liveDrop.prompt}
+                      </Text>
+                    </Pressable>
+                  </ScrollView>
+                )}
+
+                {tagIdeas.length > 0 && (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.ideaChips}
+                  >
+                    {tagIdeas.map((t) => {
+                      const on = caption.includes(`#${t.tag}`);
+                      return (
+                        <Pressable
+                          key={t.tag}
+                          style={[styles.tagChip, on && styles.tagChipOn]}
+                          onPress={() => addTagToCaption(t.tag)}
+                        >
+                          <Text style={[styles.tagChipText, on && styles.tagChipTextOn]}>
+                            #{t.tag}
+                          </Text>
+                          <Text style={styles.tagChipCount}>{t.count}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                )}
+              </View>
+            )}
 
             <TextInput
               style={styles.input}
@@ -1431,6 +1736,99 @@ const styles = StyleSheet.create({
   error: { color: colors.danger, fontSize: 13, marginTop: 10 },
   footer48Row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 22 },
   footer48: { color: colors.textFaint, fontSize: 12, textAlign: 'center', fontWeight: '600' },
+  hubContent: { padding: 18, paddingBottom: 40 },
+  hubBack: { flexDirection: 'row', alignItems: 'center', gap: 2, marginBottom: 4 },
+  hubBackText: { color: colors.textMuted, fontSize: 13, fontWeight: '700' },
+  hubPrimary: {
+    backgroundColor: colors.accent,
+    borderRadius: radius.lg,
+    padding: 18,
+    marginTop: 14,
+    overflow: 'hidden',
+    ...shadows.glow,
+  },
+  hubPrimarySheen: {
+    position: 'absolute',
+    top: -40,
+    right: -30,
+    width: 150,
+    height: 150,
+    borderRadius: 75,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+  },
+  hubPrimaryTitle: { color: colors.bg, fontSize: 20, fontWeight: '900', marginLeft: 8 },
+  hubPrimarySub: {
+    color: colors.bg,
+    fontSize: 13,
+    fontWeight: '600',
+    marginTop: 6,
+    marginLeft: 30,
+    opacity: 0.85,
+  },
+  hubRow: { flexDirection: 'row', gap: 12, marginTop: 12 },
+  hubCard: {
+    flex: 1,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    padding: 14,
+    gap: 6,
+  },
+  hubCardTitle: { color: colors.text, fontSize: 14, fontWeight: '800' },
+  hubCardSub: { color: colors.textFaint, fontSize: 12, fontWeight: '600' },
+  hubChips: { gap: 8, paddingVertical: 8, paddingRight: 6 },
+  hubChip: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: radius.pill,
+    paddingHorizontal: 13,
+    paddingVertical: 6,
+  },
+  hubChipActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
+  hubChipText: { color: colors.textMuted, fontSize: 12.5, fontWeight: '700' },
+  hubChipTextActive: { color: colors.accent },
+  hubTemplates: { gap: 12, paddingBottom: 8, paddingRight: 6 },
+  hubTemplate: { width: 128 },
+  hubTemplateArt: {
+    height: 84,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  hubTemplateTitle: { color: colors.text, fontSize: 13, fontWeight: '800', marginTop: 8 },
+  hubTemplateSub: { color: colors.textFaint, fontSize: 11.5, fontWeight: '600', marginTop: 2 },
+  ideaWrap: { marginTop: 12 },
+  ideaLabel: { color: colors.accent, fontSize: 12, fontWeight: '800', marginLeft: 6 },
+  ideaChips: { gap: 8, paddingVertical: 8, paddingRight: 6 },
+  ideaChip: {
+    maxWidth: 260,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceInput,
+    borderRadius: radius.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  ideaChipText: { color: colors.text, fontSize: 12.5, fontWeight: '600' },
+  tagChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceInput,
+    borderRadius: radius.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  tagChipOn: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
+  tagChipText: { color: colors.textMuted, fontSize: 12.5, fontWeight: '700' },
+  tagChipTextOn: { color: colors.accent },
+  tagChipCount: { color: colors.textFaint, fontSize: 11, fontWeight: '700' },
   editorTop: {
     flexDirection: 'row',
     alignItems: 'center',

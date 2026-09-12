@@ -78,7 +78,7 @@ export default function DropExperienceScreen({ drop, onClose, onViewAll, onJoin 
 
     const { data, error } = await supabase
       .from('posts')
-      .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url)')
+      .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url, verified)')
       .eq('drop_id', drop.id)
       .order('created_at', { ascending: false })
       .limit(200);
@@ -199,7 +199,7 @@ export default function DropExperienceScreen({ drop, onClose, onViewAll, onJoin 
             </Text>
             <Text style={styles.prompt}>“{drop.prompt}”</Text>
             <DropCountdown
-              endsAt={isLive ? drop.ends_at : drop.voting_ends_at}
+              endsAt={drop.status === 'scheduled' ? drop.starts_at : isLive ? drop.ends_at : drop.voting_ends_at}
               mode={drop.status}
               big
             />

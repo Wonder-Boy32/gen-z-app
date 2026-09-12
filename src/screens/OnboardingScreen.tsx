@@ -185,7 +185,7 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
           <View style={styles.center}>
             <Animated.View style={{ transform: [{ scale: bounce }] }}>
               <View style={styles.logoMark}>
-                <Image source={require('../../assets/icon.png')} style={styles.logoImage} />
+                <Image source={require('../../assets/icon-navy.png')} style={styles.logoImage} />
               </View>
             </Animated.View>
             <Text style={styles.title}>{stepTitle[0]}</Text>

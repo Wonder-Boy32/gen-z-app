@@ -4,8 +4,9 @@ import { colors } from '../theme';
 import Icon from './ui/Icon';
 
 type Props = {
+  /** the moment we count down to: starts_at while scheduled, otherwise ends_at / voting_ends_at */
   endsAt: string;
-  mode: 'live' | 'voting' | 'closed';
+  mode: 'scheduled' | 'live' | 'voting' | 'closed';
   big?: boolean;
 };
 
@@ -39,15 +40,23 @@ export default function DropCountdown({ endsAt, mode, big }: Props) {
   const secs = Math.floor((ms % 60000) / 1000);
   const h = Math.floor(totalMins / 60);
   const m = totalMins % 60;
-  const urgent = totalMins < 10;
+  // a drop that has not started yet is anticipation, not urgency - so no red
+  const scheduled = mode === 'scheduled';
+  const urgent = !scheduled && totalMins < 10;
 
-  const text = totalMins < 60 ? `LAST ${totalMins} MIN` : `${h}H ${m}M LEFT`;
+  const text = scheduled
+    ? totalMins < 60
+      ? `STARTS IN ${Math.max(1, totalMins)} MIN`
+      : `STARTS IN ${h}H ${m}M`
+    : totalMins < 60
+      ? `LAST ${totalMins} MIN`
+      : `${h}H ${m}M LEFT`;
 
   return (
     <Animated.View style={{ transform: [{ scale: pulse }], alignItems: 'center' }}>
       <View style={styles.row}>
         <Icon
-          name={urgent ? 'flash' : totalMins < 60 ? 'flame' : 'hourglass-outline'}
+          name={scheduled ? 'time-outline' : urgent ? 'flash' : totalMins < 60 ? 'flame' : 'hourglass-outline'}
           size={big ? 22 : 14}
           color={urgent ? colors.danger : colors.accent}
         />

@@ -14,14 +14,7 @@ create policy "conversations_insert" on public.conversations
   for insert to authenticated with check (true);
 
 drop policy if exists "participants_insert" on public.conversation_participants;
-create policy "participants_insert" on public.conversation_participants
-  for insert with check (
-    user_id = auth.uid()
-    or exists (
-      select 1 from public.conversation_participants cp
-      where cp.conversation_id = conversation_id and cp.user_id = auth.uid()
-    )
-  );
+create policy "participants_insert" on public.conversation_participants for insert to authenticated with check (user_id = auth.uid() or conversation_id in (select public.my_conversation_ids()));
 
 -- 2) PROFILES — explicit WITH CHECK on update (avatar_url saves)
 drop policy if exists "profiles_update" on public.profiles;

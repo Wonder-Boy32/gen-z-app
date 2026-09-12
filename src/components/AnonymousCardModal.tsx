@@ -44,7 +44,7 @@ export default function AnonymousCardModal({
     try {
       // expo-media-library is a native module — available in builds that
       // include it. Guarded so older builds degrade gracefully.
-      const MediaLibrary = require('expo-media-library');
+      const MediaLibrary = require('expo-media-library/legacy');
       const perm = await MediaLibrary.requestPermissionsAsync();
       if (perm.granted) {
         await MediaLibrary.createAssetAsync(uri);

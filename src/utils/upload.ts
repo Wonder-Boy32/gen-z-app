@@ -42,6 +42,25 @@ async function fileAsBytes(uri: string): Promise<ArrayBuffer> {
   return bytes.buffer as ArrayBuffer;
 }
 
+// Race a promise against a timeout so a stalled native/network call can
+// never leave the UI stuck on an infinite spinner. The loser throws a
+// clear, human-readable message.
+function withTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(msg)), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      }
+    );
+  });
+}
+
 // Uploads a local file (uri) to the 'media' bucket and returns its public URL.
 export async function uploadMedia(
   path: string,
@@ -55,12 +74,23 @@ export async function uploadMedia(
     body = await readAsBlob(uri);
   } catch {
     try {
-      body = await (await fetch(uri)).blob();
+      body = await withTimeout((await fetch(uri)).blob(), 30000, 'Timed out reading the file');
     } catch {
       body = await fileAsBytes(uri);
     }
   }
-  const { error } = await supabase.storage.from('media').upload(path, body as any, { upsert, contentType: type });
+  // supabase-js has NO upload timeout — a stalled connection hangs forever.
+  // Wrap it so the user always gets a clear error instead of an endless spin.
+  const upload = supabase.storage
+    .from('media')
+    .upload(path, body as any, { upsert, contentType: type });
+  let result: { error: any };
+  try {
+    result = await withTimeout(Promise.resolve(upload), 120000, 'Upload timed out — check your connection and try again.');
+  } catch (e: any) {
+    throw new Error(e?.message ?? 'Upload failed — check your connection and try again.');
+  }
+  const { error } = result;
   if (error) throw new Error(error.message);
   const {
     data: { publicUrl },

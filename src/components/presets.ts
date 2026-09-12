@@ -16,7 +16,9 @@ export const PRESETS: Preset[] = [
   { id: 'hundred', emoji: '💯', bg: '#16A34A' },
 ];
 
-export function isPreset(url: string | null | undefined): boolean {
+// type predicate: callers get `url` narrowed to string after the guard, which
+// is what presetById relies on to slice the id out safely
+export function isPreset(url: string | null | undefined): url is string {
   return !!url && url.startsWith('preset:');
 }
 

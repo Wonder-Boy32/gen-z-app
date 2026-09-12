@@ -182,6 +182,7 @@ export default function PostViewer({ posts, index, onClose }: Props) {
       <FeedPost
         post={item}
         isActive={i === current}
+        preload={i === current + 1}
         height={listH}
         contentTop={0}
         contentBottom={28}
@@ -218,9 +219,9 @@ export default function PostViewer({ posts, index, onClose }: Props) {
         getItemLayout={(_, i) => ({ length: listH, offset: listH * i, index: i })}
         snapToInterval={listH}
         decelerationRate="fast"
-        initialNumToRender={1}
-        maxToRenderPerBatch={2}
-        windowSize={2}
+            initialNumToRender={2}
+            maxToRenderPerBatch={3}
+            windowSize={3}
       />
       <Pressable style={[styles.closeBtn, { top: Math.max(insets.top, TOP_INSET) + 10 }]} onPress={onClose} hitSlop={10}>
         <Text style={styles.closeText}>✕</Text>

@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  FlatList,
-  Image,
+  Alert,
+  Linking,
   Modal,
   Pressable,
   ScrollView,
@@ -13,12 +13,33 @@ import {
   View,
 } from 'react-native';
 import { supabase } from '../supabase/client';
-import { colors, radius } from '../theme';
+import { colors, radius, shadows } from '../theme';
 import { TOP_INSET } from '../utils/useInsets';
+import { copyToClipboard } from '../utils/clipboard';
+import { unregisterPush } from '../utils/push';
+import { buildAccountSnapshot, fetchAccountStats, type AccountStats } from '../utils/accountStats';
 import Button from '../components/Button';
 import Avatar from '../components/Avatar';
 import AvatarPickerModal from '../components/AvatarPickerModal';
 import AnonymousSettingsModal from '../components/AnonymousSettingsModal';
+import Icon from '../components/ui/Icon';
+import VerifiedBadge from '../components/ui/VerifiedBadge';
+import ReportProblemModal, { SUPPORT_EMAIL } from '../components/settings/ReportProblemModal';
+import AccountInfoModal from '../components/settings/AccountInfoModal';
+import { BlockedScreen, MutedScreen, HiddenWordsScreen } from '../components/settings/ListScreens';
+import {
+  TwoFactorScreen,
+  SessionsScreen,
+  SecurityAlertsScreen,
+  RecoveryCodesScreen,
+  SecurityPasswordModal,
+  EmailModal,
+  PhoneModal,
+  DeactivateModal,
+  DeleteModal,
+} from '../components/security/AccountSecurity';
+
+const APP_VERSION = '0.1.0';
 
 type Profile = {
   username: string;
@@ -36,51 +57,73 @@ type Profile = {
 
 const WHO_OPTIONS = ['everyone', 'followers', 'nobody'];
 
+type IconName = React.ComponentProps<typeof Icon>['name'];
+
 export default function SettingsScreen({ onBack }: { onBack: () => void }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [settings, setSettings] = useState<any>({});
-  const [blocked, setBlocked] = useState<{ id: string; username: string }[]>([]);
-  const [muted, setMuted] = useState<{ id: string; username: string }[]>([]);
-  const [words, setWords] = useState<string[]>([]);
-  const [newWord, setNewWord] = useState('');
+  const [stats, setStats] = useState<AccountStats | null>(null);
+  const [counts, setCounts] = useState({ blocked: 0, muted: 0, words: 0 });
+  const [userId, setUserId] = useState<string | null>(null);
+  const [email, setEmail] = useState('');
+  const [security, setSecurity] = useState<{ mfa_enabled: boolean; phone: string | null; phone_verified: boolean } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const [exported, setExported] = useState(false);
+
   const [editOpen, setEditOpen] = useState(false);
   const [usernameOpen, setUsernameOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [anonOpen, setAnonOpen] = useState(false);
-  const [email, setEmail] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [accountInfoOpen, setAccountInfoOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [blockedOpen, setBlockedOpen] = useState(false);
+  const [mutedOpen, setMutedOpen] = useState(false);
+  const [wordsOpen, setWordsOpen] = useState(false);
+  const [twoFAOpen, setTwoFAOpen] = useState(false);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
+  const [alertsOpen, setAlertsOpen] = useState(false);
+  const [codesOpen, setCodesOpen] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [phoneOpen, setPhoneOpen] = useState(false);
+  const [deactOpen, setDeactOpen] = useState(false);
+  const [delOpen, setDelOpen] = useState(false);
 
   const load = useCallback(async () => {
     const {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return;
+    setUserId(user.id);
     setEmail(user.email ?? '');
 
-    const [{ data: prof }, { data: prefs }, { data: blockRows }, { data: muteRows }, { data: wordRows }] =
-      await Promise.all([
-        supabase
-          .from('profiles')
-          .select('username, display_name, bio, avatar_url, is_private, message_who, comment_who, mention_who, activity_status, theme, created_at')
-          .eq('id', user.id)
-          .maybeSingle(),
-        supabase.from('settings').select('*').eq('user_id', user.id).maybeSingle(),
-        supabase
-          .from('blocks')
-          .select('blocked_id, profile:profiles!blocks_blocked_id_fkey(username)')
-          .eq('blocker_id', user.id),
-        supabase
-          .from('muted_accounts')
-          .select('muted_id, profile:profiles!muted_accounts_muted_id_fkey(username)')
-          .eq('user_id', user.id),
-        supabase.from('hidden_words').select('word').eq('user_id', user.id),
-      ]);
+    const head = { count: 'exact' as const, head: true };
+    const [profRes, prefsRes, blockRes, muteRes, wordRes, accountStats] = await Promise.all([
+      supabase
+        .from('profiles')
+        .select('username, display_name, bio, avatar_url, is_private, message_who, comment_who, mention_who, activity_status, theme, created_at')
+        .eq('id', user.id)
+        .maybeSingle(),
+      supabase.from('settings').select('*').eq('user_id', user.id).maybeSingle(),
+      supabase.from('blocks').select('blocked_id', head).eq('blocker_id', user.id),
+      supabase.from('muted_accounts').select('muted_id', head).eq('user_id', user.id),
+      supabase.from('hidden_words').select('word', head).eq('user_id', user.id),
+      fetchAccountStats(user.id),
+    ]);
 
-    setProfile((prof as Profile | null) ?? null);
-    setSettings((prefs?.data ?? {}) as any);
-    setBlocked(((blockRows?.data ?? []) as any[]).map((b) => ({ id: b.blocked_id, username: b.profile?.username ?? 'unknown' })));
-    setMuted(((muteRows?.data ?? []) as any[]).map((m) => ({ id: m.muted_id, username: m.profile?.username ?? 'unknown' })));
-    setWords(((wordRows?.data ?? []) as any[]).map((w) => w.word));
+    setProfile((profRes.data as Profile | null) ?? null);
+    setSettings((prefsRes.data ?? {}) as any);
+    setCounts({
+      blocked: blockRes.count ?? 0,
+      muted: muteRes.count ?? 0,
+      words: wordRes.count ?? 0,
+    });
+    setStats(accountStats);
+
+    try {
+      const { data: sec } = await supabase.rpc('account_security_status');
+      setSecurity(sec as any);
+    } catch {}
     setLoading(false);
   }, []);
 
@@ -107,53 +150,46 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
     await supabase.from('settings').upsert({ user_id: user.id, ...patch }, { onConflict: 'user_id' });
   };
 
-  const unblock = async (id: string) => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-    setBlocked((b) => b.filter((x) => x.id !== id));
-    await supabase.from('blocks').delete().eq('blocker_id', user.id).eq('blocked_id', id);
-  };
-
-  const unmute = async (id: string) => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-    setMuted((m) => m.filter((x) => x.id !== id));
-    await supabase.from('muted_accounts').delete().eq('user_id', user.id).eq('muted_id', id);
-  };
-
-  const addWord = async () => {
-    const w = newWord.trim().toLowerCase();
-    if (!w) return;
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-    setWords((prev) => [...prev, w]);
-    setNewWord('');
-    await supabase.from('hidden_words').insert({ user_id: user.id, word: w });
-  };
-
-  const removeWord = async (word: string) => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-    setWords((prev) => prev.filter((x) => x !== word));
-    await supabase.from('hidden_words').delete().eq('user_id', user.id).eq('word', word);
-  };
-
-  const changePassword = async (current: string, next: string) => {
-    const { error } = await supabase.auth.updateUser({ password: next });
-    return error;
-  };
-
   const logout = async () => {
+    // stop this phone receiving pushes for the account that is leaving
+    await unregisterPush();
     await supabase.auth.signOut();
   };
+
+  const mailSupport = async () => {
+    try {
+      await Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Gen Z - support')}`);
+    } catch {
+      const ok = await copyToClipboard(SUPPORT_EMAIL);
+      Alert.alert('Support email', ok ? `${SUPPORT_EMAIL} copied to your clipboard.` : SUPPORT_EMAIL);
+    }
+  };
+
+  const exportData = async () => {
+    if (!userId || exporting) return;
+    setExporting(true);
+    const snapshot = await buildAccountSnapshot(userId);
+    const ok = await copyToClipboard(JSON.stringify(snapshot, null, 2));
+    setExporting(false);
+    setExported(ok);
+    if (!ok) {
+      Alert.alert('Clipboard unavailable', `Your export could not be copied on this build.`);
+      return;
+    }
+    setTimeout(() => setExported(false), 2500);
+  };
+
+  const statValue = (value: number | null | undefined) =>
+    value === null || value === undefined ? '—' : String(value);
+
+  const activitySummary = (() => {
+    if (!stats) return 'Your posts, comments and likes';
+    const parts: string[] = [];
+    if (stats.posts !== null) parts.push(`${stats.posts} posts`);
+    if (stats.comments !== null) parts.push(`${stats.comments} comments`);
+    if (stats.likesGiven !== null) parts.push(`${stats.likesGiven} likes given`);
+    return parts.length ? parts.join(' · ') : 'Your posts, comments and likes';
+  })();
 
   if (loading) {
     return (
@@ -167,29 +203,74 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
     <View style={styles.container}>
       <View style={styles.header}>
         <Pressable onPress={onBack} style={styles.backBtn} hitSlop={8}>
-          <Text style={styles.backText}>‹ Back</Text>
+          <Icon name="chevron-back" size={22} color={colors.accent} />
         </Pressable>
         <Text style={styles.headerTitle}>Settings</Text>
         <View style={styles.backBtn} />
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        {/* ---------------- identity ---------------- */}
+        <Pressable style={styles.hero} onPress={() => setEditOpen(true)}>
+          <Avatar
+            url={profile?.avatar_url}
+            name={profile?.display_name || profile?.username || 'G'}
+            size={68}
+            ring
+            verified={!!(profile as any)?.verified}
+          />
+          <View style={styles.heroInfo}>
+            <View style={styles.heroNameRow}>
+              <Text style={styles.heroName} numberOfLines={1}>
+                {profile?.display_name || profile?.username || 'Gen Z user'}
+              </Text>
+              {!!(profile as any)?.verified && <VerifiedBadge size={15} glow={false} />}
+            </View>
+            <Text style={styles.heroHandle}>@{profile?.username ?? 'unknown'}</Text>
+            <Text style={styles.heroJoined}>
+              Joined {new Date(profile?.created_at ?? Date.now()).toLocaleDateString([], { month: 'long', year: 'numeric' })}
+            </Text>
+          </View>
+          <Icon name="create-outline" size={18} color={colors.textMuted} />
+        </Pressable>
+
+        <View style={styles.statStrip}>
+          <Metric label="followers" value={statValue(stats?.followers)} />
+          <Metric label="following" value={statValue(stats?.following)} />
+          <Metric label="posts" value={statValue(stats?.posts)} />
+          <Metric label="likes banked" value={statValue(stats?.lifetimeLikes)} />
+        </View>
+
+        {/* ---------------- account ---------------- */}
         <Section title="Account">
-          <Row label="Edit profile" onPress={() => setEditOpen(true)} />
-          <Row label="Change username" onPress={() => setUsernameOpen(true)} />
-          <Row label="Account information" detail={`${email} · joined ${new Date(profile?.created_at ?? Date.now()).toLocaleDateString([], { month: 'short', year: 'numeric' })}`} />
+          <Row icon="person-outline" label="Edit profile" detail="Name, bio, avatar" onPress={() => setEditOpen(true)} />
+          <Row icon="at-outline" label="Change username" detail={`@${profile?.username ?? 'unknown'}`} onPress={() => setUsernameOpen(true)} />
+          <Row icon="mail-outline" label="Email" detail={email || 'Not set'} onPress={() => setEmailOpen(true)} />
+          <Row
+            icon="call-outline"
+            label="Phone"
+            detail={security?.phone ?? 'Add a number for recovery'}
+            onPress={() => setPhoneOpen(true)}
+          />
+          <Row
+            icon="information-circle-outline"
+            label="Account information"
+            detail="Sign-in, device and account ID"
+            onPress={() => setAccountInfoOpen(true)}
+          />
         </Section>
 
-        <Section title="Privacy">
+        {/* ---------------- privacy ---------------- */}
+        <Section title="Privacy & safety">
           <ToggleRow
             label="Private account"
-            hint="Followers must request to see your stories"
+            hint="Followers must request to see your posts"
             value={profile?.is_private ?? false}
             onChange={(v) => updateProfile({ is_private: v })}
           />
           <WhoRow label="Who can message me" value={profile?.message_who ?? 'everyone'} onChange={(v) => updateProfile({ message_who: v })} />
           <WhoRow label="Who can comment" value={profile?.comment_who ?? 'everyone'} onChange={(v) => updateProfile({ comment_who: v })} />
-          <WhoRow label="Who can mention / tag me" value={profile?.mention_who ?? 'everyone'} onChange={(v) => updateProfile({ mention_who: v })} />
+          <WhoRow label="Who can mention me" value={profile?.mention_who ?? 'everyone'} onChange={(v) => updateProfile({ mention_who: v })} />
           <ToggleRow
             label="Activity status"
             hint="Show when you're online"
@@ -198,69 +279,98 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
           />
         </Section>
 
-        <Section title="Security">
-          <Row label="Change password" onPress={() => setPasswordOpen(true)} />
-          <Row label="Two-factor authentication" detail="Enable in the Supabase dashboard" onPress={() => {}} />
-          <Row label="Login sessions" detail="Requires admin — coming with the web dashboard" onPress={() => {}} />
-        </Section>
-
-        <Section title="Content">
-          <Row label={`Blocked accounts (${blocked.length})`} onPress={() => setBlocked((b) => [...b])} />
-          {blocked.map((b) => (
-            <Row key={b.id} label={`@${b.username}`} action="Unblock" onPress={() => unblock(b.id)} small />
-          ))}
-          <Row label={`Muted accounts (${muted.length})`} onPress={() => setMuted((m) => [...m])} />
-          {muted.map((m) => (
-            <Row key={m.id} label={`@${m.username}`} action="Unmute" onPress={() => unmute(m.id)} small />
-          ))}
-          <Row label={`Hidden words (${words.length})`} onPress={() => setWords((w) => [...w])} />
-          <View style={styles.wordRow}>
-            <TextInput
-              style={styles.wordInput}
-              placeholder="Add a word to hide..."
-              placeholderTextColor={colors.textFaint}
-              value={newWord}
-              onChangeText={setNewWord}
-              onSubmitEditing={addWord}
-            />
-            <Pressable style={styles.wordAdd} onPress={addWord}>
-              <Text style={styles.wordAddText}>Add</Text>
-            </Pressable>
-          </View>
-          <View style={styles.wordWrap}>
-            {words.map((w) => (
-              <Pressable key={w} style={styles.wordChip} onPress={() => removeWord(w)}>
-                <Text style={styles.wordChipText}>{w} ✕</Text>
-              </Pressable>
-            ))}
-          </View>
-        </Section>
-
-        <Section title="Notifications">
-          <ToggleRow label="Likes" value={settings.notif_likes ?? true} onChange={(v) => saveSettings({ notif_likes: v })} />
-          <ToggleRow label="Comments" value={settings.notif_comments ?? true} onChange={(v) => saveSettings({ notif_comments: v })} />
-          <ToggleRow label="Followers" value={settings.notif_followers ?? true} onChange={(v) => saveSettings({ notif_followers: v })} />
-          <ToggleRow label="Messages" value={settings.notif_messages ?? true} onChange={(v) => saveSettings({ notif_messages: v })} />
-          <ToggleRow label="Mentions" value={settings.notif_mentions ?? true} onChange={(v) => saveSettings({ notif_mentions: v })} />
-        </Section>
-
-        <Section title="Appearance">
-          <ThemeRow value={profile?.theme ?? 'dark'} onChange={(v) => updateProfile({ theme: v })} />
-        </Section>
-
-        <Section title="Account">
+        <Section title="People & words">
           <Row
-            label="🕵️ Anonymous Messages"
-            detail="Control who can message you anonymously"
+            icon="ban-outline"
+            label="Blocked accounts"
+            detail={counts.blocked ? `${counts.blocked} blocked` : 'Nobody blocked'}
+            onPress={() => setBlockedOpen(true)}
+          />
+          <Row
+            icon="volume-mute-outline"
+            label="Muted accounts"
+            detail={counts.muted ? `${counts.muted} muted` : 'Nobody muted'}
+            onPress={() => setMutedOpen(true)}
+          />
+          <Row
+            icon="eye-off-outline"
+            label="Hidden words"
+            detail={counts.words ? `${counts.words} hidden` : 'Hide words you never want to see'}
+            onPress={() => setWordsOpen(true)}
+          />
+          <Row
+            icon="chatbubble-ellipses-outline"
+            label="Anonymous messages"
+            detail="Control what you receive anonymously"
             onPress={() => setAnonOpen(true)}
           />
-          <Row label="Help & Support" detail="genz.support@placeholder.com" onPress={() => {}} />
+        </Section>
+
+        {/* ---------------- notifications ---------------- */}
+        <Section title="Notifications">
+          <ToggleRow label="Likes" hint="Includes reactions and reposts" value={settings.notif_likes ?? true} onChange={(v) => saveSettings({ notif_likes: v })} />
+          <ToggleRow label="Comments" hint="Comments, replies and comment likes" value={settings.notif_comments ?? true} onChange={(v) => saveSettings({ notif_comments: v })} />
+          <ToggleRow label="Followers" hint="New followers" value={settings.notif_followers ?? true} onChange={(v) => saveSettings({ notif_followers: v })} />
+          <ToggleRow label="Messages" hint="Direct messages and calls" value={settings.notif_messages ?? true} onChange={(v) => saveSettings({ notif_messages: v })} />
+          <ToggleRow label="Mentions" hint="When someone tags you" value={settings.notif_mentions ?? true} onChange={(v) => saveSettings({ notif_mentions: v })} />
+        </Section>
+        <Caption>Switching one off stops those notifications being created at all, not just muting them.</Caption>
+
+        {/* ---------------- security ---------------- */}
+        <Section title="Security">
+          <Row icon="lock-closed-outline" label="Change password" onPress={() => setPasswordOpen(true)} />
+          <Row
+            icon="shield-checkmark-outline"
+            label="Two-factor authentication"
+            detail={security?.mfa_enabled ? 'ON — authenticator app' : 'OFF'}
+            onPress={() => setTwoFAOpen(true)}
+          />
+          <Row icon="phone-portrait-outline" label="Where you're logged in" onPress={() => setSessionsOpen(true)} />
+          <Row icon="key-outline" label="Recovery codes" onPress={() => setCodesOpen(true)} />
+          <Row icon="notifications-outline" label="Security alerts" onPress={() => setAlertsOpen(true)} />
+        </Section>
+
+        {/* ---------------- your data ---------------- */}
+        <Section title="Your data">
+          <StaticRow icon="bar-chart-outline" label="Your activity" detail={activitySummary} />
+          <Row
+            icon={exported ? 'checkmark-circle-outline' : 'download-outline'}
+            label={exported ? 'Copied to clipboard' : 'Export my data'}
+            detail="Profile, stats and preferences as JSON"
+            onPress={exportData}
+            action={exporting ? 'Working...' : undefined}
+          />
+        </Section>
+
+        {/* ---------------- support ---------------- */}
+        <Section title="Support">
+          <Row
+            icon="flag-outline"
+            label="Report a problem"
+            detail="Bugs, abuse, harmful content"
+            onPress={() => setReportOpen(true)}
+          />
+          <Row icon="mail-outline" label="Email us" detail={SUPPORT_EMAIL} onPress={mailSupport} />
+        </Section>
+
+        {/* ---------------- about ---------------- */}
+        <Section title="About">
+          <StaticRow icon="color-palette-outline" label="Appearance" detail="Midnight dark — light theme is still in the works" />
+          <StaticRow icon="pricetag-outline" label="App version" detail={APP_VERSION} />
+        </Section>
+
+        {/* ---------------- danger zone ---------------- */}
+        <Section title="Account status">
+          <Row icon="pause-circle-outline" label="Deactivate account" detail="Hide everything, keep the data" onPress={() => setDeactOpen(true)} />
+          <Row icon="trash-outline" label="Delete account" detail="Permanent, cannot be undone" onPress={() => setDelOpen(true)} />
           <Pressable style={styles.logoutBtn} onPress={logout}>
+            <Icon name="log-out-outline" size={18} color={colors.danger} />
             <Text style={styles.logoutText}>Log out</Text>
           </Pressable>
         </Section>
       </ScrollView>
 
+      {/* ---------------- modals ---------------- */}
       <EditProfileModal
         visible={editOpen}
         profile={profile}
@@ -278,11 +388,40 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
           load();
         }}
       />
-      <ChangePasswordModal visible={passwordOpen} onClose={() => setPasswordOpen(false)} onSave={changePassword} />
+      <SecurityPasswordModal visible={passwordOpen} email={email} onClose={() => setPasswordOpen(false)} />
       <AnonymousSettingsModal visible={anonOpen} onClose={() => setAnonOpen(false)} />
+      <AccountInfoModal
+        visible={accountInfoOpen}
+        onClose={() => setAccountInfoOpen(false)}
+        profile={profile}
+        stats={stats}
+        security={security}
+      />
+      <ReportProblemModal
+        visible={reportOpen}
+        onClose={() => setReportOpen(false)}
+        accountEmail={email}
+        username={profile?.username}
+        userId={userId ?? undefined}
+      />
+      <BlockedScreen visible={blockedOpen} onClose={() => setBlockedOpen(false)} onChanged={load} />
+      <MutedScreen visible={mutedOpen} onClose={() => setMutedOpen(false)} onChanged={load} />
+      <HiddenWordsScreen visible={wordsOpen} onClose={() => setWordsOpen(false)} onChanged={load} />
+      {twoFAOpen && <TwoFactorScreen onClose={() => { setTwoFAOpen(false); load(); }} />}
+      {sessionsOpen && <SessionsScreen onClose={() => setSessionsOpen(false)} />}
+      {alertsOpen && <SecurityAlertsScreen onClose={() => setAlertsOpen(false)} />}
+      {codesOpen && <RecoveryCodesScreen onClose={() => setCodesOpen(false)} />}
+      <EmailModal visible={emailOpen} onClose={() => setEmailOpen(false)} />
+      <PhoneModal visible={phoneOpen} onClose={() => setPhoneOpen(false)} />
+      <DeactivateModal visible={deactOpen} onClose={() => setDeactOpen(false)} onDone={() => setDeactOpen(false)} />
+      <DeleteModal visible={delOpen} onClose={() => setDelOpen(false)} onDone={() => setDelOpen(false)} />
     </View>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* building blocks                                                     */
+/* ------------------------------------------------------------------ */
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -293,27 +432,62 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+function Caption({ children }: { children: React.ReactNode }) {
+  return <Text style={styles.caption}>{children}</Text>;
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.metric}>
+      <Text style={styles.metricValue}>{value}</Text>
+      <Text style={styles.metricLabel}>{label}</Text>
+    </View>
+  );
+}
+
 function Row({
+  icon,
   label,
   detail,
   action,
-  small,
   onPress,
 }: {
+  icon?: IconName;
   label: string;
   detail?: string;
   action?: string;
-  small?: boolean;
   onPress: () => void;
 }) {
   return (
-    <Pressable style={[styles.row, small && styles.rowSmall]} onPress={onPress}>
+    <Pressable style={styles.row} onPress={onPress}>
+      {!!icon && (
+        <View style={styles.rowIcon}>
+          <Icon name={icon} size={16} color={colors.accent} />
+        </View>
+      )}
       <View style={styles.rowInfo}>
         <Text style={styles.rowLabel}>{label}</Text>
         {!!detail && <Text style={styles.rowDetail}>{detail}</Text>}
       </View>
       {!!action && <Text style={styles.rowAction}>{action}</Text>}
+      <Icon name="chevron-forward" size={16} color={colors.textFaint} />
     </Pressable>
+  );
+}
+
+function StaticRow({ icon, label, detail }: { icon?: IconName; label: string; detail?: string }) {
+  return (
+    <View style={styles.row}>
+      {!!icon && (
+        <View style={styles.rowIcon}>
+          <Icon name={icon} size={16} color={colors.accent} />
+        </View>
+      )}
+      <View style={styles.rowInfo}>
+        <Text style={styles.rowLabel}>{label}</Text>
+        {!!detail && <Text style={styles.rowDetail}>{detail}</Text>}
+      </View>
+    </View>
   );
 }
 
@@ -336,7 +510,7 @@ function ToggleRow({ label, hint, value, onChange }: { label: string; hint?: str
 
 function WhoRow({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   return (
-    <View style={styles.row}>
+    <View style={styles.whoRow}>
       <Text style={styles.rowLabel}>{label}</Text>
       <View style={styles.segment}>
         {WHO_OPTIONS.map((o) => (
@@ -349,20 +523,9 @@ function WhoRow({ label, value, onChange }: { label: string; value: string; onCh
   );
 }
 
-function ThemeRow({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  return (
-    <View style={styles.row}>
-      <Text style={styles.rowLabel}>Theme</Text>
-      <View style={styles.segment}>
-        {['dark', 'light', 'system'].map((o) => (
-          <Pressable key={o} style={[styles.segmentBtn, value === o && styles.segmentActive]} onPress={() => onChange(o)}>
-            <Text style={[styles.segmentText, value === o && styles.segmentTextActive]}>{o}</Text>
-          </Pressable>
-        ))}
-      </View>
-    </View>
-  );
-}
+/* ------------------------------------------------------------------ */
+/* modals                                                              */
+/* ------------------------------------------------------------------ */
 
 function EditProfileModal({ visible, profile, onClose, onSaved }: any) {
   const [displayName, setDisplayName] = useState('');
@@ -494,65 +657,13 @@ function ChangeUsernameModal({ visible, onClose, onSaved }: any) {
   );
 }
 
-function ChangePasswordModal({ visible, onClose, onSave }: any) {
-  const [current, setCurrent] = useState('');
-  const [next, setNext] = useState('');
-  const [confirm, setConfirm] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  const save = async () => {
-    if (next.length < 6) {
-      setError('New password must be at least 6 characters.');
-      return;
-    }
-    if (next !== confirm) {
-      setError('Passwords do not match.');
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    const err = await onSave(current, next);
-    if (err) setError(err.message);
-    else {
-      setCurrent('');
-      setNext('');
-      setConfirm('');
-      onClose();
-    }
-    setSaving(false);
-  };
-
-  return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalSheet}>
-          <Text style={styles.modalTitle}>Change password</Text>
-          <TextInput style={styles.modalInput} placeholder="Current password" placeholderTextColor={colors.textFaint} secureTextEntry value={current} onChangeText={setCurrent} />
-          <TextInput style={styles.modalInput} placeholder="New password" placeholderTextColor={colors.textFaint} secureTextEntry value={next} onChangeText={setNext} />
-          <TextInput style={styles.modalInput} placeholder="Confirm new password" placeholderTextColor={colors.textFaint} secureTextEntry value={confirm} onChangeText={setConfirm} />
-          {!!error && <Text style={styles.checkBad}>{error}</Text>}
-          <Button title="Update password" onPress={save} loading={saving} />
-          <Pressable style={styles.modalCancel} onPress={onClose}>
-            <Text style={styles.modalCancelText}>Cancel</Text>
-          </Pressable>
-        </View>
-      </View>
-    </Modal>
-  );
-}
+/* ------------------------------------------------------------------ */
+/* styles                                                              */
+/* ------------------------------------------------------------------ */
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bg,
-  },
-  center: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.bg,
-  },
+  container: { flex: 1, backgroundColor: colors.bg },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -563,14 +674,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.glassBorder,
   },
-  backBtn: {
-    width: 70,
-  },
-  backText: {
-    color: colors.accent,
-    fontSize: 15,
-    fontWeight: '500',
-  },
+  backBtn: { width: 46 },
   headerTitle: {
     flex: 1,
     textAlign: 'center',
@@ -578,13 +682,41 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
-  content: {
-    padding: 16,
-    paddingBottom: 40,
+  content: { padding: 16, paddingBottom: 48 },
+
+  hero: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    ...shadows.sm,
   },
-  section: {
-    marginBottom: 18,
+  heroInfo: { flex: 1 },
+  heroNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  heroName: { color: colors.text, fontSize: 18, fontWeight: '800', maxWidth: '80%' },
+  heroHandle: { color: colors.textMuted, fontSize: 13, marginTop: 2 },
+  heroJoined: { color: colors.textFaint, fontSize: 11.5, marginTop: 4 },
+
+  statStrip: {
+    flexDirection: 'row',
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingVertical: 12,
+    marginTop: 10,
+    marginBottom: 4,
   },
+  metric: { flex: 1, alignItems: 'center' },
+  metricValue: { color: colors.text, fontSize: 16, fontWeight: '800' },
+  metricLabel: { color: colors.textMuted, fontSize: 10.5, marginTop: 2 },
+
+  section: { marginTop: 18 },
   sectionTitle: {
     color: colors.textMuted,
     fontSize: 12,
@@ -601,126 +733,73 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     overflow: 'hidden',
   },
+  caption: {
+    color: colors.textFaint,
+    fontSize: 11.5,
+    lineHeight: 17,
+    marginTop: 8,
+    marginLeft: 4,
+    marginRight: 4,
+  },
+
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     paddingVertical: 13,
     borderBottomWidth: 0.5,
     borderBottomColor: colors.border,
+    gap: 11,
   },
-  rowSmall: {
-    paddingVertical: 8,
-    paddingLeft: 28,
+  whoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    borderBottomWidth: 0.5,
+    borderBottomColor: colors.border,
+    gap: 10,
   },
-  rowInfo: {
-    flex: 1,
-    marginRight: 10,
+  rowIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: colors.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  rowLabel: {
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  rowDetail: {
-    color: colors.textMuted,
-    fontSize: 12,
-    marginTop: 2,
-  },
-  rowAction: {
-    color: colors.accent,
-    fontSize: 13,
-    fontWeight: '700',
-  },
+  rowInfo: { flex: 1 },
+  rowLabel: { color: colors.text, fontSize: 14, fontWeight: '500', flexShrink: 1 },
+  rowDetail: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
+  rowAction: { color: colors.accent, fontSize: 12.5, fontWeight: '700' },
+
   segment: {
     flexDirection: 'row',
     backgroundColor: colors.surfaceInput,
     borderRadius: radius.pill,
     padding: 3,
   },
-  segmentBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: radius.pill,
-  },
-  segmentActive: {
-    backgroundColor: colors.accent,
-  },
-  segmentText: {
-    color: colors.textMuted,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  segmentTextActive: {
-    color: colors.bg,
-  },
-  wordRow: {
+  segmentBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: radius.pill },
+  segmentActive: { backgroundColor: colors.accent },
+  segmentText: { color: colors.textMuted, fontSize: 11, fontWeight: '600' },
+  segmentTextActive: { color: colors.bg },
+
+  logoutBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  wordInput: {
-    flex: 1,
-    backgroundColor: colors.surfaceInput,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.pill,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    color: colors.text,
-    fontSize: 13,
-  },
-  wordAdd: {
-    backgroundColor: colors.accent,
-    borderRadius: radius.pill,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    marginLeft: 8,
-  },
-  wordAddText: {
-    color: colors.bg,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  wordWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    paddingHorizontal: 16,
-    paddingBottom: 10,
-  },
-  wordChip: {
-    backgroundColor: colors.surfaceAlt,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    borderRadius: radius.pill,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    margin: 3,
-  },
-  wordChipText: {
-    color: colors.text,
-    fontSize: 12,
-  },
-  logoutBtn: {
+    justifyContent: 'center',
+    gap: 8,
     backgroundColor: 'rgba(255,92,124,0.12)',
     borderWidth: 1,
     borderColor: colors.danger,
     borderRadius: radius.md,
     paddingVertical: 13,
-    alignItems: 'center',
+    marginTop: 12,
   },
-  logoutText: {
-    color: colors.danger,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: colors.overlay,
-    justifyContent: 'flex-end',
-  },
+  logoutText: { color: colors.danger, fontSize: 14, fontWeight: '700' },
+
+  modalOverlay: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'flex-end' },
   modalSheet: {
     backgroundColor: colors.glass,
     borderTopLeftRadius: radius.xl,
@@ -730,40 +809,9 @@ const styles = StyleSheet.create({
     padding: 22,
     paddingBottom: 36,
   },
-  modalTitle: {
-    color: colors.text,
-    fontSize: 18,
-    fontWeight: '800',
-    marginBottom: 16,
-    textAlign: 'center',
-  },
-  modalAvatarRow: {
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  modalAvatar: {
-    width: 84,
-    height: 84,
-    borderRadius: 42,
-    borderWidth: 2,
-    borderColor: colors.accent,
-  },
-  modalAvatarPlaceholder: {
-    backgroundColor: colors.surfaceAlt,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modalAvatarLetter: {
-    color: colors.accent,
-    fontSize: 32,
-    fontWeight: '800',
-  },
-  modalAvatarCta: {
-    color: colors.accent,
-    fontSize: 13,
-    fontWeight: '600',
-    marginTop: 8,
-  },
+  modalTitle: { color: colors.text, fontSize: 18, fontWeight: '800', marginBottom: 16, textAlign: 'center' },
+  modalAvatarRow: { alignItems: 'center', marginBottom: 16 },
+  modalAvatarCta: { color: colors.accent, fontSize: 13, fontWeight: '600', marginTop: 8 },
   modalInput: {
     backgroundColor: colors.surfaceInput,
     borderWidth: 1,
@@ -775,28 +823,10 @@ const styles = StyleSheet.create({
     fontSize: 15,
     marginBottom: 12,
   },
-  modalBio: {
-    minHeight: 80,
-    textAlignVertical: 'top',
-  },
-  modalCancel: {
-    alignItems: 'center',
-    marginTop: 12,
-  },
-  modalCancelText: {
-    color: colors.textMuted,
-    fontSize: 14,
-  },
-  checkText: {
-    fontSize: 13,
-    marginBottom: 10,
-  },
-  checkOk: {
-    color: colors.success,
-  },
-  checkBad: {
-    color: colors.danger,
-    fontSize: 13,
-    marginBottom: 10,
-  },
+  modalBio: { minHeight: 80, textAlignVertical: 'top' },
+  modalCancel: { alignItems: 'center', marginTop: 12 },
+  modalCancelText: { color: colors.textMuted, fontSize: 14 },
+  checkText: { fontSize: 13, marginBottom: 10 },
+  checkOk: { color: colors.success },
+  checkBad: { color: colors.danger, fontSize: 13, marginBottom: 10 },
 });

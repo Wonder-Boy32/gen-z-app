@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   FlatList,
   Image,
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,8 +10,9 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import DropVideoView from '../components/DropVideoView';
 import Icon from '../components/ui/Icon';
+import VerifiedBadge from '../components/ui/VerifiedBadge';
+import PostViewer from '../components/PostViewer';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import { TOP_INSET } from '../utils/useInsets';
@@ -70,7 +70,8 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
   const [sounds, setSounds] = useState<{ audio: string; count: number }[]>([]);
   const [tags, setTags] = useState<{ tag: string; count: number }[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<P | null>(null);
+  // tapping a post opens the FULL home-feed-style pager (not a small card)
+  const [viewer, setViewer] = useState<{ list: P[]; index: number } | null>(null);
   const [openDrop, setOpenDrop] = useState<Drop | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [publicProfile, setPublicProfile] = useState<{ id: string; username: string } | null>(null);
@@ -85,7 +86,7 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
       await Promise.all([
         supabase
           .from('posts')
-          .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url)')
+          .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url, verified)')
           .is('parent_drop_id', null)
           .order('created_at', { ascending: false })
           .limit(200),
@@ -97,7 +98,7 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
           .limit(3),
         supabase
           .from('profiles')
-          .select('id, username, avatar_url, created_at')
+          .select('id, username, avatar_url, created_at, verified')
           .neq('id', me ?? '')
           .order('created_at', { ascending: false })
           .limit(8),
@@ -148,15 +149,32 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
     [posts]
   );
 
-  const renderCard = (p: P) => (
-    <Pressable style={styles.videoCard} onPress={() => setSelected(p)}>
+  // Open the tapped post in the full-screen pager (home-feed style). The
+  // video's first bytes are warmed ahead so the first frame comes faster.
+  const openViewer = (list: P[], index: number) => {
+    const p = list[index];
+    if (p?.media_type === 'video' && p.media_url) {
+      try {
+        fetch(p.media_url, { headers: { Range: 'bytes=0-1048575' } }).catch(() => {});
+      } catch {
+        // ignore — warming is best-effort
+      }
+    }
+    setViewer({ list, index });
+  };
+
+  const renderCard = (p: P, index: number) => (
+    <Pressable style={styles.videoCard} onPress={() => openViewer(trendingVideos, index)}>
       <CardMedia post={p} />
       <View style={styles.cardOverlay}>
         <View style={styles.statRow}>
           <Icon name="heart" size={12} color={colors.logoWhite} />
           <Text style={styles.cardLikes}>{fmtCount(p.likes_count)}</Text>
         </View>
-        <Text style={styles.cardUser} numberOfLines={1}>@{p.profile?.username ?? 'unknown'}</Text>
+        <View style={styles.cardUserRow}>
+          <Text style={styles.cardUser} numberOfLines={1}>@{p.profile?.username ?? 'unknown'}</Text>
+          {!!(p.profile as any)?.verified && <VerifiedBadge size={10} glow={false} />}
+        </View>
       </View>
     </Pressable>
   );
@@ -213,7 +231,7 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
             horizontal
             keyExtractor={(p) => p.id}
             showsHorizontalScrollIndicator={false}
-            renderItem={({ item }) => renderCard(item)}
+            renderItem={({ item, index }) => renderCard(item, index)}
           />
         ) : (
           <Text style={styles.empty}>Nothing trending yet — post something.</Text>
@@ -237,7 +255,7 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
                 </Text>
                 <DropCountdown
                   endsAt={item.status === 'live' ? item.ends_at : item.voting_ends_at}
-                  mode={item.status}
+                  mode={item.status as 'live' | 'voting'}
                 />
                 <Text style={styles.dropPosts}>{item.posts} submissions</Text>
               </Pressable>
@@ -250,8 +268,8 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
         {/* 👀 Everyone Is Watching */}
         <Text style={styles.sectionTitle}>👀 Everyone Is Watching</Text>
         <View style={styles.grid}>
-          {watching.map((p) => (
-            <Pressable key={p.id} style={styles.gridTile} onPress={() => setSelected(p)}>
+          {watching.map((p, i) => (
+            <Pressable key={p.id} style={styles.gridTile} onPress={() => openViewer(watching, i)}>
               <CardMedia post={p} />
               <View style={styles.gridOverlay}>
                 <View style={styles.statRow}>
@@ -275,8 +293,11 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
           showsHorizontalScrollIndicator={false}
           renderItem={({ item }) => (
             <Pressable style={styles.creatorCard} onPress={() => setPublicProfile({ id: item.id, username: item.username })}>
-              <Avatar url={item.avatar_url} name={item.username} size={72} ring />
-              <Text style={styles.creatorName} numberOfLines={1}>@{item.username}</Text>
+              <Avatar url={item.avatar_url} name={item.username} size={72} ring verified={!!(item as any).verified} />
+              <View style={styles.creatorNameRow}>
+                <Text style={styles.creatorName} numberOfLines={1}>@{item.username}</Text>
+                {!!(item as any).verified && <VerifiedBadge size={11} glow={false} />}
+              </View>
               <Text style={styles.creatorCta}>View stories</Text>
             </Pressable>
           )}
@@ -316,7 +337,15 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
       </ScrollView>
       )}
 
-      <PostDetailModal post={selected} onClose={() => setSelected(null)} />
+      {viewer && (
+        <View style={styles.viewerWrap}>
+          <PostViewer
+            posts={viewer.list as any}
+            index={viewer.index}
+            onClose={() => setViewer(null)}
+          />
+        </View>
+      )}
 
       {openDrop && (
         <DropExperienceScreen
@@ -366,71 +395,19 @@ function CardMedia({ post }: { post: P }) {
   );
 }
 
-function PostDetailModal({ post, onClose }: { post: P | null; onClose: () => void }) {
-  return (
-    <Modal visible={!!post} animationType="fade" transparent onRequestClose={onClose}>
-      <View style={styles.detailOverlay}>
-        {post && (
-          <>
-            <Pressable style={styles.detailClose} onPress={onClose} hitSlop={10}>
-              <Text style={styles.detailCloseText}>✕</Text>
-            </Pressable>
-            <View style={styles.detailMedia}>
-              {post.media_type === 'video' && post.media_url ? (
-                <DropVideoView
-                  url={post.media_url}
-                  effects={post.effects}
-                  filters={post.filters}
-                  textLayers={post.text_layers}
-                  stickers={post.stickers}
-                  isActive
-                  contentFit="contain"
-                  showProgress={false}
-                  showMute={false}
-                />
-              ) : post.media_url ? (
-                <Image source={{ uri: post.media_url }} style={styles.detailMedia} resizeMode="contain" />
-              ) : (
-                <View style={[styles.detailMedia, styles.detailTextBg]}>
-                  <Text style={styles.detailText}>{post.content}</Text>
-                </View>
-              )}
-            </View>
-            <View style={styles.detailInfo}>
-              <Text style={styles.detailUser}>@{post.profile?.username ?? 'unknown'}</Text>
-              {!!post.caption && <Text style={styles.detailCaption}>{post.caption}</Text>}
-              {!!post.audio && (
-                <View style={styles.statRow}>
-                  <Icon name="musical-note" size={12} color={colors.cyan} />
-                  <Text style={styles.detailAudio}>{post.audio}</Text>
-                </View>
-              )}
-              <View style={styles.detailStats}>
-                <View style={styles.statRow}>
-                  <Icon name="heart" size={13} color={colors.logoWhite} />
-                  <Text style={styles.detailStat}>{fmtCount(post.likes_count)}</Text>
-                </View>
-                <View style={styles.statRow}>
-                  <Icon name="chatbubble-ellipses-outline" size={13} color={colors.logoWhite} />
-                  <Text style={styles.detailStat}>{fmtCount(post.comments_count)}</Text>
-                </View>
-                <View style={styles.statRow}>
-                  <Icon name="eye-outline" size={14} color={colors.logoWhite} />
-                  <Text style={styles.detailStat}>{fmtCount(post.views_count)}</Text>
-                </View>
-              </View>
-            </View>
-          </>
-        )}
-      </View>
-    </Modal>
-  );
-}
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.bg,
+  },
+  viewerWrap: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 60,
+    backgroundColor: '#000',
   },
   center: {
     flex: 1,
@@ -538,10 +515,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
+  cardUserRow: { flexDirection: "row", alignItems: "center", marginTop: 3 },
   cardUser: {
     color: colors.logoWhite,
     fontSize: 11,
-    marginTop: 2,
   },
   dropCard: {
     width: 230,
@@ -632,11 +609,11 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '800',
   },
+  creatorNameRow: { flexDirection: "row", alignItems: "center", marginTop: 6, justifyContent: "center" },
   creatorName: {
     color: colors.text,
     fontSize: 12,
-    marginTop: 6,
-    maxWidth: 96,
+    maxWidth: 84,
   },
   creatorCta: {
     color: colors.textMuted,

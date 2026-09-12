@@ -18,6 +18,7 @@ import DropExperienceScreen from '../screens/DropExperienceScreen';
 import PublicProfileScreen from '../screens/PublicProfileScreen';
 import { fmtCount } from './FeedPost';
 import Avatar from './Avatar';
+import VerifiedBadge from './ui/VerifiedBadge';
 
 type P = {
   id: string;
@@ -87,7 +88,7 @@ export default function SearchResults({ query, onPickQuery, onOpenUser, onOpenAu
           ? supabase.from('search_history').select('query').eq('user_id', me).order('created_at', { ascending: false }).limit(8)
           : Promise.resolve({ data: [] }),
         supabase.rpc('get_trending_searches', { limit_n: 6 }),
-        supabase.from('profiles').select('id, username, avatar_url').limit(200),
+        supabase.from('profiles').select('id, username, avatar_url, verified').limit(200),
         supabase.from('follows').select('follower_id, following_id').limit(1000),
         me
           ? supabase.from('follows').select('following_id').eq('follower_id', me).limit(500)
@@ -96,9 +97,13 @@ export default function SearchResults({ query, onPickQuery, onOpenUser, onOpenAu
     setHistory((h ?? []) as { query: string }[]);
     setTrending((t ?? []) as { query: string; searches: number }[]);
 
-    const profiles = (allProfiles?.data ?? []) as { id: string; username: string; avatar_url: string | null }[];
-    const follows = (allFollows?.data ?? []) as { follower_id: string; following_id: string }[];
-    const myFollowing = new Set((myFollowRows?.data ?? []).map((f: any) => f.following_id));
+    // these are already the rows from the destructured responses above, not
+    // response objects - reading .data here made all three silently empty
+    const profiles = (allProfiles ?? []) as { id: string; username: string; avatar_url: string | null }[];
+    const follows = (allFollows ?? []) as { follower_id: string; following_id: string }[];
+    const myFollowing = new Set(
+      ((myFollowRows ?? []) as { following_id: string }[]).map((f) => f.following_id)
+    );
 
     const followerCount = new Map<string, number>();
     follows.forEach((f) => followerCount.set(f.following_id, (followerCount.get(f.following_id) ?? 0) + 1));
@@ -153,10 +158,10 @@ export default function SearchResults({ query, onPickQuery, onOpenUser, onOpenAu
     setSearching(true);
     const t = setTimeout(async () => {
       const [u, p, tg, s, d] = await Promise.all([
-        supabase.from('profiles').select('id, username, avatar_url').ilike('username', `%${q}%`).limit(10),
+        supabase.from('profiles').select('id, username, avatar_url, verified').ilike('username', `%${q}%`).limit(10),
         supabase
           .from('posts')
-          .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url)')
+          .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url, verified)')
           .or(`caption.ilike.%${q}%,content.ilike.%${q}%,audio.ilike.%${q}%`)
           .is('parent_drop_id', null)
           .order('created_at', { ascending: false })
@@ -298,8 +303,11 @@ export default function SearchResults({ query, onPickQuery, onOpenUser, onOpenAu
                 setPublicProfile({ id: u.id, username: u.username });
               }}
             >
-              <Avatar url={u.avatar_url} name={u.username} size={40} ring />
-              <Text style={styles.userName}>@{u.username}</Text>
+              <Avatar url={u.avatar_url} name={u.username} size={40} ring verified={!!(u as any).verified} />
+              <View style={styles.userNameRow}>
+                <Text style={styles.userName}>@{u.username}</Text>
+                {!!(u as any).verified && <VerifiedBadge size={12} style={styles.verifiedInline} />}
+              </View>
             </Pressable>
           ))}
         </>
@@ -443,8 +451,11 @@ function SuggestionRow({
       showsHorizontalScrollIndicator={false}
       renderItem={({ item }) => (
         <Pressable style={styles.suggestCard} onPress={() => onOpenProfile({ id: item.id, username: item.username })}>
-          <Avatar url={item.avatar_url} name={item.username} size={64} ring />
-          <Text style={styles.suggestName} numberOfLines={1}>@{item.username}</Text>
+          <Avatar url={item.avatar_url} name={item.username} size={64} ring verified={!!(item as any).verified} />
+          <View style={styles.suggestNameRow}>
+            <Text style={styles.suggestName} numberOfLines={1}>@{item.username}</Text>
+            {!!(item as any).verified && <VerifiedBadge size={11} glow={false} />}
+          </View>
         </Pressable>
       )}
     />
@@ -581,6 +592,7 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '800',
   },
+  suggestNameRow: { flexDirection: "row", alignItems: "center", marginTop: 6, justifyContent: "center" },
   suggestName: {
     color: colors.text,
     fontSize: 11,
@@ -622,6 +634,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
+  userNameRow: { flexDirection: "row", alignItems: "center" },
+  verifiedInline: { marginLeft: 4 },
   userName: {
     color: colors.text,
     fontSize: 14,

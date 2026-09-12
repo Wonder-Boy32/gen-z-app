@@ -14,8 +14,27 @@
       "expo-audio",
       "expo-dev-client",
       [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon-launcher.png",
+          "color": "#FF9D1F",
+          "defaultChannel": "default"
+        }
+      ],
+      "ffmpeg-expo",
+      [
         "expo-media-library",
-        { "photosPermission": "Allow Gen Z to save your anonymous cards to your photo library." }
+        {
+          "photosPermission": "Allow Gen Z to save your anonymous cards to your photo library."
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#060A16",
+          "image": "./assets/icon-launcher.png",
+          "imageWidth": 180
+        }
       ]
     ],
     "android": {
@@ -28,16 +47,27 @@
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.FOREGROUND_SERVICE",
-        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.POST_NOTIFICATIONS"
       ],
       "intentFilters": [
         {
           "action": "VIEW",
           "data": [
-            { "scheme": "genz", "host": "anon" },
-            { "scheme": "https", "host": "genz.app", "pathPrefix": "/anon" }
+            {
+              "scheme": "genz",
+              "host": "anon"
+            },
+            {
+              "scheme": "https",
+              "host": "genz.app",
+              "pathPrefix": "/anon"
+            }
           ],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ]
     },

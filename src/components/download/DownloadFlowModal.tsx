@@ -1,0 +1,420 @@
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Image,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import { captureRef } from 'react-native-view-shot';
+import { colors, radius } from '../../theme';
+import { TOP_INSET } from '../../utils/useInsets';
+import {
+  fetchMediaToCache,
+  genzDownloadStamp,
+  mediaItemsOf,
+  saveToGallery,
+} from '../../utils/downloadMedia';
+
+// Reads a LOCAL video file's duration via expo-video (seconds) — reliable,
+// no ffmpeg needed. Returns null if it can't be determined quickly.
+async function localVideoDurationSec(uri: string): Promise<number | null> {
+  try {
+    const { createVideoPlayer } = require('expo-video');
+    const player = createVideoPlayer({ uri });
+    const t0 = Date.now();
+    let d: number | null = null;
+    while (Date.now() - t0 < 6000) {
+      const dur = player.duration;
+      if (typeof dur === 'number' && dur > 0 && !Number.isNaN(dur)) {
+        d = dur;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 120));
+    }
+    try {
+      player.release();
+    } catch {
+      // ignore
+    }
+    return d;
+  } catch {
+    return null;
+  }
+}
+import {
+  bakeDownloadVideo,
+  bakePhotoWatermark,
+  downloadBakeReady,
+} from '../../utils/videoProcessor';
+
+// ============================================================
+// DownloadFlowModal — TikTok-style save-to-gallery.
+//   video:  ffmpeg bakes a corner GENZ watermark + the GENZ
+//           jingle outro into a copy of the file
+//   photo:  ffmpeg bakes the corner watermark (original res);
+//           falls back to an on-screen capture where ffmpeg
+//           is unavailable (Expo Go)
+// Respects the creator's Downloads OFF toggle (checked by the
+// caller before opening).
+// ============================================================
+
+type Props = {
+  post: {
+    id: string;
+    media_url: string | null;
+    media_type: 'video' | 'image' | null;
+    media_items?: { url: string; type: string }[] | null;
+    sound_url?: string | null;
+    profile?: { username: string } | null;
+  };
+  onClose: () => void;
+};
+
+type Phase = 'prep' | 'bake' | 'capture' | 'saving' | 'done';
+
+// Corner pill shown on the saved media (logo + wordmark + @creator)
+function WatermarkPill({ username }: { username: string }) {
+  return (
+    <View style={styles.pill}>
+      <Image source={require('../../../assets/icon-navy.png')} style={styles.pillImg} />
+      <Text style={styles.pillWord}>GEN Z</Text>
+      {!!username && <Text style={styles.pillUser}>@{username}</Text>}
+    </View>
+  );
+}
+
+export default function DownloadFlowModal({ post, onClose }: Props) {
+  const items = mediaItemsOf(post);
+  const username = post.profile?.username ?? '';
+  const [phase, setPhase] = useState<Phase>('prep');
+  const [label, setLabel] = useState('Preparing…');
+  const [index, setIndex] = useState(0);
+  const [saved, setSaved] = useState(0);
+  const [previewUri, setPreviewUri] = useState<string | null>(null); // cached photo ready for capture
+  const shotRef = useRef<View>(null);
+  const capturedOnce = useRef(false);
+  // "GEN Z @creator" pill captured to a PNG and fed to the ffmpeg bake, so
+  // baked videos/photos carry the creator's handle (not just the wordmark).
+  const pillShotRef = useRef<View>(null);
+  const pillFired = useRef(false);
+  const pillUriRef = useRef<string | null>(null);
+  const pillWaiters = useRef<Array<(uri: string | null) => void>>([]);
+
+  useEffect(() => {
+    let dead = false;
+    (async () => {
+      try {
+        for (let i = 0; i < items.length; i++) {
+          if (dead) return;
+          setIndex(i);
+          const item = items[i];
+          const total = items.length;
+          const countLabel = total > 1 ? ` (${i + 1}/${total})` : '';
+
+          if (item.type === 'video') {
+            if (!downloadBakeReady()) {
+              throw new Error(
+                'Video downloads need the GENZ app build — the Expo Go preview has no video encoder. Install the latest GENZ APK and try again.'
+              );
+            }
+            setPhase('bake');
+            setLabel(`Adding GEN Z watermark${countLabel}…`);
+            const local = await fetchMediaToCache(item.url, `video-${post.id}`);
+            let music: string | null = null;
+            if (post.sound_url) {
+              try {
+                music = await fetchMediaToCache(post.sound_url, 'music');
+              } catch {
+                music = null;
+              }
+            }
+            // measure duration from the LOCAL file (reliable) so the jingle
+            // lands at the end of the baked video
+            const durSec = await localVideoDurationSec(local);
+            const wmShot = await waitPillShot();
+            const out = await bakeDownloadVideo(local, music, durSec, wmShot);
+            setPhase('saving');
+            setLabel('Saving to your phone…');
+            await saveToGallery(out);
+            setSaved((s) => s + 1);
+          } else {
+            const local = await fetchMediaToCache(item.url, `photo-${post.id}`);
+            let done = false;
+            if (downloadBakeReady()) {
+              try {
+                setPhase('bake');
+                setLabel(`Adding GEN Z watermark${countLabel}…`);
+                const wmShot = await waitPillShot();
+                const out = await bakePhotoWatermark(local, wmShot);
+                setPhase('saving');
+                setLabel('Saving to your phone…');
+                await saveToGallery(out);
+                done = true;
+                setSaved((s) => s + 1);
+              } catch (e: any) {
+                // ffmpeg bake failed → fall back to the on-screen capture
+                // path (works everywhere, incl. Expo Go)
+                console.warn('[download] photo bake failed, capture fallback:', e?.message);
+              }
+            }
+            if (!done) {
+              // view-shot fallback (no encoder / bake failed)
+              capturedOnce.current = false;
+              setPreviewUri(local);
+              setPhase('capture');
+              // wait for the preview child to capture (it calls finishPhoto)
+              await new Promise<void>((res, rej) => {
+                const t = setInterval(() => {
+                  if (capturedOnce.current) {
+                    clearInterval(t);
+                    res();
+                  }
+                }, 150);
+                setTimeout(() => {
+                  clearInterval(t);
+                  rej(new Error('Could not capture the photo — try again.'));
+                }, 8000);
+              });
+              setSaved((s) => s + 1);
+            }
+          }
+        }
+        if (dead) return;
+        setPhase('done');
+      } catch (e: any) {
+        if (dead) return;
+        const msg =
+          typeof e?.message === 'string' && e.message
+            ? e.message
+            : 'Download failed — try again.';
+        setPhase('prep');
+        Alert.alert('Download failed', msg, [
+          { text: 'OK', onPress: onClose },
+        ]);
+      }
+    })();
+    return () => {
+      dead = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const finishPhotoCapture = async (shotUri: string) => {
+    capturedOnce.current = true;
+    setPhase('saving');
+    setLabel('Saving to your phone…');
+    await saveToGallery(shotUri, genzDownloadStamp());
+  };
+
+  // Resolves with the captured pill PNG uri (or null if there's no username /
+  // the capture failed / timed out — the bake then falls back to the bundled
+  // wordmark). Cached per modal session.
+  const waitPillShot = (): Promise<string | null> =>
+    new Promise((resolve) => {
+      if (!username) return resolve(null);
+      if (pillUriRef.current) return resolve(pillUriRef.current);
+      const done = (uri: string | null) => {
+        pillWaiters.current = pillWaiters.current.filter((w) => w !== done);
+        clearTimeout(timer);
+        if (uri) pillUriRef.current = uri;
+        resolve(uri);
+      };
+      const timer = setTimeout(() => done(null), 3500);
+      pillWaiters.current.push(done);
+    });
+
+  const busy = phase === 'prep' || phase === 'bake' || phase === 'saving';
+  const showShot = phase === 'capture' && !!previewUri;
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.backdrop}>
+        <Pressable style={styles.closeBtn} onPress={onClose} hitSlop={10}>
+          <Text style={styles.closeText}>✕</Text>
+        </Pressable>
+
+        {showShot && previewUri ? (
+          <ShotView
+            uri={previewUri}
+            username={username}
+            innerRef={shotRef}
+            onShot={finishPhotoCapture}
+            onShotError={(e: any) => {
+              capturedOnce.current = true;
+              Alert.alert('Download failed', e?.message ?? 'Could not save the photo.', [
+                { text: 'OK', onPress: onClose },
+              ]);
+            }}
+          />
+        ) : (
+          <View style={styles.center}>
+            <View style={styles.card}>
+              {busy ? (
+                <ActivityIndicator size="large" color={colors.accent} />
+              ) : (
+                <Text style={styles.doneIcon}>✓</Text>
+              )}
+              <Text style={styles.cardText}>
+                {phase === 'done'
+                  ? saved > 0
+                    ? `Saved ${saved} ${saved === 1 ? 'file' : 'files'} to your phone`
+                    : 'Saved to your phone'
+                  : label}
+              </Text>
+              {phase === 'done' && (
+                <Pressable style={styles.doneBtn} onPress={onClose}>
+                  <Text style={styles.doneBtnText}>Done</Text>
+                </Pressable>
+              )}
+            </View>
+          </View>
+        )}
+
+        {!!username && (phase === 'prep' || phase === 'bake') && (
+          <View
+            ref={pillShotRef}
+            collapsable={false}
+            style={styles.pillShot}
+            onLayout={() => {
+              if (pillFired.current) return;
+              pillFired.current = true;
+              setTimeout(async () => {
+                try {
+                  const shot = await captureRef(pillShotRef.current, {
+                    format: 'png',
+                    quality: 1,
+                    result: 'tmpfile',
+                  });
+                  pillWaiters.current.forEach((w) => w(shot));
+                } catch {
+                  pillWaiters.current.forEach((w) => w(null));
+                }
+                pillWaiters.current = [];
+              }, 200);
+            }}
+          >
+            <WatermarkPill username={username} />
+          </View>
+        )}
+      </View>
+    </Modal>
+  );
+}
+
+// Renders the cached photo + watermark pill and captures the composite.
+function ShotView({
+  uri,
+  username,
+  innerRef,
+  onShot,
+  onShotError,
+}: {
+  uri: string;
+  username: string;
+  innerRef: React.RefObject<View | null>;
+  onShot: (shotUri: string) => void;
+  onShotError: (e: any) => void;
+}) {
+  const fired = useRef(false);
+  return (
+    <View
+      ref={innerRef}
+      collapsable={false}
+      style={styles.shotWrap}
+      onLayout={() => {
+        if (fired.current) return;
+        fired.current = true;
+        setTimeout(async () => {
+          try {
+            const shot = await captureRef(innerRef.current, {
+              format: 'jpg',
+              quality: 0.92,
+              result: 'tmpfile',
+            });
+            onShot(shot);
+          } catch (e) {
+            onShotError(e);
+          }
+        }, 120);
+      }}
+    >
+      <Image source={{ uri }} style={styles.shotImg} resizeMode="contain" />
+      <View style={styles.shotPill}>
+        <WatermarkPill username={username} />
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(3,6,15,0.92)',
+    justifyContent: 'center',
+  },
+  closeBtn: {
+    position: 'absolute',
+    top: TOP_INSET + 12,
+    right: 16,
+    zIndex: 30,
+    backgroundColor: colors.overlay,
+    borderRadius: 999,
+    padding: 10,
+  },
+  closeText: { color: '#fff', fontSize: 16, fontWeight: '800' },
+  center: { alignItems: 'center' },
+  card: {
+    minWidth: 220,
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: 26,
+  },
+  doneIcon: { color: '#34D399', fontSize: 44, fontWeight: '900', marginBottom: 8 },
+  cardText: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: 14,
+  },
+  doneBtn: {
+    marginTop: 18,
+    backgroundColor: colors.accent,
+    borderRadius: 999,
+    paddingHorizontal: 26,
+    paddingVertical: 10,
+  },
+  doneBtnText: { color: '#fff', fontWeight: '800' },
+  shotWrap: {
+    width: '92%',
+    alignSelf: 'center',
+    aspectRatio: 3 / 4,
+    backgroundColor: '#000',
+    borderRadius: radius.lg,
+    overflow: 'hidden',
+  },
+  shotImg: { width: '100%', height: '100%' },
+  shotPill: { position: 'absolute', bottom: 14, right: 12 },
+  pillShot: {
+    position: 'absolute',
+    bottom: 46,
+    right: 18,
+    zIndex: 50,
+  },
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(7,11,24,0.55)',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  pillImg: { width: 20, height: 20, borderRadius: 6 },
+  pillWord: { color: colors.accent, fontSize: 13, fontWeight: '800', letterSpacing: 1.5, marginLeft: 6 },
+  pillUser: { color: '#fff', fontSize: 13, fontWeight: '700', marginLeft: 8, opacity: 0.95 },
+});

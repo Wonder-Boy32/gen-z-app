@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   Animated,
   FlatList,
   Image,
@@ -16,7 +18,10 @@ import DropVideoView, { DropEffects, DropSticker, DropTextLayer } from './DropVi
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { colors, shadows } from '../theme';
 import Avatar from './Avatar';
+import VerifiedBadge from './ui/VerifiedBadge';
 import Icon, { IconName } from './ui/Icon';
+import DownloadFlowModal from './download/DownloadFlowModal';
+import { postAllowsDownload } from '../utils/downloadMedia';
 
 export type FeedPost = {
   id: string;
@@ -43,7 +48,7 @@ export type FeedPost = {
   created_at: string;
   expires_at: string;
   drop_id: string | null;
-  profile: { username: string; avatar_url: string | null; is_private: boolean } | null;
+  profile: { username: string; avatar_url: string | null; is_private: boolean; verified?: boolean } | null;
   liked_by_me: boolean;
   following: boolean;
   follow_pending: boolean;
@@ -51,6 +56,13 @@ export type FeedPost = {
   reposted_by_me: boolean;
   my_reaction: string | null;
   reactions_count: number;
+  // creator toggles — absent (older posts) = allowed
+  allow_likes?: boolean;
+  allow_comments?: boolean;
+  allow_shares?: boolean;
+  allow_reposts?: boolean;
+  allow_downloads?: boolean;
+  allow_mentions?: boolean;
   pulse?: { views30: number; likes30: number; comments30: number; rising: boolean; trending: boolean } | null;
   responses_count?: number;
   reasons?: string[];
@@ -61,6 +73,9 @@ const REACTIONS = ['🔥', '😂', '😮', '💯'];
 type Props = {
   post: FeedPost;
   isActive: boolean;
+  /** true when this page is the NEXT one in the pager — its video is
+   *  loaded (muted) ahead of time so playback starts instantly on swipe */
+  preload?: boolean;
   height: number;
   contentTop?: number;
   contentBottom?: number;
@@ -87,6 +102,7 @@ export function fmtCount(n: number): string {
 export default function FeedPost({
   post,
   isActive,
+  preload = false,
   height,
   contentTop = 0,
   contentBottom = 0,
@@ -110,6 +126,24 @@ export default function FeedPost({
   const [tapPaused, setTapPaused] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showReasons, setShowReasons] = useState(false);
+  const [dlOpen, setDlOpen] = useState(false);
+  const [dlChecking, setDlChecking] = useState(false);
+
+  // TikTok-style download — respects the creator's Downloads OFF toggle
+  const onDownload = async () => {
+    if (dlChecking || dlOpen) return;
+    setDlChecking(true);
+    try {
+      const ok = await postAllowsDownload(post.id);
+      if (!ok) {
+        Alert.alert('Downloads disabled', 'This creator turned downloads off for this drop.');
+        return;
+      }
+      setDlOpen(true);
+    } finally {
+      setDlChecking(false);
+    }
+  };
 
   // ---------- attached sound track (plays on video, photo AND text drops) ----------
   const soundUrl = post.sound_url;
@@ -137,6 +171,13 @@ export default function FeedPost({
     }
   }, [soundStatus.currentTime, soundStatus.playing, post.sound_end, post.sound_start, soundPlayer]);
 
+  // creator interaction toggles (missing flag = allowed, for older posts)
+  const canLike = post.allow_likes !== false;
+  const canComment = post.allow_comments !== false;
+  const canRepost = post.allow_reposts !== false;
+  const canShare = post.allow_shares !== false;
+  const canDownload = post.allow_downloads !== false;
+
   const showHeart = () => {
     heartAnim.setValue(0);
     Animated.sequence([
@@ -149,8 +190,8 @@ export default function FeedPost({
     const now = Date.now();
     if (now - lastTap.current < 300) {
       lastTap.current = 0;
-      if (!post.liked_by_me) onLike();
-      showHeart();
+      if (canLike && !post.liked_by_me) onLike();
+      if (canLike) showHeart();
     } else {
       lastTap.current = now;
       // single tap = pause/play for videos (waits to make sure it wasn't
@@ -188,8 +229,8 @@ export default function FeedPost({
           <CarouselMedia
             items={post.media_items!}
             onDoubleTap={() => {
-              if (!post.liked_by_me) onLike();
-              showHeart();
+              if (canLike && !post.liked_by_me) onLike();
+              if (canLike) showHeart();
             }}
           />
         </View>
@@ -204,6 +245,7 @@ export default function FeedPost({
           <MediaArea
             post={post}
             isActive={isActive}
+            preload={preload}
             paused={holdPause || tapPaused}
             onTap={handleTap}
             onHoldStart={() => setHoldPause(true)}
@@ -227,19 +269,23 @@ export default function FeedPost({
           <Pressable onPress={() => setMenuOpen(true)} style={styles.railBtn} hitSlop={6}>
             <Icon name="ellipsis-horizontal" size={30} color={colors.logoWhite} style={styles.railIconShadow} />
           </Pressable>
-          <Pressable onPress={onLike} style={styles.railBtn} hitSlop={6}>
-            <Icon
-              name={post.liked_by_me ? 'heart' : 'heart-outline'}
-              size={30}
-              color={post.liked_by_me ? colors.accent : colors.logoWhite}
-              style={styles.railIconShadow}
-            />
-            <Text style={styles.railCount}>{fmtCount(post.likes_count)}</Text>
-          </Pressable>
-          <Pressable onPress={onComment} style={styles.railBtn} hitSlop={6}>
-            <Icon name="chatbubble-ellipses-outline" size={27} color={colors.logoWhite} style={styles.railIconShadow} />
-            <Text style={styles.railCount}>{fmtCount(post.comments_count)}</Text>
-          </Pressable>
+          {canLike && (
+            <Pressable onPress={onLike} style={styles.railBtn} hitSlop={6}>
+              <Icon
+                name={post.liked_by_me ? 'heart' : 'heart-outline'}
+                size={30}
+                color={post.liked_by_me ? colors.accent : colors.logoWhite}
+                style={styles.railIconShadow}
+              />
+              <Text style={styles.railCount}>{fmtCount(post.likes_count)}</Text>
+            </Pressable>
+          )}
+          {canComment && (
+            <Pressable onPress={onComment} style={styles.railBtn} hitSlop={6}>
+              <Icon name="chatbubble-ellipses-outline" size={27} color={colors.logoWhite} style={styles.railIconShadow} />
+              <Text style={styles.railCount}>{fmtCount(post.comments_count)}</Text>
+            </Pressable>
+          )}
           <Pressable onPress={onSave} style={styles.railBtn} hitSlop={6}>
             <Icon
               name={post.saved_by_me ? 'bookmark' : 'bookmark-outline'}
@@ -248,17 +294,30 @@ export default function FeedPost({
               style={styles.railIconShadow}
             />
           </Pressable>
-          <Pressable onPress={onRepost} style={styles.railBtn} hitSlop={6}>
-            <Icon
-              name={post.reposted_by_me ? 'repeat' : 'repeat-outline'}
-              size={30}
-              color={post.reposted_by_me ? colors.accent : colors.logoWhite}
-              style={styles.railIconShadow}
-            />
-          </Pressable>
-          <Pressable onPress={onShare} style={styles.railBtn} hitSlop={6}>
-            <Icon name="share-social-outline" size={27} color={colors.logoWhite} style={styles.railIconShadow} />
-          </Pressable>
+          {canRepost && (
+            <Pressable onPress={onRepost} style={styles.railBtn} hitSlop={6}>
+              <Icon
+                name={post.reposted_by_me ? 'repeat' : 'repeat-outline'}
+                size={30}
+                color={post.reposted_by_me ? colors.accent : colors.logoWhite}
+                style={styles.railIconShadow}
+              />
+            </Pressable>
+          )}
+          {canShare && (
+            <Pressable onPress={onShare} style={styles.railBtn} hitSlop={6}>
+              <Icon name="share-social-outline" size={27} color={colors.logoWhite} style={styles.railIconShadow} />
+            </Pressable>
+          )}
+          {canDownload && !!post.media_url && !!post.media_type && (
+            <Pressable onPress={onDownload} style={styles.railBtn} hitSlop={6}>
+              {dlChecking ? (
+                <ActivityIndicator size="small" color={colors.logoWhite} />
+              ) : (
+                <Icon name="download-outline" size={29} color={colors.logoWhite} style={styles.railIconShadow} />
+              )}
+            </Pressable>
+          )}
           {!!post.drop_id && (
             <Pressable onPress={cycleReaction} style={styles.railBtn} hitSlop={6}>
               {post.my_reaction ? (
@@ -277,8 +336,15 @@ export default function FeedPost({
         <View style={styles.bottomLeft}>
           <View style={styles.userRow}>
             <Pressable style={styles.userPress} onPress={onOpenProfile} hitSlop={6}>
-              <Avatar url={post.profile?.avatar_url} name={post.profile?.username ?? 'G'} size={36} ring />
+              <Avatar
+                url={post.profile?.avatar_url}
+                name={post.profile?.username ?? 'G'}
+                size={36}
+                ring
+                verified={!!post.profile?.verified}
+              />
               <Text style={styles.username}>@{post.profile?.username ?? 'unknown'}</Text>
+              {post.profile?.verified && <VerifiedBadge size={13} style={styles.verifiedInline} />}
             </Pressable>
             {post.user_id !== currentUserId && (
               <Pressable
@@ -353,6 +419,9 @@ export default function FeedPost({
         }}
         isOwner={post.user_id === currentUserId}
       />
+      {dlOpen && (
+        <DownloadFlowModal post={post} onClose={() => setDlOpen(false)} />
+      )}
     </View>
   );
 }
@@ -411,6 +480,7 @@ function PulseRow({ pulse, comments }: { pulse?: FeedPost['pulse']; comments: nu
 
 type MenuAction = 'hide' | 'mute' | 'block' | 'notinterested' | 'report' | 'replydrop' | 'why' | 'delete';
 
+// Everyone: hide/block/report etc. — NEVER "Delete drop" (that's owner-only)
 const MENU_ITEMS: { key: MenuAction; label: string; icon: IconName; iconColor: string }[] = [
   { key: 'why', label: 'Why am I seeing this?', icon: 'bulb-outline', iconColor: colors.accent },
   { key: 'replydrop', label: 'Reply with Drop', icon: 'videocam-outline', iconColor: colors.cyan },
@@ -419,11 +489,13 @@ const MENU_ITEMS: { key: MenuAction; label: string; icon: IconName; iconColor: s
   { key: 'mute', label: 'Mute creator', icon: 'volume-mute-outline', iconColor: colors.textMuted },
   { key: 'block', label: 'Block creator', icon: 'ban-outline', iconColor: colors.danger },
   { key: 'report', label: 'Report', icon: 'warning-outline', iconColor: colors.danger },
-  { key: 'delete', label: 'Delete drop', icon: 'trash-outline', iconColor: colors.danger },
 ];
 
-// own posts: delete + the still-useful actions only
-const OWN_MENU_ITEMS = MENU_ITEMS.filter((m) => m.key === 'delete' || m.key === 'why' || m.key === 'replydrop' || m.key === 'report');
+// Own posts only: Delete drop + the still-useful actions
+const OWN_MENU_ITEMS: { key: MenuAction; label: string; icon: IconName; iconColor: string }[] = [
+  { key: 'delete', label: 'Delete drop', icon: 'trash-outline', iconColor: colors.danger },
+  ...MENU_ITEMS.filter((m) => m.key === 'why' || m.key === 'replydrop' || m.key === 'report'),
+];
 
 function DropMenu({
   visible,
@@ -495,6 +567,7 @@ function DropMenu({
 function MediaArea({
   post,
   isActive,
+  preload = false,
   paused,
   onTap,
   onHoldStart,
@@ -502,6 +575,7 @@ function MediaArea({
 }: {
   post: FeedPost;
   isActive: boolean;
+  preload?: boolean;
   paused: boolean;
   onTap?: () => void;
   onHoldStart?: () => void;
@@ -512,6 +586,7 @@ function MediaArea({
       <VideoMedia
         post={post}
         isActive={isActive}
+        preload={preload}
         paused={paused}
         forceMute={!!post.sound_url}
         onTap={onTap}
@@ -537,6 +612,7 @@ function MediaArea({
 function VideoMedia({
   post,
   isActive,
+  preload = false,
   paused,
   forceMute = false,
   onTap,
@@ -545,6 +621,7 @@ function VideoMedia({
 }: {
   post: FeedPost;
   isActive: boolean;
+  preload?: boolean;
   paused: boolean;
   forceMute?: boolean;
   onTap?: () => void;
@@ -559,6 +636,7 @@ function VideoMedia({
       textLayers={post.text_layers}
       stickers={post.stickers}
       isActive={isActive}
+      preload={preload}
       paused={paused}
       showProgress
       showMute
@@ -785,9 +863,22 @@ const styles = StyleSheet.create({
   },
   username: {
     color: colors.logoWhite,
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
-    marginLeft: 8,
+  },
+  verifiedInline: {
+    marginLeft: 6,
+  },
+  avatarWrap: {
+    position: 'relative',
+  },
+  avatarBadge: {
+    position: 'absolute',
+    right: -2,
+    bottom: -2,
+    borderWidth: 2,
+    borderColor: colors.bgDeep,
+    borderRadius: 8,
   },
   followPill: {
     backgroundColor: colors.accent,

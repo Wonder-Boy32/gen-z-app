@@ -20,7 +20,7 @@ export default function LogoHeader({ compact, transparent, subtitle }: Props) {
       >
         <View style={[styles.badge, compact && styles.badgeCompact]}>
           <Image
-            source={require('../../assets/icon.png')}
+            source={require('../../assets/icon-navy.png')}
             style={[styles.img, compact && styles.imgCompact]}
           />
         </View>

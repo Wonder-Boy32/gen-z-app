@@ -12,6 +12,7 @@ import {
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import Avatar from './Avatar';
+import VerifiedBadge from './ui/VerifiedBadge';
 import Icon from './ui/Icon';
 import { notifyUser } from '../utils/notify';
 import { fmtCount } from './FeedPost';
@@ -115,13 +116,13 @@ export default function ProfilePeekModal({
           ) : (
             <>
               <View style={styles.topRow}>
-                <Avatar url={profile.avatar_url} name={profile.display_name || profile.username} size={64} ring />
+                <Avatar url={profile.avatar_url} name={profile.display_name || profile.username} size={64} ring verified={!!profile.verified} />
                 <View style={styles.ident}>
                   <View style={styles.nameRow}>
                     <Text style={styles.name} numberOfLines={1}>
                       {profile.display_name || profile.username}
                     </Text>
-                    {profile.verified && <Text style={styles.verified}>✓</Text>}
+                    {profile.verified && <VerifiedBadge size={16} style={styles.verified} />}
                   </View>
                   <Text style={styles.username}>@{profile.username}</Text>
                   {!!profile.bio && <Text style={styles.bio} numberOfLines={1}>{profile.bio}</Text>}

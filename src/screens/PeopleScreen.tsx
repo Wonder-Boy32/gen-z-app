@@ -13,6 +13,7 @@ import { colors, radius } from '../theme';
 import { TOP_INSET } from '../utils/useInsets';
 import PublicProfileScreen from './PublicProfileScreen';
 import Avatar from '../components/Avatar';
+import VerifiedBadge from '../components/ui/VerifiedBadge';
 
 type Row = {
   id: string; // the other user's id
@@ -59,7 +60,7 @@ export default function PeopleScreen({
     if (ids.length) {
       const { data: profs } = await supabase
         .from('profiles')
-        .select('id, username, avatar_url')
+        .select('id, username, avatar_url, verified')
         .in('id', ids)
         .limit(500);
       profMap = new Map(
@@ -131,9 +132,12 @@ export default function PeopleScreen({
           renderItem={({ item }) => (
             <View style={styles.row}>
               <Pressable style={styles.pressArea} onPress={() => setPublicProfile({ id: item.id, username: item.username })}>
-                <Avatar url={item.avatar_url} name={item.username} size={44} ring />
+                <Avatar url={item.avatar_url} name={item.username} size={44} ring verified={!!(item as any).verified} />
                 <View style={styles.info}>
-                  <Text style={styles.name}>@{item.username}</Text>
+                  <View style={styles.nameRow}>
+                    <Text style={styles.name}>@{item.username}</Text>
+                    {!!(item as any).verified && <VerifiedBadge size={12} style={styles.verifiedInline} />}
+                  </View>
                   {mutuals.has(item.id) && (
                     <View style={styles.mutualChip}>
                       <Text style={styles.mutualText}>Mutual</Text>
@@ -260,6 +264,8 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 12,
   },
+  nameRow: { flexDirection: "row", alignItems: "center" },
+  verifiedInline: { marginLeft: 4 },
   name: {
     color: colors.text,
     fontSize: 14,

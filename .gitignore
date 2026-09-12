@@ -15,10 +15,21 @@ expo-env.d.ts
 *.key
 *.mobileprovision
 
-# env
+# env — .env.example IS committed on purpose (placeholders only, never real keys)
 .env
 .env.local
 .env.*.local
+
+# stray dev artifacts: Metro bundle dumps inline every EXPO_PUBLIC_* value, so
+# they must never be committed
+scripts/bundle-check.js
+.verifiedfix.js
+
+# scratch/repro dirs and generated config dumps (the repro dirs are ~280MB)
+.repro*/
+config_check.json
+scripts/api-spec.json
+*.tgz
 
 # misc
 .DS_Store

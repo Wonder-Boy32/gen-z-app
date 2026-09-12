@@ -18,10 +18,13 @@ import LogoHeader from '../components/LogoHeader';
 import Button from '../components/Button';
 import Icon, { IconName } from '../components/ui/Icon';
 import Avatar from '../components/Avatar';
+import VerifiedBadge from '../components/ui/VerifiedBadge';
 import AvatarPickerModal from '../components/AvatarPickerModal';
 import PostViewer from '../components/PostViewer';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import PeopleScreen from './PeopleScreen';
 import SettingsScreen from './SettingsScreen';
+import ProfileViewersScreen, { PROFILE_VIEWS_SEEN_KEY } from './ProfileViewersScreen';
 import AnonymousSettingsModal from '../components/AnonymousSettingsModal';
 import AnonymousCardModal from '../components/AnonymousCardModal';
 
@@ -108,6 +111,8 @@ export default function ProfileScreen({
   const [anonSettingsOpen, setAnonSettingsOpen] = useState(false);
   const [anonCardOpen, setAnonCardOpen] = useState(false);
   const [peopleMode, setPeopleMode] = useState<'followers' | 'following' | null>(null);
+  const [viewersOpen, setViewersOpen] = useState(false);
+  const [unseenViews, setUnseenViews] = useState(0);
 
   const load = useCallback(async () => {
     const {
@@ -125,7 +130,7 @@ export default function ProfileScreen({
         supabase
           .from('posts')
           .select(
-            'id, user_id, media_url, media_type, media_items, cover_url, text_bg, text_color, caption, audio, sound, sound_url, sound_start, sound_end, effects, filters, text_layers, stickers, parent_drop_id, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region)'
+            'id, user_id, media_url, media_type, media_items, cover_url, text_bg, text_color, caption, audio, sound, sound_url, sound_start, sound_end, effects, filters, text_layers, stickers, parent_drop_id, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at, allow_likes, allow_comments, allow_shares, allow_reposts, allow_downloads, allow_mentions, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region, verified)'
           )
           .eq('user_id', user.id)
           .is('parent_drop_id', null) // reply-with-drop posts are comments, not grid content
@@ -133,14 +138,14 @@ export default function ProfileScreen({
         supabase
           .from('reposts')
           .select(
-            'post_id, post:posts!reposts_post_id_fkey(id, user_id, media_url, media_type, media_items, cover_url, text_bg, text_color, caption, audio, sound, sound_url, sound_start, sound_end, effects, filters, text_layers, stickers, parent_drop_id, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region))'
+            'post_id, post:posts!reposts_post_id_fkey(id, user_id, media_url, media_type, media_items, cover_url, text_bg, text_color, caption, audio, sound, sound_url, sound_start, sound_end, effects, filters, text_layers, stickers, parent_drop_id, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at, allow_likes, allow_comments, allow_shares, allow_reposts, allow_downloads, allow_mentions, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region, verified))'
           )
           .eq('user_id', user.id)
           .order('created_at', { ascending: false }),
         supabase
           .from('saved_posts')
           .select(
-            'post_id, post:posts!saved_posts_post_id_fkey(id, user_id, media_url, media_type, media_items, cover_url, text_bg, text_color, caption, audio, sound, sound_url, sound_start, sound_end, effects, filters, text_layers, stickers, parent_drop_id, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region))'
+            'post_id, post:posts!saved_posts_post_id_fkey(id, user_id, media_url, media_type, media_items, cover_url, text_bg, text_color, caption, audio, sound, sound_url, sound_start, sound_end, effects, filters, text_layers, stickers, parent_drop_id, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at, allow_likes, allow_comments, allow_shares, allow_reposts, allow_downloads, allow_mentions, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region, verified))'
           )
           .eq('user_id', user.id)
           .order('created_at', { ascending: false }),
@@ -155,13 +160,56 @@ export default function ProfileScreen({
     setSaved(((savedRows ?? []).map((s: any) => s.post).filter(Boolean)) as unknown as Post[]);
     setFollowing(fw.count ?? 0);
     setFollowers(fl.count ?? 0);
-    setTotalLikes(((myPosts ?? []) as unknown as Post[]).reduce((sum, p) => sum + (p.likes_count ?? 0), 0));
+    const activeSum = ((myPosts ?? []) as unknown as Post[]).reduce((sum, p) => sum + (p.likes_count ?? 0), 0);
+    // Lifetime Likes: active posts + likes banked from expired/deleted posts.
+    // The column may not exist yet (SQL not run) — treat that as 0, never
+    // let it break the whole profile load.
+    let lifetime = 0;
+    try {
+      const { data: ll } = await supabase
+        .from('profiles')
+        .select('lifetime_likes')
+        .eq('id', user.id)
+        .maybeSingle();
+      lifetime = (ll as any)?.lifetime_likes ?? 0;
+    } catch {
+      // column not added yet — active posts only
+    }
+    setTotalLikes(activeSum + lifetime);
     setLoading(false);
   }, []);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // Unseen profile views, for the badge on the eye icon. Best-effort: if
+  // supabase/profile_views.sql has not been run the RPC errors and the badge
+  // simply stays hidden — nothing else on this screen is affected.
+  const loadUnseenViews = useCallback(async () => {
+    try {
+      const seenAt = await AsyncStorage.getItem(PROFILE_VIEWS_SEEN_KEY);
+      const { data, error } = await supabase.rpc('my_profile_view_stats', { p_since: seenAt ?? null });
+      if (error) {
+        setUnseenViews(0);
+        return;
+      }
+      const row = Array.isArray(data) ? data[0] : data;
+      setUnseenViews(Number((row as { unseen?: number } | null)?.unseen ?? 0));
+    } catch {
+      setUnseenViews(0);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadUnseenViews();
+  }, [loadUnseenViews]);
+
+  const openViewers = () => {
+    // everything is about to be on screen, so drop the badge immediately
+    setUnseenViews(0);
+    setViewersOpen(true);
+  };
 
   // long-press a tile/card to delete your own post
   const confirmDelete = (p: Post) => {
@@ -204,6 +252,16 @@ export default function ProfileScreen({
 
   if (settingsOpen) return <SettingsScreen onBack={() => setSettingsOpen(false)} />;
   if (peopleMode) return <PeopleScreen mode={peopleMode} onBack={() => setPeopleMode(null)} />;
+  if (viewersOpen)
+    return (
+      <ProfileViewersScreen
+        onBack={() => {
+          setViewersOpen(false);
+          // the viewers screen stamps them as seen — re-check for anything new
+          loadUnseenViews();
+        }}
+      />
+    );
 
   return (
     <View style={styles.container}>
@@ -216,10 +274,22 @@ export default function ProfileScreen({
           ListHeaderComponent={
             <View style={styles.header}>
               <View style={styles.topRow}>
-                <View style={styles.topSpacer} />
+                <Pressable
+                  style={styles.settingsBtn}
+                  onPress={openViewers}
+                  hitSlop={8}
+                  accessibilityLabel="Who viewed my profile"
+                >
+                  <Icon name="eye-outline" size={18} color={unseenViews > 0 ? colors.accent : colors.textMuted} />
+                  {unseenViews > 0 && (
+                    <View style={styles.viewBadge}>
+                      <Text style={styles.viewBadgeText}>{unseenViews > 99 ? '99+' : unseenViews}</Text>
+                    </View>
+                  )}
+                </Pressable>
                 <LogoHeader compact />
                 <Pressable style={styles.settingsBtn} onPress={() => setSettingsOpen(true)} hitSlop={8}>
-                  <Text style={styles.settingsIcon}>⚙</Text>
+                  <Icon name="settings" size={17} color={colors.textMuted} />
                 </Pressable>
               </View>
 
@@ -229,16 +299,22 @@ export default function ProfileScreen({
                   name={profile?.display_name || profile?.username || 'G'}
                   size={94}
                   ring
+                  verified={!!profile?.verified}
                 />
               </Pressable>
 
               <View style={styles.nameRow}>
                 <Text style={styles.displayName}>{profile?.display_name || profile?.username || 'Gen Z user'}</Text>
-                {profile?.verified && <Text style={styles.verified}>✓</Text>}
+                {profile?.verified && <VerifiedBadge size={19} style={styles.verified} />}
               </View>
               <Text style={styles.username}>@{profile?.username ?? 'unknown'}</Text>
               {!!profile?.pronouns && <Text style={styles.meta}>{profile.pronouns}</Text>}
-              {!!profile?.location && <Text style={styles.meta}>📍 {profile.location}</Text>}
+              {!!profile?.location && (
+                <View style={styles.metaRow}>
+                  <Icon name="location" size={13} color={colors.textMuted} />
+                  <Text style={styles.metaLoc}>{profile.location}</Text>
+                </View>
+              )}
               {!!profile?.bio && <Text style={styles.bio}>{profile.bio}</Text>}
               <Text style={styles.joinDate}>
                 Joined {new Date(profile?.created_at ?? Date.now()).toLocaleDateString([], { month: 'long', year: 'numeric' })}
@@ -633,6 +709,25 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: 16,
   },
+  viewBadge: {
+    position: 'absolute',
+    top: -3,
+    right: -3,
+    minWidth: 17,
+    height: 17,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: colors.bg,
+  },
+  viewBadgeText: {
+    color: colors.bg,
+    fontSize: 9.5,
+    fontWeight: '800',
+  },
   avatarRing: {
     width: 100,
     height: 100,
@@ -673,20 +768,27 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   verified: {
-    color: colors.accent,
-    fontSize: 18,
     marginLeft: 6,
-    fontWeight: '700',
-  },
-  username: {
-    color: colors.textMuted,
-    fontSize: 13,
-    marginTop: 2,
   },
   meta: {
     color: colors.textMuted,
     fontSize: 12,
     marginTop: 4,
+  },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+    gap: 4,
+  },
+  metaLoc: {
+    color: colors.textMuted,
+    fontSize: 12,
+  },
+  username: {
+    color: colors.textMuted,
+    fontSize: 13,
+    marginTop: 2,
   },
   bio: {
     color: colors.textMuted,

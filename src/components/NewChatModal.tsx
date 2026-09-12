@@ -12,6 +12,7 @@ import {
 import { supabase } from '../supabase/client';
 import { colors, radius } from '../theme';
 import Avatar from './Avatar';
+import VerifiedBadge from './ui/VerifiedBadge';
 import Icon, { IconName } from './ui/Icon';
 
 type P = { id: string; username: string; avatar_url: string | null; last_seen_at: string | null };
@@ -40,7 +41,7 @@ export default function NewChatModal({ visible, onClose, onOpen }: Props) {
       const me = user?.id ?? null;
 
       const [profiles, follows, myFollows] = await Promise.all([
-        supabase.from('profiles').select('id, username, avatar_url, last_seen_at').limit(200),
+        supabase.from('profiles').select('id, username, avatar_url, last_seen_at, verified').limit(200),
         supabase.from('follows').select('follower_id, following_id').limit(1000),
         supabase.from('follows').select('following_id').eq('follower_id', me ?? '').limit(500),
       ]);
@@ -107,9 +108,12 @@ export default function NewChatModal({ visible, onClose, onOpen }: Props) {
 
   const renderRow = (p: P) => (
     <Pressable key={p.id} style={styles.row} onPress={() => onOpen(p.id)}>
-      <Avatar url={p.avatar_url} name={p.username} size={42} ring />
+      <Avatar url={p.avatar_url} name={p.username} size={42} ring verified={!!(p as any).verified} />
       <View style={styles.info}>
-        <Text style={styles.name}>@{p.username}</Text>
+        <View style={styles.nameRow}>
+          <Text style={styles.name}>@{p.username}</Text>
+          {!!(p as any).verified && <VerifiedBadge size={12} style={styles.verifiedInline} />}
+        </View>
         <Text style={[styles.status, statusOf(p) === 'Online now' && styles.statusOnline]}>
           {statusOf(p)}
         </Text>
@@ -263,6 +267,8 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 12,
   },
+  nameRow: { flexDirection: "row", alignItems: "center" },
+  verifiedInline: { marginLeft: 4 },
   name: {
     color: colors.text,
     fontSize: 14,

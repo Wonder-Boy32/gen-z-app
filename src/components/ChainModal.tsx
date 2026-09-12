@@ -13,6 +13,7 @@ import { useInsets } from '../utils/useInsets';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import Avatar from './Avatar';
+import VerifiedBadge from './ui/VerifiedBadge';
 import Icon from './ui/Icon';
 import { fmtCount } from './FeedPost';
 
@@ -58,7 +59,7 @@ export default function ChainModal({
     (async () => {
       const { data } = await supabase
         .from('posts')
-        .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url)')
+        .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url, verified)')
         .eq('parent_drop_id', root.id)
         .order('created_at', { ascending: false })
         .limit(100);
@@ -100,9 +101,12 @@ export default function ChainModal({
               renderItem={({ item }) => (
                 <View style={[styles.card, item.isRoot && styles.rootCard]}>
                   <View style={styles.cardHeader}>
-                    <Avatar url={item.profile?.avatar_url} name={item.profile?.username ?? 'G'} size={30} ring />
+                    <Avatar url={item.profile?.avatar_url} name={item.profile?.username ?? 'G'} size={30} ring verified={!!(item.profile as any)?.verified} />
                     <View style={styles.cardNameWrap}>
-                      <Text style={styles.cardName}>@{item.profile?.username ?? 'unknown'}</Text>
+                      <View style={styles.cardNameRow}>
+                        <Text style={styles.cardName}>@{item.profile?.username ?? 'unknown'}</Text>
+                        {!!(item.profile as any)?.verified && <VerifiedBadge size={12} glow={false} />}
+                      </View>
                       <Text style={styles.cardTime}>{timeLeft(item.expires_at)}</Text>
                     </View>
                     {!item.isRoot && (
@@ -221,6 +225,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+  cardNameRow: { flexDirection: "row", alignItems: "center" },
   cardNameWrap: {
     flex: 1,
     marginLeft: 8,

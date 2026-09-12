@@ -17,6 +17,7 @@ import { notifyUser } from '../utils/notify';
 import { TOP_INSET } from '../utils/useInsets';
 import Button from '../components/Button';
 import Avatar from '../components/Avatar';
+import VerifiedBadge from '../components/ui/VerifiedBadge';
 import PostViewer from '../components/PostViewer';
 import ChatThread from './ChatThread';
 import AnonymousSendScreen from './AnonymousSendScreen';
@@ -67,6 +68,14 @@ type Post = {
 type Filter = 'all' | 'video' | 'text';
 
 const fmtCount = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
+
+// Profile views ("who viewed my profile"). Recording is best-effort: if
+// supabase/profile_views.sql has not been run yet the RPC does not exist, so
+// we stop trying for the rest of the session instead of throwing on every
+// profile open. One record per profile per app session - a remount is not a
+// second visit.
+let profileViewsMissing = false;
+const profileViewsRecorded = new Set<string>();
 
 export default function PublicProfileScreen({
   userId,
@@ -140,20 +149,54 @@ export default function PublicProfileScreen({
     const { data: postRows } = await supabase
       .from('posts')
       .select(
-        'id, user_id, media_url, media_type, media_items, cover_url, text_bg, text_color, caption, audio, sound, sound_url, sound_start, sound_end, effects, filters, text_layers, stickers, parent_drop_id, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region)'
+        'id, user_id, media_url, media_type, media_items, cover_url, text_bg, text_color, caption, audio, sound, sound_url, sound_start, sound_end, effects, filters, text_layers, stickers, parent_drop_id, content, drop_id, views_count, likes_count, comments_count, expires_at, created_at, allow_likes, allow_comments, allow_shares, allow_reposts, allow_downloads, allow_mentions, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region, verified)'
       )
       .eq('user_id', userId)
       .is('parent_drop_id', null)
       .order('created_at', { ascending: false });
     const active = ((postRows ?? []) as Post[]).filter((p) => new Date(p.expires_at) > new Date());
     setPosts(active);
-    setTotalLikes(active.reduce((s, p) => s + (p.likes_count ?? 0), 0));
+    const activeSum = active.reduce((s, p) => s + (p.likes_count ?? 0), 0);
+    // Lifetime Likes: active posts + likes banked from expired/deleted posts.
+    // The column may not exist yet (SQL not run) — treat that as 0, never
+    // let it break the whole profile load.
+    let lifetime = 0;
+    try {
+      const { data: ll } = await supabase
+        .from('profiles')
+        .select('lifetime_likes')
+        .eq('id', userId)
+        .maybeSingle();
+      lifetime = (ll as any)?.lifetime_likes ?? 0;
+    } catch {
+      // column not added yet — active posts only
+    }
+    setTotalLikes(activeSum + lifetime);
     setLoading(false);
   }, [userId]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // Count this visit for the profile owner. Deliberately fire-and-forget so it
+  // can never delay or break the screen, and the RPC also refuses self-views.
+  useEffect(() => {
+    if (profileViewsMissing || !userId || profileViewsRecorded.has(userId)) return;
+    profileViewsRecorded.add(userId);
+    (async () => {
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (!user || user.id === userId) return;
+        const { error } = await supabase.rpc('record_profile_view', { p_profile: userId });
+        if (error) profileViewsMissing = true;
+      } catch {
+        profileViewsMissing = true;
+      }
+    })();
+  }, [userId]);
 
   const toggleFollow = async () => {
     const me = myIdRef.current;
@@ -299,19 +342,15 @@ export default function PublicProfileScreen({
                       name={profile?.display_name || profile?.username || username || 'G'}
                       size={88}
                       ring
+                      verified={!!profile?.verified}
                     />
-                    {profile?.verified && (
-                      <View style={styles.verifiedBadge}>
-                        <Icon name="checkmark" size={10} color={colors.bg} />
-                      </View>
-                    )}
                   </View>
 
                   <View style={styles.nameRow}>
                     <Text style={styles.displayName} numberOfLines={1}>
                       {profile?.display_name || profile?.username || username || 'Gen Z user'}
                     </Text>
-                    {profile?.verified && <Icon name="checkmark-circle" size={17} color={colors.accent} />}
+                    {profile?.verified && <VerifiedBadge size={18} style={styles.verifiedInline} />}
                   </View>
                   <Text style={styles.username}>@{profile?.username ?? username}</Text>
 
@@ -417,7 +456,15 @@ export default function PublicProfileScreen({
             renderItem={({ item, index: i }) => (
               <Pressable style={styles.tile} onPress={() => setViewer(i)}>
                 {item.media_url ? (
-                  <Image source={{ uri: item.media_url }} style={styles.tileImage} />
+                  item.media_type === 'video' && !item.cover_url ? (
+                    <View style={styles.tileImage} />
+                  ) : (
+                    <Image
+                      source={{ uri: item.media_type === 'video' ? item.cover_url! : item.media_url }}
+                      style={styles.tileImage}
+                      resizeMode="cover"
+                    />
+                  )
                 ) : (
                   <View style={[styles.tileImage, styles.tileTextBg]}>
                     <Text style={styles.tileText} numberOfLines={3}>{item.content}</Text>
@@ -535,6 +582,9 @@ const styles = StyleSheet.create({
     gap: 6,
     marginTop: 12,
     maxWidth: '90%',
+  },
+  verifiedInline: {
+    marginLeft: 6,
   },
   displayName: {
     color: colors.text,

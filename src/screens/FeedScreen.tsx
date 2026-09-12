@@ -20,11 +20,13 @@ import LogoHeader from '../components/LogoHeader';
 import { TOP_INSET, useInsets } from '../utils/useInsets';
 import DropCountdown from '../components/DropCountdown';
 import Icon, { IconName } from '../components/ui/Icon';
+import VerifiedBadge from '../components/ui/VerifiedBadge';
+import Avatar from '../components/Avatar';
 import FeedPost, { setFeedUserId } from '../components/FeedPost';
 import CommentsModal from '../components/CommentsModal';
 import ChainModal from '../components/ChainModal';
 import SoundPage from '../components/SoundPage';
-import NotificationsModal from '../components/NotificationsModal';
+import ActivityScreen from './ActivityScreen';
 import { notifyUser } from '../utils/notify';
 import DropExperienceScreen from './DropExperienceScreen';
 import PublicProfileScreen from './PublicProfileScreen';
@@ -44,6 +46,7 @@ type StoryUser = {
   username: string;
   avatar_url: string | null;
   following: boolean;
+  verified?: boolean;
 };
 
 type FeedPostRow = {
@@ -141,12 +144,17 @@ export default function FeedScreen({
   initialUserMode = null,
   initialAudioMode = null,
   initialHashtagMode = null,
+  focused = true,
+  openActivitySignal = 0,
 }: {
   onJoinDrop?: () => void;
   onCreateIntent?: (intent: { sound?: string; replyTo?: string }) => void;
   initialUserMode?: string | null;
   initialAudioMode?: string | null;
   initialHashtagMode?: string | null;
+  focused?: boolean;
+  /** bumped by a system-notification tap to surface the Activity screen */
+  openActivitySignal?: number;
 }) {
   const { height } = useWindowDimensions();
   const insets = useInsets();
@@ -159,6 +167,8 @@ export default function FeedScreen({
   const [refreshing, setRefreshing] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [commentPost, setCommentPost] = useState<FeedPostFull | null>(null);
+  // a drop opened from the Activity screen (only needs id + owner for CommentsModal)
+  const [activityPost, setActivityPost] = useState<{ id: string; user_id?: string } | null>(null);
   const [chainRoot, setChainRoot] = useState<FeedPostFull | null>(null);
   const [soundName, setSoundName] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<StoryUser[]>([]);
@@ -212,6 +222,22 @@ export default function FeedScreen({
   useEffect(() => {
     loadUnread();
   }, [loadUnread]);
+
+  // a tap on a real notification asks the feed to surface Activity
+  useEffect(() => {
+    if (openActivitySignal > 0) setNotifOpen(true);
+  }, [openActivitySignal]);
+
+  // tapping a row inside Activity leaves Activity and opens that drop's comments
+  const openPostFromActivity = useCallback(async (postId: string) => {
+    const { data } = await supabase.from('posts').select('id, user_id').eq('id', postId).maybeSingle();
+    const row = data as { id: string; user_id: string } | null;
+    // the drop may already be gone (48h expiry) - if so stay on Activity rather
+    // than closing it and opening nothing
+    if (!row) return;
+    setNotifOpen(false);
+    setActivityPost({ id: row.id, user_id: row.user_id });
+  }, []);
   const watchRef = useRef<Map<string, { start: number; reported: boolean }>>(new Map());
 
   // banner entrance + live halo animations
@@ -270,7 +296,7 @@ export default function FeedScreen({
       pulseMap: Map<string, Pulse>,
       tagMap: Map<string, Set<string>>,
       notInterested: Set<string>,
-      opts: { sort?: 'recommended' | 'fresh'; liveSection?: LiveSection } = {}
+      opts: { sort?: 'recommended' | 'fresh'; liveSection?: LiveSection; noCap?: boolean } = {}
     ) => {
       const now = Date.now();
       const velocityOf = (p: Pulse) => p.views30 * 0.7 + p.likes30 * 2.2 + p.comments30 * 3.2;
@@ -334,9 +360,17 @@ export default function FeedScreen({
         m === 'expiring' ? new Date(a.r.expires_at).getTime() - new Date(b.r.expires_at).getTime() : b.score - a.score
       );
 
-      // creator diversity — cap repeats per creator (your own posts never capped)
+      // creator diversity — cap repeats per creator (your own posts never
+      // capped). The cap adapts to the pool: with few active creators (e.g.
+      // testing) it relaxes so the feed fills up; with many creators it keeps
+      // variety. Filtered views (one user/sound/tag) skip the cap entirely.
       const perCreator = new Map<string, number>();
-      const cap = m === 'live' ? 2 : 3;
+      const distinctCreators = new Set(scored.map((x) => x.r.user_id)).size;
+      const cap = m === 'live'
+        ? 2
+        : opts.noCap
+          ? Infinity
+          : Math.max(3, Math.min(8, Math.ceil(40 / Math.max(1, distinctCreators))));
       const out: FeedPostFull[] = [];
       for (const { r, pulse } of scored) {
         const mine = r.user_id === myIdRef.current;
@@ -364,7 +398,7 @@ export default function FeedScreen({
     const followed = new Set((fws.data ?? []).map((x) => x.following_id));
     const { data: profs } = await supabase
       .from('profiles')
-      .select('id, username, avatar_url')
+      .select('id, username, avatar_url, verified')
       .neq('id', me ?? '')
       .order('created_at', { ascending: false })
       .limit(12);
@@ -418,7 +452,7 @@ export default function FeedScreen({
     let aroundRegion: string | null = null;
     let query = supabase
       .from('posts')
-      .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region)')
+      .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region, verified)')
       .is('parent_drop_id', null) // reply-with-drop posts live in comments, not the feed
       .order('created_at', { ascending: false })
       .limit(90);
@@ -462,7 +496,7 @@ export default function FeedScreen({
       const soon = new Date(Date.now() + 6 * H).toISOString();
       query = supabase
         .from('posts')
-        .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region)')
+        .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region, verified)')
         .is('parent_drop_id', null)
         .gte('expires_at', nowIso)
         .lte('expires_at', soon)
@@ -647,6 +681,9 @@ export default function FeedScreen({
     let ranked = rankRows(enriched, mode, pulseMap, tagMap, notInterested, {
       sort: feedPrefs.sort,
       liveSection,
+      // filtered views (one user / sound / tag / drop) are "show me these" —
+      // the creator-diversity cap would wrongly cut them down
+      noCap: !!(userMode || audioMode || hashtagMode || dropMode),
     });
     // For You: never repeat a post you've already watched this session
     // (fall back to repeats only when the fresh pool would be too thin)
@@ -656,10 +693,15 @@ export default function FeedScreen({
     }
     setPosts(ranked);
 
+    // FEED CONTENT IS READY — render immediately. Stories, chip badges and
+    // the active-drop banner stream in below without gating the UI, so the
+    // feed feels instant after login instead of waiting on every query.
+    setLoading(false);
+
     if (!userMode && !dropMode && !audioMode && !hashtagMode && mode === 'foryou') {
       const { data: storyData } = await supabase
         .from('posts')
-        .select('user_id, profile:profiles!posts_user_id_fkey(id, username, avatar_url)')
+        .select('user_id, profile:profiles!posts_user_id_fkey(id, username, avatar_url, verified)')
         .order('created_at', { ascending: false })
         .limit(40);
       const seen = new Set<string>();
@@ -673,18 +715,20 @@ export default function FeedScreen({
           username: p.username,
           avatar_url: p.avatar_url,
           following: following.has(p.id),
+          verified: p.verified ?? false,
         });
       });
       setStoryUsers(users.slice(0, 12));
     }
 
-    if (!posts.length) loadSuggestions(user?.id ?? null);
+    if (!ranked.length) loadSuggestions(user?.id ?? null);
 
     // chip badges: LIVE dot (final 10 min) + EXPIRING count (next 6 hours)
+    // + active drop banner — all independent, fetched concurrently.
     const nowIso = new Date().toISOString();
     const liveIso = new Date(Date.now() + 10 * 60000).toISOString();
     const expIso = new Date(Date.now() + 6 * 3600000).toISOString();
-    const [{ count: liveC }, { count: expC }, { count: activeC }] = await Promise.all([
+    const [{ count: liveC }, { count: expC }, { count: activeC }, { data: dropData }] = await Promise.all([
       supabase
         .from('posts')
         .select('id', { count: 'exact', head: true })
@@ -702,20 +746,17 @@ export default function FeedScreen({
         .select('id', { count: 'exact', head: true })
         .is('parent_drop_id', null)
         .gt('expires_at', nowIso),
+      supabase
+        .from('drops')
+        .select('*')
+        .in('status', ['live', 'voting'])
+        .order('starts_at', { ascending: false })
+        .limit(1),
     ]);
     setLiveCount(liveC ?? 0);
     setExpiringCount(expC ?? 0);
     setActiveCount(activeC ?? 0);
-
-    const { data: dropData } = await supabase
-      .from('drops')
-      .select('*')
-      .in('status', ['live', 'voting'])
-      .order('starts_at', { ascending: false })
-      .limit(1);
     setActiveDrop((dropData?.[0] as Drop) ?? null);
-
-    setLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, dropMode, userMode, audioMode, hashtagMode, feedPrefs, liveSection, expFilter, aroundScope, rankRows, loadSuggestions]);
 
@@ -980,10 +1021,15 @@ export default function FeedScreen({
   const bannerTop = hasSubRows ? safeTop + 192 : safeTop + 134;
   const feedBottom = insets.bottom > 0 ? 60 + insets.bottom : 76;
 
+  // keep-alive: when the tab is hidden (focused=false) no video stays active,
+  // so playback pauses instead of playing in the background
+  const effectiveIndex = focused ? activeIndex : -1;
+
   const renderItem = ({ item, index }: { item: FeedPostFull; index: number }) => (
     <FeedPost
       post={item}
-      isActive={index === activeIndex}
+      isActive={index === effectiveIndex}
+      preload={index === effectiveIndex + 1}
       height={height}
       contentTop={feedTop}
       contentBottom={feedBottom}
@@ -1033,6 +1079,21 @@ export default function FeedScreen({
         : 'Edit your profile → Region (e.g. Nigeria) to unlock 📍 Around You. Only the region you choose is shown — never an exact location.',
     },
   }[mode];
+
+  // Real screen, not a sheet: Activity takes over the feed the way the profile
+  // page takes over for Settings.
+  if (notifOpen) {
+    return (
+      <ActivityScreen
+        onBack={() => {
+          setNotifOpen(false);
+          loadUnread();
+        }}
+        onChanged={loadUnread}
+        onOpenPost={openPostFromActivity}
+      />
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -1231,19 +1292,14 @@ export default function FeedScreen({
             renderItem={({ item }) => (
               <Pressable style={styles.storyItem} onPress={() => setUserMode(item.id)}>
                 <View style={[styles.storyRing, item.following && styles.storyRingFollowed]}>
-                  {item.avatar_url ? (
-                    <Image source={{ uri: item.avatar_url }} style={styles.storyAvatar} />
-                  ) : (
-                    <View style={styles.storyAvatarPlaceholder}>
-                      <Text style={styles.storyAvatarLetter}>
-                        {item.username.charAt(0).toUpperCase()}
-                      </Text>
-                    </View>
-                  )}
+                  <Avatar url={item.avatar_url} name={item.username} size={48} verified={!!item.verified} />
                 </View>
-                <Text style={styles.storyName} numberOfLines={1}>
-                  {item.username}
-                </Text>
+                <View style={styles.storyNameRow}>
+                  <Text style={styles.storyName} numberOfLines={1}>
+                    {item.username}
+                  </Text>
+                  {!!item.verified && <VerifiedBadge size={9} glow={false} />}
+                </View>
               </Pressable>
             )}
           />
@@ -1405,9 +1461,12 @@ export default function FeedScreen({
                             <Text style={styles.suggestLetter}>{item.username.charAt(0).toUpperCase()}</Text>
                           </View>
                         )}
-                        <Text style={styles.suggestName} numberOfLines={1}>
-                          @{item.username}
-                        </Text>
+                        <View style={styles.suggestNameRow}>
+                          <Text style={styles.suggestName} numberOfLines={1}>
+                            @{item.username}
+                          </Text>
+                          {!!(item as any).verified && <VerifiedBadge size={11} glow={false} />}
+                        </View>
                         <Pressable
                           style={[styles.suggestBtn, item.following && styles.suggestBtnFollowing]}
                           onPress={() => {
@@ -1451,6 +1510,17 @@ export default function FeedScreen({
         onReplyWithDrop={() => {
           if (commentPost) onCreateIntent?.({ replyTo: commentPost.id });
           setCommentPost(null);
+        }}
+      />
+
+      {/* opened from Activity: a notification pointing at a drop's comments */}
+      <CommentsModal
+        post={activityPost}
+        onClose={() => setActivityPost(null)}
+        onPosted={() => {
+          setPosts((prev) =>
+            prev.map((p) => (p.id === activityPost?.id ? { ...p, comments_count: p.comments_count + 1 } : p))
+          );
         }}
       />
 
@@ -1520,14 +1590,6 @@ export default function FeedScreen({
         }}
       />
 
-      <NotificationsModal
-        visible={notifOpen}
-        onClose={() => {
-          setNotifOpen(false);
-          loadUnread();
-        }}
-        onChanged={loadUnread}
-      />
     </View>
   );
 }
@@ -2024,7 +2086,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   storyAvatarLetter: { color: colors.accent, fontSize: 20, fontWeight: '800' },
-  storyName: { color: colors.textMuted, fontSize: 10, marginTop: 5 },
+  storyNameRow: { flexDirection: 'row', alignItems: 'center', marginTop: 5, justifyContent: 'center' },
+  storyName: { color: colors.textMuted, fontSize: 10 },
   dropBanner: {
     position: 'absolute',
     left: 0,
@@ -2136,7 +2199,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   suggestLetter: { color: colors.accent, fontSize: 22, fontWeight: '800' },
-  suggestName: { color: colors.text, fontSize: 12, marginTop: 8, fontWeight: '600' },
+  suggestNameRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8, justifyContent: 'center' },
+  suggestName: { color: colors.text, fontSize: 12, fontWeight: '600' },
   suggestBtn: {
     marginTop: 10,
     flexDirection: 'row',

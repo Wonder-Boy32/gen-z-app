@@ -13,14 +13,14 @@ create policy "conversations_insert" on public.conversations
 
 -- A participant may add another participant to their own conversation
 -- (replaces the old "only yourself" policy from schema.sql).
+-- Uses my_conversation_ids() helper (SECURITY DEFINER) so the
+-- policy does NOT recurse into itself.
+create or replace function public.my_conversation_ids()
+returns setof uuid language sql stable security definer set search_path = public
+as $$ select cp.conversation_id from public.conversation_participants cp
+      where cp.user_id = auth.uid(); $$;
+revoke all on function public.my_conversation_ids() from public, anon;
+grant execute on function public.my_conversation_ids() to authenticated;
+
 drop policy if exists "participants_insert" on public.conversation_participants;
-create policy "participants_insert" on public.conversation_participants
-  for insert
-  with check (
-    user_id = auth.uid()
-    or exists (
-      select 1 from public.conversation_participants cp
-      where cp.conversation_id = conversation_id
-        and cp.user_id = auth.uid()
-    )
-  );
+create policy "participants_insert" on public.conversation_participants for insert to authenticated with check (user_id = auth.uid() or conversation_id in (select public.my_conversation_ids()));

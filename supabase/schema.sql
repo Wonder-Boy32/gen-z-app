@@ -268,21 +268,21 @@ create policy "conversations_select" on public.conversations for select
     where cp.conversation_id = id and cp.user_id = auth.uid()
   ));
 drop policy if exists "conversations_insert" on public.conversations;
-create policy "conversations_insert" on public.conversations for insert
-  with check (exists (
-    select 1 from public.conversation_participants cp
-    where cp.conversation_id = id and cp.user_id = auth.uid()
-  ));
+create policy "conversations_insert" on public.conversations for insert to authenticated with check (true);
+
+-- participants (helper resolves "my conversations" without RLS
+-- recursion — see chat_recursion_fix.sql)
+create or replace function public.my_conversation_ids()
+returns setof uuid language sql stable security definer set search_path = public
+as $$ select cp.conversation_id from public.conversation_participants cp
+      where cp.user_id = auth.uid(); $$;
+revoke all on function public.my_conversation_ids() from public, anon;
+grant execute on function public.my_conversation_ids() to authenticated;
 
 drop policy if exists "participants_select" on public.conversation_participants;
-create policy "participants_select" on public.conversation_participants for select
-  using (user_id = auth.uid() or exists (
-    select 1 from public.conversation_participants cp
-    where cp.conversation_id = conversation_id and cp.user_id = auth.uid()
-  ));
+create policy "participants_select" on public.conversation_participants for select using (user_id = auth.uid() or conversation_id in (select public.my_conversation_ids()));
 drop policy if exists "participants_insert" on public.conversation_participants;
-create policy "participants_insert" on public.conversation_participants for insert
-  with check (user_id = auth.uid());
+create policy "participants_insert" on public.conversation_participants for insert with check (user_id = auth.uid() or conversation_id in (select public.my_conversation_ids()));
 
 -- messages: participants can read; sender writes
 drop policy if exists "messages_select" on public.messages;

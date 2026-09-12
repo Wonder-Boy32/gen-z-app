@@ -16,16 +16,16 @@ import AnonymousInboxScreen from './AnonymousInboxScreen';
 import { colors, radius } from '../theme';
 import Icon from '../components/ui/Icon';
 import { TOP_INSET } from '../utils/useInsets';
-import LogoHeader from '../components/LogoHeader';
 import Button from '../components/Button';
 import NewChatModal from '../components/NewChatModal';
 import Avatar from '../components/Avatar';
+import VerifiedBadge from '../components/ui/VerifiedBadge';
 
 type Conv = {
   id: string;
   type: string;
   name: string | null;
-  other: { id: string; username: string; avatar_url: string | null; last_seen_at: string | null } | null;
+  other: { id: string; username: string; avatar_url: string | null; last_seen_at: string | null; verified?: boolean } | null;
   lastMessage: string | null;
   lastType: string;
   lastTime: string | null;
@@ -33,11 +33,13 @@ type Conv = {
   members: number;
 };
 
-type ActiveUser = { id: string; username: string; avatar_url: string | null; following: boolean };
+type ActiveUser = { id: string; username: string; avatar_url: string | null; following: boolean; verified?: boolean };
 
-const FILTERS: { key: 'all' | 'unread' | 'requests' | 'drops'; label: string }[] = [
+const FILTERS: { key: 'all' | 'unread' | 'favorites' | 'groups' | 'requests' | 'drops'; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'unread', label: 'Unread' },
+  { key: 'favorites', label: 'Favorites' },
+  { key: 'groups', label: 'Groups' },
   { key: 'requests', label: 'Requests' },
   { key: 'drops', label: 'Drops' },
 ];
@@ -46,10 +48,12 @@ export default function ChatsScreen({
   onOpenUser,
   onOpenCreate,
   onPostToFeed,
+  onUnreadChange,
 }: {
   onOpenUser?: (userId: string) => void;
   onOpenCreate?: () => void;
   onPostToFeed?: (uri: string) => void;
+  onUnreadChange?: (total: number) => void;
 }) {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [anonOpen, setAnonOpen] = useState(false);
@@ -71,6 +75,8 @@ export default function ChatsScreen({
       onOpen={setConversationId}
       onOpenUser={onOpenUser}
       onOpenAnon={() => setAnonOpen(true)}
+      onOpenCreate={onOpenCreate}
+      onUnreadChange={onUnreadChange}
     />
   );
 }
@@ -79,21 +85,44 @@ function ConversationList({
   onOpen,
   onOpenUser,
   onOpenAnon,
+  onOpenCreate,
+  onUnreadChange,
 }: {
   onOpen: (id: string) => void;
   onOpenUser?: (userId: string) => void;
   onOpenAnon: () => void;
+  onOpenCreate?: () => void;
+  onUnreadChange?: (total: number) => void;
 }) {
   const [convs, setConvs] = useState<Conv[]>([]);
   const [loading, setLoading] = useState(true);
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [groupModal, setGroupModal] = useState(false);
-  const [filter, setFilter] = useState<'all' | 'unread' | 'requests' | 'drops'>('all');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [filter, setFilter] = useState<'all' | 'unread' | 'favorites' | 'groups' | 'requests' | 'drops'>('all');
   const [search, setSearch] = useState('');
-  const [searchOpen, setSearchOpen] = useState(false);
   const [activeUsers, setActiveUsers] = useState<ActiveUser[]>([]);
   const followingRef = useRef<Set<string>>(new Set());
   const myIdRef = useRef<string | null>(null);
+  const [anonUnread, setAnonUnread] = useState(0);
+
+  // unread anonymous messages (read_at null, not expired) — badge on the inbox card
+  const loadAnonUnread = useCallback(async () => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      setAnonUnread(0);
+      return;
+    }
+    const { count } = await supabase
+      .from('anonymous_messages_public')
+      .select('id', { count: 'exact', head: true })
+      .eq('recipient_id', user.id)
+      .is('read_at', null)
+      .or(`expires_at.is.null,expires_at.gt."${new Date().toISOString()}"`);
+    setAnonUnread(count ?? 0);
+  }, []);
 
   const load = useCallback(async () => {
     const {
@@ -122,19 +151,19 @@ function ConversationList({
     const [{ data: others }, { data: msgs }, { data: fws }, { data: activePosts }] = await Promise.all([
       supabase
         .from('conversation_participants')
-        .select('conversation_id, user_id, profile:profiles(username, avatar_url, last_seen_at)')
+        .select('conversation_id, user_id, profile:profiles(username, avatar_url, last_seen_at, verified)')
         .in('conversation_id', ids)
         .neq('user_id', me),
       supabase
         .from('messages')
-        .select('conversation_id, content, msg_type, created_at')
+        .select('conversation_id, sender_id, content, msg_type, created_at')
         .in('conversation_id', ids)
         .order('created_at', { ascending: false })
         .limit(500),
       supabase.from('follows').select('following_id').eq('follower_id', me).eq('status', 'accepted'),
       supabase
         .from('posts')
-        .select('user_id, profile:profiles!posts_user_id_fkey(id, username, avatar_url)')
+        .select('user_id, profile:profiles!posts_user_id_fkey(id, username, avatar_url, verified)')
         .gt('expires_at', new Date().toISOString())
         .is('parent_drop_id', null)
         .order('created_at', { ascending: false })
@@ -153,6 +182,7 @@ function ConversationList({
         username: p.profile?.username ?? 'unknown',
         avatar_url: p.profile?.avatar_url ?? null,
         following: followingRef.current.has(p.user_id),
+        verified: p.profile?.verified ?? false,
       });
     });
     setActiveUsers(droppers.slice(0, 12));
@@ -162,7 +192,7 @@ function ConversationList({
       memberCount.set(o.conversation_id, (memberCount.get(o.conversation_id) ?? 0) + 1);
     });
 
-    const otherByConv = new Map<string, { id: string; username: string; avatar_url: string | null; last_seen_at: string | null }>();
+    const otherByConv = new Map<string, { id: string; username: string; avatar_url: string | null; last_seen_at: string | null; verified?: boolean }>();
     (others ?? []).forEach((o: any) => {
       if (!otherByConv.has(o.conversation_id)) {
         otherByConv.set(o.conversation_id, {
@@ -170,6 +200,7 @@ function ConversationList({
           username: o.profile?.username ?? 'unknown',
           avatar_url: o.profile?.avatar_url ?? null,
           last_seen_at: o.profile?.last_seen_at ?? null,
+          verified: o.profile?.verified ?? false,
         });
       }
     });
@@ -181,7 +212,8 @@ function ConversationList({
     const unreadByConv = new Map<string, number>();
     (msgs ?? []).forEach((m: any) => {
       if (!lastByConv.has(m.conversation_id)) lastByConv.set(m.conversation_id, m);
-      if (new Date(m.created_at).getTime() > (readAt.get(m.conversation_id) ?? 0)) {
+      // only messages from OTHERS count as unread — your own sends never flag yourself
+      if (m.sender_id !== me && new Date(m.created_at).getTime() > (readAt.get(m.conversation_id) ?? 0)) {
         unreadByConv.set(m.conversation_id, (unreadByConv.get(m.conversation_id) ?? 0) + 1);
       }
     });
@@ -210,6 +242,13 @@ function ConversationList({
     load();
   }, [load]);
 
+  // report the TOTAL unread (chat messages + anonymous) up to the tab bar —
+  // same data the per-chat badges use, so the nav badge can never disagree.
+  useEffect(() => {
+    const total = convs.reduce((sum, c) => sum + (c.unread || 0), 0) + (anonUnread || 0);
+    onUnreadChange?.(total);
+  }, [convs, anonUnread, onUnreadChange]);
+
   // live updates
   useEffect(() => {
     const channel = supabase
@@ -222,65 +261,87 @@ function ConversationList({
     };
   }, [load]);
 
+  // anonymous inbox badge: initial count + live refresh when a new
+  // anonymous message arrives (watches notifications — never the base
+  // table, whose payload would leak sender_id).
+  useEffect(() => {
+    let channel: any = null;
+    let cancelled = false;
+    (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user || cancelled) return;
+      loadAnonUnread();
+      // unique per-user name + remove any stale instance: if a previous mount
+      // leaked a channel (async cleanup race), reuse-by-topic would return the
+      // subscribed instance and .on() would throw.
+      const name = `chats:anon-badge:${user.id}`;
+      supabase
+        .getChannels()
+        .filter((c) => c.topic === `realtime:${name}`)
+        .forEach((c) => supabase.removeChannel(c));
+      channel = supabase
+        .channel(name)
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` },
+          () => loadAnonUnread()
+        )
+        .subscribe();
+    })();
+    return () => {
+      cancelled = true;
+      if (channel) supabase.removeChannel(channel);
+    };
+  }, [loadAnonUnread]);
+
   const openOrCreate = async (otherId: string) => {
-    const me = myIdRef.current;
-    if (!me || me === otherId) return;
-
-    const { data: mine } = await supabase
-      .from('conversation_participants')
-      .select('conversation_id')
-      .eq('user_id', me);
-    const ids = (mine ?? []).map((p) => p.conversation_id);
-
-    if (ids.length) {
-      const { data: existing } = await supabase
-        .from('conversation_participants')
-        .select('conversation_id')
-        .in('conversation_id', ids)
-        .eq('user_id', otherId);
-      if (existing?.length) {
-        onOpen(existing[0].conversation_id);
-        setNewChatOpen(false);
-        return;
-      }
-    }
-
-    const { data: conv, error: convErr } = await supabase
-      .from('conversations')
-      .insert({ type: 'direct' })
-      .select('id')
-      .single();
-    if (!conv) {
-      console.warn('conversation create failed', convErr?.message);
+    // Re-validate the session server-side: an expired/dead token would make
+    // the insert run as anon -> cryptic RLS violation instead of a clean result.
+    const { data: { user }, error: authErr } = await supabase.auth.getUser();
+    const me = user?.id ?? null;
+    if (!me) {
+      console.warn('[chat] no valid session at create time', authErr?.message ?? 'no user');
       return;
     }
-    const { error: p1 } = await supabase.from('conversation_participants').insert({ conversation_id: conv.id, user_id: me });
-    const { error: p2 } = await supabase.from('conversation_participants').insert({ conversation_id: conv.id, user_id: otherId });
-    if (p1 || p2) console.warn('participant insert failed', p1?.message ?? p2?.message);
+    if (me === otherId) return;
 
-    onOpen(conv.id);
+    // Atomic find-or-create via SECURITY DEFINER RPC (bypasses RLS on the
+    // conversations/participants tables, so policy state can't break chat).
+    const { data: convId, error: convErr } = await supabase.rpc('create_direct_conversation', { p_other: otherId });
+    if (convErr || !convId) {
+      console.warn('conversation create failed', convErr?.message, convErr?.code, 'uid:', me);
+      return;
+    }
+
+    onOpen(convId);
     setNewChatOpen(false);
   };
 
   const createGroup = async (name: string, memberIds: string[]) => {
     const me = myIdRef.current;
     if (!me || !name.trim() || !memberIds.length) return;
-    const { data: conv } = await supabase
-      .from('conversations')
-      .insert({ type: 'group', name: name.trim(), created_by: me })
-      .select('id')
-      .single();
-    if (!conv) return;
-    await supabase.from('conversation_participants').insert({ conversation_id: conv.id, user_id: me });
-    for (const uid of memberIds) {
-      await supabase.from('conversation_participants').insert({ conversation_id: conv.id, user_id: uid });
+    // SECURITY DEFINER RPC — client-side inserts into conversations fail RLS
+    // (the same bug direct chats had). One atomic call, creator + members.
+    const { data: convId, error } = await supabase.rpc('create_group_conversation', {
+      p_name: name.trim(),
+      p_members: memberIds,
+    });
+    if (error || !convId) {
+      console.warn('group create failed', error?.message, error?.code, 'uid:', me);
+      return;
     }
     setGroupModal(false);
-    onOpen(conv.id);
+    onOpen(convId);
   };
+
+  const unreadTotal = convs.reduce((sum, c) => sum + (c.unread || 0), 0);
 
   const shown = convs.filter((c) => {
     if (filter === 'unread' && c.unread === 0) return false;
+    if (filter === 'favorites' && !(c.type === 'direct' && c.other && followingRef.current.has(c.other.id))) return false;
+    if (filter === 'groups' && c.type !== 'group') return false;
     if (filter === 'requests' && !(c.type === 'direct' && c.other && !followingRef.current.has(c.other.id) && c.unread > 0))
       return false;
     if (filter === 'drops' && c.lastType !== 'drop') return false;
@@ -295,43 +356,53 @@ function ConversationList({
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <LogoHeader />
-        <Pressable style={styles.headerIconBtn} onPress={() => setSearchOpen((v) => !v)} hitSlop={6}>
-          <Icon name="search" size={18} color={colors.text} />
-        </Pressable>
-        <Pressable style={styles.headerIconBtn} onPress={() => setNewChatOpen(true)} hitSlop={6}>
-          <Icon name="add" size={19} color={colors.accent} />
-        </Pressable>
-        <Pressable style={styles.headerIconBtn} onPress={() => setGroupModal(true)} hitSlop={6}>
-          <Icon name="people" size={17} color={colors.text} />
-        </Pressable>
-      </View>
-
-      {searchOpen && (
-        <View style={styles.searchWrap}>
-          <Icon name="search" size={15} color={colors.textMuted} />
-          <TextInput
-            style={styles.chatSearchInput}
-            placeholder="Search chats, messages, drops..."
-            placeholderTextColor={colors.textMuted}
-            value={search}
-            onChangeText={setSearch}
-            autoFocus
-          />
-        </View>
-      )}
-
-      <View style={styles.tabsRow}>
-        {FILTERS.map((f) => (
-          <Pressable
-            key={f.key}
-            style={[styles.tabChip, filter === f.key && styles.tabChipActive]}
-            onPress={() => setFilter(f.key)}
-          >
-            <Text style={[styles.tabChipText, filter === f.key && styles.tabChipTextActive]}>{f.label}</Text>
+        <Text style={styles.headerTitle}>Chats</Text>
+        <View style={styles.headerActions}>
+          {!!onOpenCreate && (
+            <Pressable style={styles.headerIconBtn} onPress={() => onOpenCreate?.()} hitSlop={6}>
+              <Icon name="camera-outline" size={20} color={colors.text} />
+            </Pressable>
+          )}
+          <Pressable style={styles.headerIconBtn} onPress={() => setMenuOpen(true)} hitSlop={6}>
+            <Icon name="ellipsis-vertical" size={20} color={colors.text} />
           </Pressable>
-        ))}
+        </View>
       </View>
+
+      <View style={styles.searchWrap}>
+        <Icon name="search" size={15} color={colors.textMuted} />
+        <TextInput
+          style={styles.chatSearchInput}
+          placeholder="Search chats, messages, drops..."
+          placeholderTextColor={colors.textMuted}
+          value={search}
+          onChangeText={setSearch}
+        />
+      </View>
+
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.chipsScroll}
+        contentContainerStyle={styles.tabsRow}
+      >
+        {FILTERS.map((f) => {
+          const active = filter === f.key;
+          const label = f.key === 'unread' && unreadTotal > 0 ? `Unread ${unreadTotal}` : f.label;
+          return (
+            <Pressable
+              key={f.key}
+              style={[styles.tabChip, active && styles.tabChipActive]}
+              onPress={() => setFilter(f.key)}
+            >
+              <Text style={[styles.tabChipText, active && styles.tabChipTextActive]}>{label}</Text>
+            </Pressable>
+          );
+        })}
+        <Pressable style={[styles.tabChip, styles.plusChip]} onPress={() => setNewChatOpen(true)}>
+          <Icon name="add" size={16} color={colors.textMuted} />
+        </Pressable>
+      </ScrollView>
 
       {loading ? (
         <ActivityIndicator color={colors.accent} style={styles.loader} />
@@ -347,15 +418,21 @@ function ConversationList({
                   name={item.type === 'group' ? item.name ?? 'G' : item.other?.username ?? 'G'}
                   size={44}
                   ring
+                  verified={item.type !== 'group' && !!item.other?.verified}
                 />
                 {item.type === 'direct' && item.other && isOnline(item.other.last_seen_at) && (
                   <View style={styles.onlineDot} />
                 )}
               </View>
               <View style={styles.convInfo}>
-                <Text style={styles.convName} numberOfLines={1}>
-                  {item.type === 'group' ? item.name ?? 'Group' : `@${item.other?.username ?? 'unknown'}`}
-                </Text>
+                <View style={styles.convNameRow}>
+                  <Text style={styles.convName} numberOfLines={1}>
+                    {item.type === 'group' ? item.name ?? 'Group' : `@${item.other?.username ?? 'unknown'}`}
+                  </Text>
+                  {item.type !== 'group' && !!item.other?.verified && (
+                    <VerifiedBadge size={12} style={styles.verifiedInline} />
+                  )}
+                </View>
                 <Text style={styles.convPreview} numberOfLines={1}>
                   {item.lastMessage ?? (item.type === 'group' ? 'Group created' : 'Say hi')}
                 </Text>
@@ -383,11 +460,14 @@ function ConversationList({
                         onPress={() => onOpenUser?.(u.id)}
                       >
                         <View style={[styles.activeRing, u.following && styles.activeRingFollowed]}>
-                          <Avatar url={u.avatar_url} name={u.username} size={46} />
+                          <Avatar url={u.avatar_url} name={u.username} size={46} verified={!!(u as any).verified} />
                         </View>
-                        <Text style={styles.activeName} numberOfLines={1}>
-                          @{u.username}
-                        </Text>
+                        <View style={styles.activeNameRow}>
+                          <Text style={styles.activeName} numberOfLines={1}>
+                            @{u.username}
+                          </Text>
+                          {!!(u as any).verified && <VerifiedBadge size={11} glow={false} style={styles.verifiedInline} />}
+                        </View>
                       </Pressable>
                     ))}
                   </ScrollView>
@@ -402,6 +482,11 @@ function ConversationList({
                   <Text style={styles.anonTitle}>🕵️ Anonymous Inbox</Text>
                   <Text style={styles.anonSub}>Messages without names — see who's curious 👀</Text>
                 </View>
+                {anonUnread > 0 && (
+                  <View style={styles.anonBadge}>
+                    <Text style={styles.anonBadgeText}>{anonUnread > 99 ? '99+' : anonUnread}</Text>
+                  </View>
+                )}
                 <Icon name="chevron-forward" size={16} color={colors.textMuted} />
               </Pressable>
             </>
@@ -425,6 +510,39 @@ function ConversationList({
         onClose={() => setNewChatOpen(false)}
         onOpen={openOrCreate}
       />
+
+      {/* beautiful floating new-chat button */}
+      <Pressable style={styles.fab} onPress={() => setNewChatOpen(true)} hitSlop={8} accessibilityLabel="New chat">
+        <View style={styles.fabHalo} pointerEvents="none" />
+        <Icon name="add" size={30} color={colors.bg} />
+      </Pressable>
+
+      <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
+        <Pressable style={styles.menuOverlay} onPress={() => setMenuOpen(false)}>
+          <View style={styles.menuSheet}>
+            <Pressable
+              style={styles.menuRow}
+              onPress={() => {
+                setMenuOpen(false);
+                setNewChatOpen(true);
+              }}
+            >
+              <Icon name="chatbubble-ellipses-outline" size={18} color={colors.text} />
+              <Text style={styles.menuRowText}>New chat</Text>
+            </Pressable>
+            <Pressable
+              style={styles.menuRow}
+              onPress={() => {
+                setMenuOpen(false);
+                setGroupModal(true);
+              }}
+            >
+              <Icon name="people-outline" size={18} color={colors.text} />
+              <Text style={styles.menuRowText}>New group</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -533,9 +651,12 @@ function NewGroupModal({
                     })
                   }
                 >
-                  <Text style={[styles.memberChipText, active && styles.memberChipTextActive]}>
-                    @{c.username}
-                  </Text>
+                  <View style={styles.memberChipLine}>
+                    <Text style={[styles.memberChipText, active && styles.memberChipTextActive]}>
+                      @{c.username}
+                    </Text>
+                    {!!(c as any).verified && <VerifiedBadge size={10} glow={false} />}
+                  </View>
                 </Pressable>
               );
             })}
@@ -561,65 +682,15 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
   },
   header: {
-    position: 'relative',
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingTop: TOP_INSET + 10,
-    paddingBottom: 10,
+    justifyContent: 'space-between',
+    paddingTop: TOP_INSET + 8,
+    paddingBottom: 8,
+    paddingHorizontal: 20,
   },
-  newBtn: {
-    position: 'absolute',
-    right: 16,
-    top: 52,
-    backgroundColor: colors.surfaceAlt,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    borderRadius: radius.pill,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-  },
-  newGroupBtn: {
-    right: 'auto',
-    left: 16,
-  },
-  newBtnText: {
-    color: colors.accent,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  searchBox: {
-    marginHorizontal: 20,
-    marginBottom: 10,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 10,
-  },
-  searchInput: {
-    backgroundColor: colors.surfaceInput,
-    borderRadius: radius.sm,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    color: colors.text,
-    fontSize: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  resultRow: {
-    paddingVertical: 10,
-    borderBottomWidth: 0.5,
-    borderBottomColor: colors.border,
-  },
-  resultText: {
-    color: colors.text,
-    fontSize: 14,
-  },
-  noResults: {
-    color: colors.textMuted,
-    fontSize: 13,
-    paddingVertical: 10,
-    textAlign: 'center',
-  },
+  headerTitle: { color: colors.text, fontSize: 22, fontWeight: '800', letterSpacing: 0.3 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   loader: {
     flex: 1,
   },
@@ -654,6 +725,7 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 12,
   },
+  convNameRow: { flexDirection: 'row', alignItems: 'center' },
   convName: {
     color: colors.text,
     fontSize: 15,
@@ -765,13 +837,62 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   headerIconBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: 'rgba(255,255,255,0.07)',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: 8,
+    marginLeft: 4,
+  },
+  fab: {
+    position: 'absolute',
+    right: 18,
+    bottom: 18,
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.35)',
+    elevation: 8,
+    shadowColor: colors.accent,
+    shadowOpacity: 0.55,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 3 },
+  },
+  fabHalo: {
+    position: 'absolute',
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,157,31,0.45)',
+  },
+  menuOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+  },
+  menuSheet: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: radius.lg,
+    borderTopRightRadius: radius.lg,
+    paddingVertical: 10,
+    paddingBottom: 28,
+  },
+  menuRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+  },
+  menuRowText: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: '600',
   },
   searchWrap: {
     flexDirection: 'row',
@@ -787,16 +908,20 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
   },
   chatSearchInput: { flex: 1, color: colors.text, fontSize: 13.5, padding: 0 },
-  tabsRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingBottom: 10 },
+  chipsScroll: { flexGrow: 0, height: 40 },
+  tabsRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16 },
   tabChip: {
     paddingHorizontal: 14,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: 999,
     backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
   },
-  tabChipActive: { backgroundColor: colors.accent },
+  tabChipActive: { backgroundColor: colors.accent, borderColor: colors.accent },
   tabChipText: { color: colors.textMuted, fontSize: 12.5, fontWeight: '700' },
   tabChipTextActive: { color: colors.bg, fontWeight: '800' },
+  plusChip: { paddingHorizontal: 12, justifyContent: 'center' },
   activeSection: { marginBottom: 6 },
   sectionLabel: {
     color: colors.text,
@@ -818,7 +943,10 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   activeRingFollowed: { borderColor: colors.accent },
-  activeName: { color: colors.textMuted, fontSize: 10.5, fontWeight: '600', maxWidth: 62 },
+  activeName: { color: colors.textMuted, fontSize: 10.5, fontWeight: '600', maxWidth: 56 },
+  activeNameRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 3, gap: 2 },
+  verifiedInline: { marginLeft: 4 },
+  memberChipLine: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   anonCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -843,4 +971,18 @@ const styles = StyleSheet.create({
   anonInfo: { flex: 1 },
   anonTitle: { color: colors.accent, fontSize: 14, fontWeight: '900' },
   anonSub: { color: colors.textMuted, fontSize: 11.5, marginTop: 2 },
+  anonBadge: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  anonBadgeText: {
+    color: colors.bg,
+    fontSize: 12,
+    fontWeight: '800',
+  },
 });

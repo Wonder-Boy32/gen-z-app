@@ -14,7 +14,15 @@ const ITEMS: { key: Tab; label: string; icon: IconName; iconActive: IconName }[]
   { key: 'profile', label: 'Me', icon: 'person-outline', iconActive: 'person' },
 ];
 
-export default function TabBar({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
+export default function TabBar({
+  tab,
+  onChange,
+  badges,
+}: {
+  tab: Tab;
+  onChange: (t: Tab) => void;
+  badges?: Partial<Record<Tab, number>>;
+}) {
   const insets = useInsets();
   const activeIndex = Math.max(0, ITEMS.findIndex((i) => i.key === tab));
   const glow = useRef(new Animated.Value(0)).current;
@@ -38,11 +46,20 @@ export default function TabBar({ tab, onChange }: { tab: Tab; onChange: (t: Tab)
             style={styles.item}
             onPress={() => onChange(item.key)}
           >
-            <Icon
-              name={active ? item.iconActive : item.icon}
-              size={22}
-              color={active ? colors.accent : colors.textFaint}
-            />
+            <View style={styles.iconWrap}>
+              <Icon
+                name={active ? item.iconActive : item.icon}
+                size={22}
+                color={active ? colors.accent : colors.textFaint}
+              />
+              {!active && (badges?.[item.key] ?? 0) > 0 && (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>
+                    {(badges?.[item.key] ?? 0) > 99 ? '99+' : badges?.[item.key]}
+                  </Text>
+                </View>
+              )}
+            </View>
             {item.label !== '' && (
               <Text style={[styles.label, active && styles.labelActive]}>{item.label}</Text>
             )}
@@ -68,12 +85,27 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 4,
   },
-  glyph: {
-    color: colors.textFaint,
-    fontSize: 20,
+  iconWrap: {
+    position: 'relative',
   },
-  glyphActive: {
-    color: colors.accent,
+  badge: {
+    position: 'absolute',
+    top: -6,
+    right: -12,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: colors.bg,
+  },
+  badgeText: {
+    color: colors.bg,
+    fontSize: 10,
+    fontWeight: '800',
   },
   label: {
     color: colors.textFaint,

@@ -94,6 +94,39 @@ export default function AnonymousInboxScreen({
     load();
   }, [load]);
 
+  // live refresh: when a new anonymous message arrives (the send RPC creates
+  // a notification row), reload from the public view. We watch notifications,
+  // NEVER the anonymous_messages table — its realtime payload would leak
+  // sender_id to the client.
+  useEffect(() => {
+    let channel: any = null;
+    let cancelled = false;
+    (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user || cancelled) return;
+      // unique per-user name + drop any stale instance (async cleanup race)
+      const name = `anon-inbox:${user.id}`;
+      supabase
+        .getChannels()
+        .filter((c) => c.topic === `realtime:${name}`)
+        .forEach((c) => supabase.removeChannel(c));
+      channel = supabase
+        .channel(name)
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` },
+          () => load()
+        )
+        .subscribe();
+    })();
+    return () => {
+      cancelled = true;
+      if (channel) supabase.removeChannel(channel);
+    };
+  }, [load]);
+
   const react = async (m: AnonMsg, emoji: string) => {
     const next = m.reaction === emoji ? null : emoji;
     setMsgs((prev) => prev.map((x) => (x.id === m.id ? { ...x, reaction: next } : x)));

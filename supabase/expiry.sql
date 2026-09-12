@@ -1,29 +1,25 @@
 -- ============================================================
--- Gen Z — 48h auto-expiry engine
--- Runs every 5 minutes, deletes expired posts.
--- Cascade deletes clean up likes, comments, and views for free
--- (all reference posts ON DELETE CASCADE).
+-- Gen Z — 48h auto-expiry engine (v2)
+-- Runs every 5 minutes, expires + deletes posts AND their
+-- Storage media. See expiry_v2.sql for the full system:
+--   - DB-level 48h enforcement (posts_enforce_48h trigger)
+--   - genz_purge_expired() — media deleted first (Storage API,
+--     service role from vault), post row second; failures queued
+--     to media_cleanup_queue and retried on the next run
+--   - genz_find_orphan_media(true) — dry-run orphan scan
+--   - genz_cleanup_orphan_media(n) — guarded orphan cleanup
 -- ============================================================
-
--- pg_cron must be enabled in your Supabase project:
--- Dashboard -> Database -> Extensions -> enable "pg_cron" (schema: cron)
 
 create extension if not exists pg_cron;
 
--- Delete every expired story (runs every 5 minutes)
+-- Every 5 minutes: purge expired posts + their media.
+-- cron.schedule by name is an upsert, so re-running this file
+-- safely re-points the job at the new function.
 select cron.schedule(
   'genz-purge-expired-posts',
   '*/5 * * * *',
-  $$
-  delete from public.posts
-  where expires_at <= now();
-  $$
+  $$ select public.genz_purge_expired(); $$
 );
 
--- Sanity check: how many expired posts get purged per run
+-- Sanity check: how many expired posts are pending purge
 -- select count(*) from public.posts where expires_at <= now();
-
--- NOTE: video/image files in the 'media' storage bucket are NOT
--- removed by this job (Supabase storage has no cascades).
--- v1: acceptable — files are small and orphaned rows are invisible.
--- v2: add a Storage cleanup Edge Function triggered on post delete.

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { colors } from '../theme';
@@ -57,6 +57,10 @@ type Props = {
   textLayers?: DropTextLayer[] | null;
   stickers?: DropSticker[] | null;
   isActive?: boolean;
+  /** true when this is the NEXT item in a pager: the source is loaded and
+   *  played MUTED ahead of time so that when it becomes active the video is
+   *  already buffered and starts instantly */
+  preload?: boolean;
   paused?: boolean;
   showProgress?: boolean;
   showMute?: boolean;
@@ -78,6 +82,7 @@ export default function DropVideoView({
   textLayers,
   stickers,
   isActive = true,
+  preload = false,
   paused = false,
   showProgress = false,
   showMute = true,
@@ -90,6 +95,8 @@ export default function DropVideoView({
 }: Props) {
   const [muted, setMuted] = useState(false);
   const [progress, setProgress] = useState(0);
+  const loadedUrlRef = useRef<string | null>(null);
+  const userMutedRef = useRef(false);
 
   const trim = effects?.trim && effects.trim.end > effects.trim.start ? effects.trim : null;
   const speed = effects?.speed && effects.speed > 0 ? effects.speed : 1;
@@ -100,21 +107,33 @@ export default function DropVideoView({
   const effectTint = effects?.effect ? EFFECT_TINTS[effects.effect] ?? null : null;
 
   // create the player WITHOUT a source — the video only loads when this
-  // item becomes active. Keeps at most ONE native video player alive in
-  // paging feeds/viewers, which removes scroll lag.
+  // item becomes active (or is the preload target). Keeps at most ONE
+  // native video player alive in paging feeds/viewers, which removes
+  // scroll lag.
   const player = useVideoPlayer(null, (p) => {
     p.loop = true;
     p.playbackRate = speed;
   });
 
-  // load the source only for the active item; release/pause everything else
+  // load the source when this item is active OR is the next (preload)
+  // target. If it's only being preloaded, play it MUTED so the data
+  // actually downloads and buffers — when it becomes active the video
+  // starts instantly instead of waiting on a cold network load.
+  // Never re-replace() a source we already loaded (that would restart it).
   useEffect(() => {
-    if (isActive && url) {
+    if (!url) return;
+    if (loadedUrlRef.current !== url && (isActive || preload)) {
+      loadedUrlRef.current = url;
       player.replace({ uri: url });
-    } else {
-      player.pause();
     }
-  }, [isActive, url, player]);
+    if (!isActive && !preload) {
+      player.pause();
+    } else if (!isActive && preload) {
+      // buffer offscreen: muted play; real mute state restored on activation
+      player.muted = true;
+      player.play();
+    }
+  }, [isActive, preload, url, player]);
 
   // trim loop + progress
   useEffect(() => {
@@ -133,11 +152,21 @@ export default function DropVideoView({
     return () => sub.remove();
   }, [player, trim?.start, trim?.end, trim != null]);
 
-  // play/pause control
+  // play/pause control. A preloading (offscreen) item keeps playing muted —
+  // only pause it when explicitly paused or when it's neither active nor the
+  // preload target. When a muted preload becomes ACTIVE, restore the user's
+  // mute preference before playing.
   useEffect(() => {
-    if (isActive && !paused) player.play();
-    else player.pause();
-  }, [isActive, paused, player]);
+    if (isActive && !paused) {
+      if (!forceMute && !userMutedRef.current && player.muted) {
+        player.muted = false;
+        setMuted(false);
+      }
+      player.play();
+    } else if (paused || !preload) {
+      player.pause();
+    }
+  }, [isActive, paused, preload, forceMute, player]);
 
   // speed changes after mount
   useEffect(() => {
@@ -160,8 +189,10 @@ export default function DropVideoView({
   }, [forceMute, player]);
 
   const toggleMute = () => {
-    player.muted = !player.muted;
-    setMuted(player.muted);
+    const next = !player.muted;
+    player.muted = next;
+    userMutedRef.current = next;
+    setMuted(next);
   };
 
   return (
