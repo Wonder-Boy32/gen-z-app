@@ -64,9 +64,85 @@ Keep, unchanged: the 48h expiry engine and its cron jobs; the Drop lifecycle + a
 | 5 | **Four sensitive tables had no RLS and no revoke.** `user_recovery_codes`, `user_sessions`, `security_events`, `recovery_attempts` — in the PostgREST-exposed `public` schema. Worst case is account takeover. Full detail in §6a. | **FIXED** — `supabase/security_hardening.sql` |
 | 6 | **The block graph was world-readable** (`blocks_select using(true)`), and **post view records were world-readable** (`post_views_select using(true)`) — anyone could enumerate who viewed any post, and when. | **FIXED** — same file |
 | 7 | **Push spam was possible by design.** `notifications_insert` only validates `actor_id`, so the recipient is unconstrained: any user could notify any other user without limit. Harmless as in-app noise; now it lands on a lock screen. | **FIXED** — dedupe + hourly cap, same file |
-| 8 | **Storage bucket policies not reviewed.** | **NOT INSPECTED** |
-| 9 | **Anonymous-message abuse controls not reviewed** (rate limiting, harassment, blocking). | **NOT INSPECTED** |
-| 10 | **`profiles.location` is free text and publicly readable.** Whatever a student types may be precise. Not changed — that is a product decision. | **OPEN — your call** |
+| 8 | **Every uploaded file is world-readable — including DM media, anonymous-message photos and view-once media.** | **OPEN — needs your decision** |
+| 9 | **`media_upload` lets any authenticated user write to any path in the bucket** | **OPEN** |
+| 10 | **Latent bug: avatars and anonymous media cannot be deleted or replaced by their owner** | **OPEN — functional** |
+| 11 | **Anonymous messaging — PASS.** Real abuse controls, verified. | **CLEAR** |
+| 12 | **`profiles.location` is free text and publicly readable.** Not changed — that is a product decision. | **OPEN — your call** |
+
+### §6b — Storage detail (findings 8, 9, 10)
+
+**The setup, verified:** there is exactly **one bucket — `media` — created with
+`public = true`** (`schema.sql:322-324`), and its read policy is
+`for select to public using (bucket_id = 'media')`. Everything the app uploads
+goes into it. Verified paths in the client:
+
+```
+${user.id}/cover-...jpg          (covers, drops)
+avatars/${user.id}/avatar-...jpg (avatars, onboarding)
+anon/${recipientId}/...jpg       (anonymous messages - note: RECIPIENT id)
+voiceovers/...                   (from the expiry_v2 media regex)
+chat media                       (ChatThread.tsx)
+```
+
+**Finding 8 — the one that matters.** Because the bucket is public and reads are
+granted to `public`, every object is retrievable by anyone who has the path.
+Avatars are exposed in the UI anyway, so nothing is lost there. But **chat media,
+anonymous-message photos and "view-once" content share the same bucket** — so the
+privacy those features promise is enforced **only in the UI**. "View-once" means
+the app shows it once; the file itself is world-readable. Someone who obtains a
+DM image path can fetch it forever, and it stays fetchable until the 48h cleanup
+deletes it.
+
+**Finding 9.** `schema.sql` originally scoped inserts with
+`with check (bucket_id = 'media' and owner = auth.uid())`. `final_fix.sql`
+replaced that with `with check (bucket_id = 'media')` — the ownership check is
+gone. This does not leak anything (everything is already public), but any
+authenticated user can now write unlimited files to any path, including inside
+another user's folder.
+
+**Finding 10.** The update/delete policies require
+`(storage.foldername(name))[1] = auth.uid()::text` — the **first** path segment.
+That matches `${user.id}/...` but **not** `avatars/${user.id}/...`,
+`anon/${recipientId}/...` or `voiceovers/...`, where the uid is in the second
+segment or absent. So client-side replace/delete of a user's own avatar or
+anonymous media fails today. (48h expiry still works, because it deletes through
+a `SECURITY DEFINER` function that bypasses RLS.)
+
+**Recommended fix — a design decision, so I did not make it:**
+
+1. Split into **two buckets**. `media` (public) for posts, covers and avatars.
+   `private` for chat media, anonymous messages and view-once — with **no public
+   read policy at all**, served through short-lived signed URLs.
+2. Re-scope the private bucket's read policy to participants,
+   e.g. `using (bucket_id = 'private' and exists (select 1 from ...))`.
+3. Set a bucket-level **file size limit** to blunt finding 9.
+4. If you keep one bucket: accept that all media is public, and stop calling
+   anything "view-once" — the UI promise and the storage reality disagree.
+
+Do **not** simply tighten `media_upload` to `foldername[1] = auth.uid()`. I
+checked the client's path builders and that would break avatar uploads,
+onboarding avatars, anonymous photo sends and voiceovers — every path where the
+uid is not the first segment.
+
+### §6c — Anonymous messaging: clean bill of health
+
+Verified in `anonymous_messages.sql`, and this is genuinely well built:
+
+- `anon_guard()` — a BEFORE INSERT trigger enforcing **rate limits per sender and
+  per recipient inside a 1-hour window**, plus block checks.
+- `anonymous_blocks` — the recipient can block the underlying sender without ever
+  seeing who they are (`anon_block_message` resolves identity internally).
+- `anonymous_reports` — recipient reports stored with moderation metadata, RLS
+  limited to `reporter_id = auth.uid()`.
+- `send_anonymous_message` — **sender identity is resolved server-side only**, so
+  the recipient never sees it while the system retains it for accountability. That
+  is exactly the design the brief asked for.
+- RLS is enabled on all four tables (confirmed by the live `tables WITHOUT RLS`
+  check returning NONE).
+
+Not verified: the exact numeric thresholds, and whether notification volume from
+anonymous messages is capped. Both are worth a look but neither is a known hole.
 
 ### §6a — Detail on finding 5 (the serious one)
 
@@ -100,8 +176,42 @@ select tablename from pg_tables
  where schemaname = 'public' and rowsecurity = false;
 ```
 
-Anything in that list is unprotected. If those four tables appear, treat the anon
-key as compromised and rotate it (see the rotation notes in the audit summary).
+**VERIFIED 2026-09-12 against the live database** (owner ran the queries):
+
+- `tables WITHOUT RLS` returns `NONE - every public table has RLS`
+- All five hardened tables report `rls=true, policies=0`
+- `notifications_rate_limit_guard` is installed
+- `post_views` carries `post_views_post_id_user_id_key` UNIQUE (post_id, user_id),
+  so view counts cannot be inflated by repeated inserts
+- All six INSERT policies scope the actor correctly. `notifications_insert`
+  confirms the spam hole exactly as described (`with_check` pins only `actor_id`).
+
+Finding 5 is therefore **CLOSED**. The anon key does not need rotating on account of it.
+
+**Migration application status, verified against the live database:**
+
+- `profile_views.sql` — **applied** (table plus all three RPCs)
+- `calls.sql`, `drops.sql`, `support_and_prefs.sql` — applied (`calls`, `drops`,
+  `settings` and `reports` all exist)
+- `security_hardening.sql` — applied
+- `push_notifications.sql` — **was not applied at first check** (`push_tokens`,
+  `register_push_token`, `send_push_to_user`, `build_push_message` and
+  `trg_notifications_push` all reported `exists_count = 0`), then **applied by the
+  owner on 2026-09-12**. Now fully verified: `push_tokens` exists with the expected
+  nine columns, and `register_push_token`, `unregister_push_token`,
+  `build_push_message`, `send_push_to_user`, `trg_notifications_push` and the
+  `notifications` entry in the `supabase_realtime` publication all report ok = 1.
+  The server side of push is therefore live; notification preferences are now
+  enforced by `build_push_message()` reading `public.settings`.
+
+**The deployed app still cannot receive push** until the native rebuild happens:
+`expo-notifications` is a native module, so the JS in `src/utils/push.ts` will
+only find its runtime after `npx expo run:android` or an EAS build.
+
+Related gap: `public.notifications` carries exactly one non-internal trigger, so
+nothing enforces the notification preferences at the database level today. Running
+`push_notifications.sql` closes that by itself, because `build_push_message()`
+reads `public.settings` and returns NULL for a muted type.
 
 **The honest summary: item 6 is where your real risk lives now.** The credential
 problems are fixed; the authorization problems are unexamined.

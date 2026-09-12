@@ -98,6 +98,17 @@ hazards are called out at the end.
 42. `push_notifications.sql` — real push delivery (needs `pg_net`; enables the realtime publication for `notifications`)
 43. `final_fix.sql` — chat creation RLS + avatar upload RLS *(header says: ONCE, LAST)*
 
+### Stage 8 — security hardening (after `final_fix.sql`)
+
+44. `security_hardening.sql` — applies the pre-launch RLS audit fixes. Enables RLS
+    and revokes privileges on four `account_security` tables that had neither
+    (`user_recovery_codes`, `user_sessions`, `security_events`,
+    `recovery_attempts`); scopes the previously world-readable `blocks` and
+    `post_views` policies; and rate-limits notification inserts so one user
+    cannot push-spam another. Idempotent, deny-only, and it grants nothing new —
+    your `SECURITY DEFINER` RPCs keep working because definer code runs as its
+    owner and is not subject to RLS.
+
 ---
 
 ## Ordering hazards — read before running anything
