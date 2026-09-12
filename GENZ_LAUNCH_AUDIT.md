@@ -61,10 +61,47 @@ Keep, unchanged: the 48h expiry engine and its cron jobs; the Drop lifecycle + a
 | 2 | Live Giphy key committed to the repo. | **Fixed** — placeholder |
 | 3 | `scripts/bundle-check.js` — a **186,516-line Metro bundle dump** with every `EXPO_PUBLIC_*` value inlined, plus `.verifiedfix.js`. Untracked today, one `git add .` from being committed. | **Fixed** — gitignored |
 | 4 | `anon_notifications_cleanup.sql` re-run on a live DB would **break call notifications** (adds a narrower CHECK constraint without dropping it, omitting `'call'`). | **Documented** in MIGRATIONS.md |
-| 5 | **RLS policy matrix never audited.** I verified the *admin client* does not use the service key, and that `profile_views`/`push_tokens` (written this cycle) are owner-scoped with `SECURITY DEFINER` writers and no client INSERT/UPDATE path. **I did not review the policy blocks in the other migrations** — 16 tracked SQL files contain `create policy` statements, and no count of the untracked ones was taken. | **NOT INSPECTED** |
-| 6 | **IDOR sweep not performed** — no systematic check that every `select` by id is scoped by `auth.uid()`. | **NOT INSPECTED** |
-| 7 | **Storage bucket policies not reviewed.** | **NOT INSPECTED** |
-| 8 | **Anonymous-message abuse controls not reviewed** (rate limiting, harassment, blocking, reporting). | **NOT INSPECTED** |
+| 5 | **Four sensitive tables had no RLS and no revoke.** `user_recovery_codes`, `user_sessions`, `security_events`, `recovery_attempts` — in the PostgREST-exposed `public` schema. Worst case is account takeover. Full detail in §6a. | **FIXED** — `supabase/security_hardening.sql` |
+| 6 | **The block graph was world-readable** (`blocks_select using(true)`), and **post view records were world-readable** (`post_views_select using(true)`) — anyone could enumerate who viewed any post, and when. | **FIXED** — same file |
+| 7 | **Push spam was possible by design.** `notifications_insert` only validates `actor_id`, so the recipient is unconstrained: any user could notify any other user without limit. Harmless as in-app noise; now it lands on a lock screen. | **FIXED** — dedupe + hourly cap, same file |
+| 8 | **Storage bucket policies not reviewed.** | **NOT INSPECTED** |
+| 9 | **Anonymous-message abuse controls not reviewed** (rate limiting, harassment, blocking). | **NOT INSPECTED** |
+| 10 | **`profiles.location` is free text and publicly readable.** Whatever a student types may be precise. Not changed — that is a product decision. | **OPEN — your call** |
+
+### §6a — Detail on finding 5 (the serious one)
+
+`account_security.sql` creates these four tables. Every read and write in the
+codebase goes through `SECURITY DEFINER` functions — which is good design — but
+**no `enable row level security` and no `revoke` statement exists for any of
+them**, anywhere in the 44 migrations.
+
+Supabase grants `anon` and `authenticated` privileges on `public` tables by
+default; that is precisely why RLS is mandatory there. If those grants apply —
+which I could not confirm without querying your database — then anyone holding
+the public anon key (which ships inside the app and is not a secret) could reach
+these tables directly over PostgREST:
+
+| Table | Read impact | Write impact |
+|---|---|---|
+| `user_recovery_codes` | leak of recovery-code SHA-256 hashes | **insert a hash you know for someone else's `user_id`, then redeem it through the reset RPC → account takeover** |
+| `recovery_attempts` (the rate limiter) | see who is locked out | **delete or reset your own lockout → brute-force account discovery and code sending** |
+| `security_events` | device + approximate-location history | forge or erase the audit trail |
+| `user_sessions` | device and activity history | spoof "where you're logged in" |
+
+The fix is zero-risk: enable RLS with **no policies** (deny-all for clients) and
+revoke the grants. Definer functions run as their owner, so every existing
+feature keeps working.
+
+**Verify it is actually open before you panic or relax** — run this and send me
+the output:
+
+```sql
+select tablename from pg_tables
+ where schemaname = 'public' and rowsecurity = false;
+```
+
+Anything in that list is unprotected. If those four tables appear, treat the anon
+key as compromised and rotate it (see the rotation notes in the audit summary).
 
 **The honest summary: item 6 is where your real risk lives now.** The credential
 problems are fixed; the authorization problems are unexamined.
