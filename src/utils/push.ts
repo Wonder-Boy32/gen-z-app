@@ -1,18 +1,29 @@
 // ============================================================
 // Gen Z -- push / device notifications
 //
-// Everything here is defensive on purpose. expo-notifications was added to
-// package.json now, which means a JS update can land on an APK that was built
-// BEFORE the package existed. In that case the native module is missing and
-// every call throws -- so each entry point is guarded and simply reports
-// "notifications unavailable" instead of taking the app down.
+// WHY THIS FILE IS SHAPED THIS WAY:
+// expo-notifications resolves its native modules when the module is EVALUATED,
+// not when you call it. A plain top-level `import` therefore throws
+// "Cannot find native module 'ExpoPushTokenManager'" on any binary built before
+// package.json gained the dependency -- and that throw happens during bundle
+// module loading, so it takes the entire app down with a red box before any
+// try/catch inside a function can run.
+//
+// So the module is loaded lazily, inside a try/catch, the same way
+// src/utils/clipboard.ts loads expo-clipboard. On an old binary everything here
+// degrades to a no-op and the app boots normally.
+//
+// Nothing may touch the module at module scope. In particular the Android
+// importance values are resolved per call rather than in a top-level constant.
 // ============================================================
 
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
-import * as Notifications from 'expo-notifications';
+import type * as ExpoNotifications from 'expo-notifications';
 import { supabase } from '../supabase/client';
 import { NotifyType } from './notify';
+
+type NotifModule = typeof ExpoNotifications;
 
 export type PushPayload = {
   type: NotifyType;
@@ -31,48 +42,104 @@ export type PushStatus = {
 };
 
 // ------------------------------------------------------------
+// lazy module access
+// ------------------------------------------------------------
+let cached: NotifModule | null = null;
+let probed = false;
+
+/**
+ * Load expo-notifications once, safely. Returns null when notifications simply
+ * cannot work here: web, Expo Go, or a native build that predates the package.
+ */
+function notifications(): NotifModule | null {
+  if (probed) return cached;
+  probed = true;
+
+  if (Platform.OS === 'web') {
+    cached = null;
+    return cached;
+  }
+  // Expo Go dropped remote push in SDK 53 and the module is absent on Android
+  if (Constants?.executionEnvironment === 'storeClient') {
+    cached = null;
+    return cached;
+  }
+
+  try {
+    const m = require('expo-notifications') as NotifModule;
+    // how a notification behaves while the app is in the foreground:
+    // still show it in the phone's bar, still make a sound
+    m.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowBanner: true,
+        shouldShowList: true,
+        shouldPlaySound: true,
+        shouldSetBadge: false,
+      }),
+    });
+    cached = m;
+  } catch {
+    // APK predates expo-notifications -- everything below becomes a no-op
+    cached = null;
+  }
+  return cached;
+}
+
+export function pushAvailable(): boolean {
+  return notifications() !== null;
+}
+
+// ------------------------------------------------------------
 // channels -- Android shows one row per channel in system settings,
 // so each kind of activity gets its own sound/vibration/light signature
 // ------------------------------------------------------------
+type Importance = 'DEFAULT' | 'HIGH' | 'MAX';
+
 type ChannelSpec = {
+  id: string;
   name: string;
-  importance: Notifications.AndroidImportance;
+  importance: Importance;
   vibration: number[];
   light: string;
 };
 
-const CHANNELS: Record<string, ChannelSpec> = {
-  default: {
+const CHANNELS: ChannelSpec[] = [
+  {
+    id: 'default',
     name: 'General',
-    importance: Notifications.AndroidImportance.HIGH,
+    importance: 'HIGH',
     vibration: [0, 200, 120, 200],
     light: '#FF9D1F',
   },
-  likes: {
+  {
+    id: 'likes',
     name: 'Likes and reactions',
-    importance: Notifications.AndroidImportance.DEFAULT,
+    importance: 'DEFAULT',
     vibration: [0, 110],
     light: '#FF3B5C',
   },
-  comments: {
+  {
+    id: 'comments',
     name: 'Comments and replies',
-    importance: Notifications.AndroidImportance.MAX,
+    importance: 'MAX',
     vibration: [0, 180, 110, 180],
     light: '#8B7BFF',
   },
-  follows: {
+  {
+    id: 'follows',
     name: 'New followers',
-    importance: Notifications.AndroidImportance.DEFAULT,
+    importance: 'DEFAULT',
     vibration: [0, 110],
     light: '#34D399',
   },
-  messages: {
+  {
+    id: 'messages',
     name: 'Messages',
-    importance: Notifications.AndroidImportance.MAX,
+    importance: 'MAX',
     vibration: [0, 240, 140, 240],
     light: '#A8E6F2',
   },
-};
+];
 
 const CHANNEL_FOR: Record<NotifyType, string> = {
   follow: 'follows',
@@ -90,64 +157,22 @@ export function channelFor(type: NotifyType): string {
   return CHANNEL_FOR[type] ?? 'default';
 }
 
-// ------------------------------------------------------------
-// native capability probe (runs once)
-// ------------------------------------------------------------
-let probed: boolean | null = null;
-
-function nativeReady(): boolean {
-  if (probed !== null) return probed;
-  if (Platform.OS === 'web') {
-    probed = false;
-    return probed;
-  }
-  // Expo Go dropped remote push in SDK 53 and the module is absent on Android,
-  // so never touch it there.
-  if (Constants?.executionEnvironment === 'storeClient') {
-    probed = false;
-    return probed;
-  }
-  try {
-    // how a notification behaves while the app is in the foreground:
-    // still show it in the phone's notification bar, still make a sound
-    Notifications.setNotificationHandler({
-      handleNotification: async () => ({
-        shouldShowBanner: true,
-        shouldShowList: true,
-        shouldPlaySound: true,
-        shouldSetBadge: false,
-      }),
-    });
-    probed = true;
-  } catch {
-    // APK predates expo-notifications -- everything below degrades to no-ops
-    probed = false;
-  }
-  return probed;
+// resolved per call so the enum is never read at module scope
+function importanceOf(m: NotifModule, key: Importance) {
+  if (key === 'MAX') return m.AndroidImportance.MAX;
+  if (key === 'HIGH') return m.AndroidImportance.HIGH;
+  return m.AndroidImportance.DEFAULT;
 }
 
-// configure the handler as early as possible so a foreground arrival is
-// presented properly even before initPush() runs
-try {
-  nativeReady();
-} catch {
-  // ignore
-}
-
-export function pushAvailable(): boolean {
-  return nativeReady();
-}
-
-async function setupAndroidChannels() {
+async function setupAndroidChannels(m: NotifModule) {
   if (Platform.OS !== 'android') return;
-  for (const id of Object.keys(CHANNELS)) {
-    const spec = CHANNELS[id];
+  for (const c of CHANNELS) {
     try {
-      await Notifications.setNotificationChannelAsync(id, {
-        name: spec.name,
-        importance: spec.importance,
-        vibrationPattern: spec.vibration,
-        lightColor: spec.light,
+      await m.setNotificationChannelAsync(c.id, {
+        name: c.name,
+        importance: importanceOf(m, c.importance),
+        vibrationPattern: c.vibration,
+        lightColor: c.light,
         enableVibrate: true,
         enableLights: true,
         showBadge: true,
@@ -164,8 +189,8 @@ async function setupAndroidChannels() {
 // ------------------------------------------------------------
 function projectId(): string | null {
   try {
-    const fromExtra = (Constants?.expoConfig as { extra?: { eas?: { projectId?: string } } } | null)?.extra?.eas
-      ?.projectId;
+    const fromExtra = (Constants?.expoConfig as { extra?: { eas?: { projectId?: string } } } | null)?.extra
+      ?.eas?.projectId;
     const fromEas = (Constants as { easConfig?: { projectId?: string } } | null)?.easConfig?.projectId;
     return fromExtra ?? fromEas ?? null;
   } catch {
@@ -200,7 +225,8 @@ async function saveToken(token: string) {
  * Safe to call on every app start and on every login.
  */
 export async function initPush(): Promise<PushStatus> {
-  if (!nativeReady()) {
+  const m = notifications();
+  if (!m) {
     return {
       available: false,
       token: null,
@@ -208,18 +234,18 @@ export async function initPush(): Promise<PushStatus> {
     };
   }
   try {
-    await setupAndroidChannels();
+    await setupAndroidChannels(m);
 
-    let status = (await Notifications.getPermissionsAsync()).status;
+    let status = (await m.getPermissionsAsync()).status;
     if (status !== 'granted') {
-      status = (await Notifications.requestPermissionsAsync()).status;
+      status = (await m.requestPermissionsAsync()).status;
     }
     if (status !== 'granted') return { available: false, token: null, reason: 'denied' };
 
     const id = projectId();
     if (!id) return { available: false, token: null, reason: 'no-project-id' };
 
-    const res = await Notifications.getExpoPushTokenAsync({ projectId: id });
+    const res = await m.getExpoPushTokenAsync({ projectId: id });
     const token = res?.data ?? null;
     if (token) await saveToken(token);
     return { available: true, token, reason: token ? undefined : 'no-token' };
@@ -230,10 +256,12 @@ export async function initPush(): Promise<PushStatus> {
 
 /** Drop this device's token so the next account on this phone gets nothing. */
 export async function unregisterPush() {
+  const m = notifications();
+  if (!m) return;
   try {
     const id = projectId();
-    if (!nativeReady() || !id) return;
-    const res = await Notifications.getExpoPushTokenAsync({ projectId: id });
+    if (!id) return;
+    const res = await m.getExpoPushTokenAsync({ projectId: id });
     const token = res?.data;
     if (!token) return;
     await supabase.rpc('unregister_push_token', { p_token: token });
@@ -256,9 +284,10 @@ function deepLink(p: PushPayload): string {
  * makes an in-app arrival behave exactly like a real push.
  */
 export async function showLocalNotification(p: PushPayload) {
-  if (!nativeReady()) return;
+  const m = notifications();
+  if (!m) return;
   try {
-    await Notifications.scheduleNotificationAsync({
+    await m.scheduleNotificationAsync({
       content: {
         title: p.title,
         body: p.body,
@@ -290,11 +319,13 @@ let tapSub: { remove: () => void } | null = null;
 /** Subscribe to notification taps. Returns an unsubscribe function. */
 export function onNotificationTap(fn: TapHandler): () => void {
   tapHandlers.add(fn);
-  if (!nativeReady()) return () => tapHandlers.delete(fn);
+
+  const m = notifications();
+  if (!m) return () => tapHandlers.delete(fn);
 
   try {
     if (!tapSub) {
-      tapSub = Notifications.addNotificationResponseReceivedListener((response) => {
+      tapSub = m.addNotificationResponseReceivedListener((response) => {
         const data = (response?.notification?.request?.content?.data ?? {}) as Partial<PushPayload>;
         void clearBadge();
         const payload: PushPayload = {
@@ -328,9 +359,10 @@ export function onNotificationTap(fn: TapHandler): () => void {
 // app icon badge
 // ------------------------------------------------------------
 export async function setBadge(count: number) {
-  if (!nativeReady()) return;
+  const m = notifications();
+  if (!m) return;
   try {
-    await Notifications.setBadgeCountAsync(Math.max(0, count));
+    await m.setBadgeCountAsync(Math.max(0, count));
   } catch {
     // unsupported on some launchers
   }
@@ -342,9 +374,10 @@ export async function clearBadge() {
 
 /** Dismiss every notification this app posted (used when Activity is opened). */
 export async function dismissAll() {
-  if (!nativeReady()) return;
+  const m = notifications();
+  if (!m) return;
   try {
-    await Notifications.dismissAllNotificationsAsync();
+    await m.dismissAllNotificationsAsync();
   } catch {
     // ignore
   }

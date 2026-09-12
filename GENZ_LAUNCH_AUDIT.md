@@ -121,9 +121,12 @@ a `SECURITY DEFINER` function that bypasses RLS.)
    anything "view-once" — the UI promise and the storage reality disagree.
 
 Do **not** simply tighten `media_upload` to `foldername[1] = auth.uid()`. I
-checked the client's path builders and that would break avatar uploads,
-onboarding avatars, anonymous photo sends and voiceovers — every path where the
-uid is not the first segment.
+checked the client's path builders and that would break avatar uploads
+(`avatars/${user.id}/...`), anonymous photo sends (`anon/${recipientId}/...`)
+and voiceovers (`voiceovers/...`) — every path where the uid is not the first
+segment. Covers and drop media (`${user.id}/...`) would still work.
+Unverified: `OnboardingScreen.tsx` builds its path from a variable, so I cannot
+say whether that upload would survive the change.
 
 ### §6c — Anonymous messaging: clean bill of health
 
