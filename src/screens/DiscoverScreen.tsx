@@ -137,6 +137,20 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
   const [myRegion, setMyRegion] = useState<string | null>(null);
   const { width: winW } = useWindowDimensions();
 
+  // Grid geometry from the real window width. Percentage widths COLLAPSE inside a
+  // flexWrap row on Android — that crushed the discovery tiles to min-content and
+  // wrapped their labels one character per line.
+  const GRID_GAP = 10;
+  const gridW = Math.max(200, winW - 32); // content paddingHorizontal 16 * 2
+  const halfW = Math.floor((gridW - GRID_GAP) / 2);
+
+  /** [big] then [small small], repeating — deterministic rows, no wrap guesswork */
+  const gridRows = (list: P[]): P[][] => {
+    const rows: P[][] = [];
+    for (let i = 0; i < list.length; i += 3) rows.push(list.slice(i, i + 3));
+    return rows;
+  };
+
   useEffect(() => {
     (async () => {
       try {
@@ -412,22 +426,25 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
           )}
         </View>
       ) : (
-      <ScrollView
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* ---------- header ---------- */}
-        <View style={styles.dcTop}>
-          <View style={styles.dcTopText}>
-            <Text style={styles.dcWord}>DISCOVER</Text>
-            <Text style={styles.dcTitle}>Find your next moment.</Text>
-          </View>
+        <>
+        {/* ---------- persistent brand header ---------- */}
+        <View style={styles.dcHeader}>
+          <Image source={require('../../assets/icon-navy.png')} style={styles.dcMark} />
+          <Text style={styles.dcBrand}>GEN Z</Text>
           <View style={styles.dcBadge}>
             <View style={styles.dcBadgeDot} />
             <Text style={styles.dcBadgeText}>EXPLORE</Text>
           </View>
         </View>
+
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* ---------- page identity ---------- */}
+        <Text style={styles.dcWord}>DISCOVER</Text>
+        <Text style={styles.dcTitle}>Find your next moment.</Text>
 
         {/* ---------- search entry point ---------- */}
         <Press style={styles.dcSearch} onPress={() => setSearchFocused(true)} shrink={0.99}>
@@ -542,24 +559,39 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
                       ))}
                     </ScrollView>
                   )}
-                  {campusPosts.length > 0 && (
-                    <View style={styles.dcGrid}>
-                      {campusPosts.map((p, i) => (
-                        <Press
-                          key={p.id}
-                          style={[styles.tile, i % 3 === 0 && styles.tileBig]}
-                          onPress={() => openViewer(campusPosts, i)}
-                          shrink={0.98}
-                        >
-                          <CardMedia post={p} />
-                          <View style={styles.tileOverlay}>
-                            <Icon name={timeLeft(p.expires_at).icon} size={10} color={colors.accent} />
-                            <Text style={styles.tileTime}>{timeLeft(p.expires_at).text}</Text>
-                          </View>
-                        </Press>
-                      ))}
+                  {gridRows(campusPosts).map((row, ri) => (
+                    <View key={`c${ri}`} style={styles.dcRowGroup}>
+                      <Press
+                        style={[styles.tile, { width: gridW, height: 230 }]}
+                        onPress={() => openViewer(campusPosts, ri * 3)}
+                        shrink={0.98}
+                      >
+                        <CardMedia post={row[0]} />
+                        <View style={styles.tileOverlay}>
+                          <Icon name={timeLeft(row[0].expires_at).icon} size={10} color={colors.accent} />
+                          <Text style={styles.tileTime}>{timeLeft(row[0].expires_at).text}</Text>
+                        </View>
+                      </Press>
+                      {row.length > 1 && (
+                        <View style={styles.dcHalfRow}>
+                          {row.slice(1).map((p, ci) => (
+                            <Press
+                              key={p.id}
+                              style={[styles.tile, { width: halfW, height: 168 }]}
+                              onPress={() => openViewer(campusPosts, ri * 3 + ci + 1)}
+                              shrink={0.98}
+                            >
+                              <CardMedia post={p} />
+                              <View style={styles.tileOverlay}>
+                                <Icon name={timeLeft(p.expires_at).icon} size={10} color={colors.accent} />
+                                <Text style={styles.tileTime}>{timeLeft(p.expires_at).text}</Text>
+                              </View>
+                            </Press>
+                          ))}
+                        </View>
+                      )}
                     </View>
-                  )}
+                  ))}
                 </>
               ) : (
                 <Text style={styles.empty}>Quiet around {myRegion} right now.</Text>
@@ -662,28 +694,51 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
         {show('trending') && watching.length > 0 && (
           <>
             <SectionHead icon="eye" title="Everyone Is Watching" sub="The biggest moments on Gen Z." />
-            <View style={styles.dcGrid}>
-              {watching.map((p, i) => (
+            {gridRows(watching).map((row, ri) => (
+              <View key={`w${ri}`} style={styles.dcRowGroup}>
                 <Press
-                  key={p.id}
-                  style={[styles.tile, (i % 4 === 0 || i % 4 === 3) && styles.tileBig]}
-                  onPress={() => openViewer(watching, i)}
+                  style={[styles.tile, { width: gridW, height: 230 }]}
+                  onPress={() => openViewer(watching, ri * 3)}
                   shrink={0.98}
                 >
-                  <CardMedia post={p} />
+                  <CardMedia post={row[0]} />
                   <View style={styles.tileOverlay}>
                     <View style={styles.statRow}>
                       <Icon name="heart" size={10} color={colors.logoWhite} />
-                      <Text style={styles.tileLikes}>{fmtCount(p.likes_count)}</Text>
+                      <Text style={styles.tileLikes}>{fmtCount(row[0].likes_count)}</Text>
                     </View>
                     <View style={styles.statRow}>
-                      <Icon name={timeLeft(p.expires_at).icon} size={10} color={colors.accent} />
-                      <Text style={styles.tileTime}>{timeLeft(p.expires_at).text}</Text>
+                      <Icon name={timeLeft(row[0].expires_at).icon} size={10} color={colors.accent} />
+                      <Text style={styles.tileTime}>{timeLeft(row[0].expires_at).text}</Text>
                     </View>
                   </View>
                 </Press>
-              ))}
-            </View>
+                {row.length > 1 && (
+                  <View style={styles.dcHalfRow}>
+                    {row.slice(1).map((p, ci) => (
+                      <Press
+                        key={p.id}
+                        style={[styles.tile, { width: halfW, height: 168 }]}
+                        onPress={() => openViewer(watching, ri * 3 + ci + 1)}
+                        shrink={0.98}
+                      >
+                        <CardMedia post={p} />
+                        <View style={styles.tileOverlay}>
+                          <View style={styles.statRow}>
+                            <Icon name="heart" size={10} color={colors.logoWhite} />
+                            <Text style={styles.tileLikes}>{fmtCount(p.likes_count)}</Text>
+                          </View>
+                          <View style={styles.statRow}>
+                            <Icon name={timeLeft(p.expires_at).icon} size={10} color={colors.accent} />
+                            <Text style={styles.tileTime}>{timeLeft(p.expires_at).text}</Text>
+                          </View>
+                        </View>
+                      </Press>
+                    ))}
+                  </View>
+                )}
+              </View>
+            ))}
           </>
         )}
 
@@ -745,6 +800,7 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
           </View>
         )}
       </ScrollView>
+        </>
       )}
 
       {viewer && (
@@ -807,13 +863,6 @@ function CardMedia({ post }: { post: P }) {
 
 const styles = StyleSheet.create({
   // ---- discover (redesigned) ----
-  dcTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 4,
-  },
-  dcTopText: { flex: 1 },
   dcWord: { color: colors.accent, fontSize: 11.5, fontWeight: '800', letterSpacing: 3 },
   dcTitle: {
     color: colors.text,
@@ -867,16 +916,11 @@ const styles = StyleSheet.create({
   // section spacing
   dcRow: { gap: 12, paddingTop: 14, paddingRight: 6 },
 
-  // discovery grid with deliberately uneven tiles
-  dcGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    paddingTop: 14,
-  },
+  // discovery grid — widths are passed in from the measured window, never
+  // percentages, because percentages collapse inside a wrapping row on Android
+  dcRowGroup: { gap: 10, marginTop: 14 },
+  dcHalfRow: { flexDirection: 'row', gap: 10 },
   tile: {
-    width: '48.5%',
-    height: 168,
     borderRadius: radius.lg,
     overflow: 'hidden',
     borderWidth: 1,
@@ -884,7 +928,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     justifyContent: 'flex-end',
   },
-  tileBig: { width: '100%', height: 250 },
   tileOverlay: {
     position: 'absolute',
     left: 0,
@@ -1145,9 +1188,24 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   content: {
-    paddingTop: TOP_INSET + 16,
+    // horizontal padding was missing entirely, which is why every section and
+    // card sat flush against the screen edges
+    paddingHorizontal: 16,
+    paddingTop: 14,
     paddingBottom: 40,
   },
+
+  // persistent brand header — the GEN Z lockup, matching the other screens
+  dcHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    paddingHorizontal: 16,
+    paddingTop: TOP_INSET + 10,
+    paddingBottom: 12,
+  },
+  dcMark: { width: 30, height: 30, borderRadius: 9 },
+  dcBrand: { flex: 1, color: colors.accent, fontSize: 15, fontWeight: '800', letterSpacing: 2.6 },
   sectionTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
