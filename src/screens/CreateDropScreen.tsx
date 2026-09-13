@@ -20,7 +20,6 @@ import { captureRef } from 'react-native-view-shot';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import { TOP_INSET } from '../utils/useInsets';
-import LogoHeader from '../components/LogoHeader';
 import Icon, { IconName } from '../components/ui/Icon';
 import Button from '../components/Button';
 import Draggable from '../components/create/Draggable';
@@ -471,6 +470,112 @@ function TemplateArt({ t, width }: { t: HubTemplate; width: number }) {
   );
 }
 
+// ============================================================
+// CREATE STUDIO — VISUALS
+// Same rule as the hub: gradients and glow are composed from views, because
+// expo-linear-gradient is not a dependency of this app and pulling in a native
+// module would force another native rebuild.
+// ============================================================
+
+/** HUD corner brackets — the "scanner frame" around a drop zone. */
+function CornerBrackets({
+  color,
+  size = 20,
+  inset = 10,
+}: {
+  color: string;
+  size?: number;
+  inset?: number;
+}) {
+  const base = { position: 'absolute' as const, width: size, height: size, borderColor: color };
+  return (
+    <>
+      <View
+        pointerEvents="none"
+        style={[base, { top: inset, left: inset, borderTopWidth: 2, borderLeftWidth: 2, borderTopLeftRadius: 12 }]}
+      />
+      <View
+        pointerEvents="none"
+        style={[base, { top: inset, right: inset, borderTopWidth: 2, borderRightWidth: 2, borderTopRightRadius: 12 }]}
+      />
+      <View
+        pointerEvents="none"
+        style={[base, { bottom: inset, left: inset, borderBottomWidth: 2, borderLeftWidth: 2, borderBottomLeftRadius: 12 }]}
+      />
+      <View
+        pointerEvents="none"
+        style={[base, { bottom: inset, right: inset, borderBottomWidth: 2, borderRightWidth: 2, borderBottomRightRadius: 12 }]}
+      />
+    </>
+  );
+}
+
+/** Media | Text switch with a sliding gradient pill. */
+function Segmented({ value, onChange }: { value: Mode; onChange: (m: Mode) => void }) {
+  const [w, setW] = useState(0);
+  const v = useRef(new Animated.Value(value === 'media' ? 0 : 1)).current;
+
+  useEffect(() => {
+    Animated.spring(v, {
+      toValue: value === 'media' ? 0 : 1,
+      useNativeDriver: true,
+      speed: 16,
+      bounciness: 7,
+    }).start();
+  }, [value, v]);
+
+  const half = w > 0 ? (w - 8) / 2 : 0;
+  const items: { key: Mode; label: string; icon: IconName }[] = [
+    { key: 'media', label: 'Media', icon: 'videocam-outline' },
+    { key: 'text', label: 'Text', icon: 'create-outline' },
+  ];
+
+  return (
+    <View style={styles.cvSeg} onLayout={(e) => setW(e.nativeEvent.layout.width)}>
+      {half > 0 && (
+        <Animated.View
+          style={[
+            styles.cvSegPill,
+            {
+              width: half,
+              transform: [
+                { translateX: v.interpolate({ inputRange: [0, 1], outputRange: [0, half] }) },
+              ],
+            },
+          ]}
+        >
+          <GradientFill from={colors.accent} to={colors.accentStrong} steps={10} horizontal style={FILL} />
+        </Animated.View>
+      )}
+      {items.map((it) => {
+        const active = value === it.key;
+        return (
+          <Pressable key={it.key} style={styles.cvSegItem} onPress={() => onChange(it.key)} hitSlop={4}>
+            <Icon name={it.icon} size={15} color={active ? colors.bg : colors.textMuted} />
+            <Text style={[styles.cvSegText, active && styles.cvSegTextActive]}>{it.label}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+const TEXT_STARTERS = [
+  'Unpopular opinion: ',
+  'Hot take: ',
+  'POV: ',
+  'Nobody talks about ',
+  'Reminder: ',
+  'Confession: ',
+];
+
+/** "Vanishes Sun at 07:00" — the real 48h rule, made concrete. No backend change. */
+function vanishLabel(ms: number): string {
+  const d = new Date(Date.now() + ms);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `Vanishes ${d.toLocaleDateString([], { weekday: 'short' })} at ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export default function CreateDropScreen({
   onPosted,
   initialSound = null,
@@ -547,6 +652,9 @@ export default function CreateDropScreen({
   // never overflow a narrow Android screen or look lost on a large one
   const { width: winW } = useWindowDimensions();
   const tplW = Math.max(132, Math.min(158, Math.round(winW * 0.4)));
+
+  // focus the text composer after inserting a starter prompt
+  const textInputRef = useRef<TextInput>(null);
 
   // Android camera captures often report mimeType: null — detect video by
   // file extension as a fallback so recorded clips get a cover + correct type
@@ -1236,91 +1344,189 @@ export default function CreateDropScreen({
       )}
 
       {step === 'create' && (
-        <KeyboardAvoidingView
-          style={styles.flex}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
-          <ScrollView contentContainerStyle={styles.createContent} keyboardShouldPersistTaps="handled">
-            <Pressable style={styles.hubBack} onPress={() => setStep('hub')} hitSlop={8}>
-              <Icon name="chevron-back" size={17} color={colors.textMuted} />
-              <Text style={styles.hubBackText}>Templates</Text>
-            </Pressable>
-            <LogoHeader subtitle="Gone in 48 hours. Make it count." />
+        <KeyboardAvoidingView style={styles.flex} behavior="padding">
+          <ScrollView
+            contentContainerStyle={styles.createContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {/* ---------- studio top bar ---------- */}
+            <View style={styles.cvTopBar}>
+              <Pressable style={styles.hubBack} onPress={() => setStep('hub')} hitSlop={8}>
+                <Icon name="chevron-back" size={17} color={colors.textMuted} />
+                <Text style={styles.hubBackText}>Templates</Text>
+              </Pressable>
+              <View style={styles.cvLivePill}>
+                <View style={styles.cvLiveDot} />
+                <Text style={styles.cvLiveText}>STUDIO</Text>
+              </View>
+            </View>
 
-            {/* Media | Text toggle */}
+            <Text style={styles.cvHeadline}>
+              {mode === 'media' ? 'Drop your moment' : 'Say it out loud'}
+            </Text>
+            <Text style={styles.cvSub}>
+              {mode === 'media'
+                ? 'Photos or one video. It goes live the moment you post.'
+                : 'One thought, no edits. It lives for 48 hours.'}
+            </Text>
+
             {parentDropId && (
               <View style={styles.replyBanner}>
                 <Text style={styles.replyBannerText}>
-                  🎥 Replying to a Drop — this links back to the original and gets its own 48 hours.
+                  Replying to a Drop — this links back to the original and gets its own 48 hours.
                 </Text>
               </View>
             )}
-            <View style={styles.segment}>
-              {(['media', 'text'] as Mode[]).map((m) => (
-                <Pressable
-                  key={m}
-                  style={[styles.segmentBtn, mode === m && styles.segmentBtnActive]}
-                  onPress={() => setMode(m)}
-                >
-                  <View style={styles.statRow}>
-                    <Icon name={m === 'media' ? 'videocam-outline' : 'create-outline'} size={15} color={mode === m ? colors.accent : colors.textMuted} />
-                    <Text style={[styles.segmentText, mode === m && styles.segmentTextActive]}>
-                      {m === 'media' ? 'Media' : 'Text'}
-                    </Text>
-                  </View>
-                </Pressable>
-              ))}
-            </View>
+
+            <Segmented value={mode} onChange={setMode} />
 
             {draft && (
-              <Pressable style={styles.draftBanner} onPress={loadDraft}>
-                <Text style={styles.draftBannerText}>💾 You have a draft from {new Date(draft.updated_at).toLocaleString()}</Text>
-                <Text style={styles.draftBannerCta}>Resume →</Text>
-              </Pressable>
+              <Press style={styles.draftBanner} onPress={loadDraft}>
+                <Icon name="bookmark-outline" size={14} color={colors.accent} />
+                <Text style={styles.draftBannerText} numberOfLines={1}>
+                  Draft from {new Date(draft.updated_at).toLocaleDateString()}
+                </Text>
+                <Text style={styles.draftBannerCta}>Resume</Text>
+              </Press>
             )}
 
             {mode === 'media' ? (
               <>
-                <Pressable style={styles.previewBox} onPress={() => setPickerOpen(true)}>
-                  {hasMedia ? (
-                    firstIsVideo ? (
-                      <VideoView player={player} style={styles.previewMedia} contentFit="cover" />
-                    ) : (
-                      <CollageView assets={assets} collage={assets.length > 1 ? collage : 'single'} style={styles.previewMedia} />
-                    )
-                  ) : (
-                    <View style={styles.previewEmpty}>
-                      <Text style={styles.previewPlus}>+</Text>
-                      <Text style={styles.previewEmptyText}>Pick up to 6 photos or a video</Text>
-                    </View>
-                  )}
-                  {hasMedia && (
-                    <View style={styles.countBadge}>
-                      <Text style={styles.countBadgeText}>{assets.length} media</Text>
-                    </View>
-                  )}
-                </Pressable>
+                {/* ---------- studio drop zone ---------- */}
+                <Press style={styles.cvZone} onPress={() => setPickerOpen(true)} shrink={0.99}>
+                  <GradientFill from="#141E3A" to="#0A1020" steps={16} style={FILL} />
+                  <Glow color={colors.accent} size={300} strength={0.12} style={styles.cvZoneGlow} />
+                  <CornerBrackets color="rgba(255,157,31,0.5)" size={22} inset={12} />
 
-                <View style={styles.mediaActions}>
-                  <Button variant="secondary" title={hasMedia ? 'Change / add media' : 'Choose media'} onPress={() => setPickerOpen(true)} />
-                  {hasMedia && imagesOnly && assets.length > 1 && (
-                    <Button variant="secondary" title="🖼 Photo layout" onPress={() => setPhotoEditorOpen(true)} style={{ marginLeft: 10 }} />
+                  {hasMedia ? (
+                    <View style={styles.cvZoneMedia}>
+                      {firstIsVideo ? (
+                        <VideoView player={player} style={styles.cvZoneVideo} contentFit="cover" />
+                      ) : (
+                        <CollageView
+                          assets={assets}
+                          collage={assets.length > 1 ? collage : 'single'}
+                          style={styles.cvZoneVideo}
+                        />
+                      )}
+                      <View style={styles.cvCountBadge}>
+                        <Icon name="albums-outline" size={12} color={colors.bg} />
+                        <Text style={styles.cvCountText}>{assets.length} of 6</Text>
+                      </View>
+                    </View>
+                  ) : (
+                    <View style={styles.cvZoneEmpty}>
+                      <View style={styles.cvAddRing}>
+                        <Glow color={colors.accent} size={130} strength={0.24} style={styles.cvAddGlow} />
+                        <View style={styles.cvAddBtn}>
+                          <GradientFill from={colors.accent} to={colors.accentStrong} steps={10} style={FILL} />
+                          <Icon name="add" size={30} color={colors.bg} />
+                        </View>
+                      </View>
+                      <Text style={styles.cvZoneTitle}>Add your media</Text>
+                      <Text style={styles.cvZoneHint}>Pick up to 6 photos or one video</Text>
+                      <View style={styles.cvChips}>
+                        {['Photos', 'Video', 'Camera'].map((t) => (
+                          <View key={t} style={styles.cvChip}>
+                            <Text style={styles.cvChipText}>{t}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    </View>
                   )}
-                </View>
+                </Press>
 
                 {hasMedia && (
-                  <Button
-                    title="Continue → editor"
-                    onPress={goEditor}
-                    style={{ marginTop: 14 }}
-                  />
+                  <>
+                    {/* what you picked, at a glance — tap to manage */}
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.cvRail}
+                    >
+                      {assets.slice(0, 6).map((a, i) => (
+                        <Pressable
+                          key={`${a.uri}-${i}`}
+                          style={styles.cvThumb}
+                          onPress={() => setPickerOpen(true)}
+                        >
+                          {isVideoAsset(a) ? (
+                            <View style={[styles.cvThumbInner, styles.cvThumbVideo]}>
+                              <Icon name="videocam" size={18} color={colors.text} />
+                            </View>
+                          ) : (
+                            <Image source={{ uri: a.uri }} style={styles.cvThumbInner} />
+                          )}
+                        </Pressable>
+                      ))}
+                      {assets.length < 6 && (
+                        <Pressable
+                          style={[styles.cvThumb, styles.cvThumbAdd]}
+                          onPress={() => setPickerOpen(true)}
+                        >
+                          <Icon name="add" size={20} color={colors.accent} />
+                        </Pressable>
+                      )}
+                    </ScrollView>
+
+                    <View style={styles.cvStatusRow}>
+                      <View style={styles.cvStatusPill}>
+                        <Icon name="checkmark-circle" size={13} color={colors.success} />
+                        <Text style={styles.cvStatusText}>
+                          Ready · {assets.length} {assets.length === 1 ? 'item' : 'items'}
+                          {imagesOnly && assets.length > 1 ? ` · ${collage}` : ''}
+                        </Text>
+                      </View>
+                      {imagesOnly && assets.length > 1 && (
+                        <Pressable
+                          style={styles.cvMiniBtn}
+                          onPress={() => setPhotoEditorOpen(true)}
+                          hitSlop={6}
+                        >
+                          <Icon name="grid-outline" size={13} color={colors.accent} />
+                          <Text style={styles.cvMiniBtnText}>Layout</Text>
+                        </Pressable>
+                      )}
+                    </View>
+                  </>
+                )}
+
+                <Button
+                  variant="secondary"
+                  title={hasMedia ? 'Change / add media' : 'Choose media'}
+                  onPress={() => setPickerOpen(true)}
+                  style={{ marginTop: 14 }}
+                />
+
+                {hasMedia && (
+                  <Button title="Continue → editor" onPress={goEditor} style={{ marginTop: 12 }} />
                 )}
               </>
             ) : (
               <>
-                <View style={[styles.textDropCard, { backgroundColor: textColor }]}>
+                {/* ---------- text composer ---------- */}
+                <View style={[styles.cvTextCard, { backgroundColor: textColor }]}>
+                  <GradientFill
+                    from="#FFFFFF"
+                    to="#FFFFFF"
+                    steps={8}
+                    alphaFrom={0.1}
+                    alphaTo={0}
+                    style={FILL}
+                  />
+                  <CornerBrackets color="rgba(255,255,255,0.32)" size={16} inset={9} />
                   <TextInput
-                    style={[styles.textDropInput, { color: textColor === '#0D1426' || textColor === '#1E2A47' ? colors.text : colors.bg }]}
+                    ref={textInputRef}
+                    style={[
+                      styles.cvTextInput,
+                      {
+                        color:
+                          textColor === '#0D1426' || textColor === '#1E2A47'
+                            ? colors.text
+                            : colors.bg,
+                      },
+                    ]}
                     placeholder="Say something worth seeing..."
                     placeholderTextColor="rgba(255,255,255,0.45)"
                     multiline
@@ -1328,30 +1534,64 @@ export default function CreateDropScreen({
                     value={content}
                     onChangeText={setContent}
                   />
-                  <View style={[styles.statRow, { marginTop: 10 }]}>
-                    <Icon name="hourglass-outline" size={13} color={colors.accent} />
-                    <Text style={[styles.textDropHint, { marginTop: 0 }]}>This text drop vanishes in 48 hours</Text>
+                  <View style={styles.cvMeterRow}>
+                    <View style={styles.cvMeterTrack}>
+                      <View
+                        style={[
+                          styles.cvMeterFill,
+                          { width: `${Math.min(100, (content.length / 220) * 100)}%` },
+                        ]}
+                      />
+                    </View>
+                    <Text style={styles.cvMeterText}>{content.length}/220</Text>
                   </View>
                 </View>
-                <View style={styles.chipRow}>
-                  {TEXT_DROP_COLORS.map((c) => (
-                    <Pressable
-                      key={c}
-                      style={[styles.colorSwatch, { backgroundColor: c }, textColor === c && styles.colorSwatchActive]}
-                      onPress={() => setTextColor(c)}
-                    />
-                  ))}
+
+                {/* colour */}
+                <View style={styles.cvSwatchRow}>
+                  {TEXT_DROP_COLORS.map((c) => {
+                    const active = textColor === c;
+                    return (
+                      <Pressable key={c} onPress={() => setTextColor(c)} hitSlop={4}>
+                        <View style={[styles.cvSwatchOuter, active && styles.cvSwatchOuterActive]}>
+                          <View style={[styles.cvSwatch, { backgroundColor: c }]} />
+                        </View>
+                      </Pressable>
+                    );
+                  })}
                 </View>
+
+                {/* starters — insert only, nothing persisted */}
+                <Text style={styles.cvSectionLabel}>START A THOUGHT</Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.cvStarters}
+                >
+                  {TEXT_STARTERS.map((s) => (
+                    <Pressable
+                      key={s}
+                      style={styles.cvStarter}
+                      onPress={() => {
+                        setContent((c) => (c.trim().length > 0 ? `${c}${s}` : s));
+                        textInputRef.current?.focus();
+                      }}
+                    >
+                      <Text style={styles.cvStarterText}>{s.trim()}</Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+
                 {content.trim().length > 0 && (
-                  <Button title="Continue → preview" onPress={goPreview} style={{ marginTop: 10 }} />
+                  <Button title="Continue → preview" onPress={goPreview} style={{ marginTop: 12 }} />
                 )}
               </>
             )}
 
             {!!error && <Text style={styles.error}>{error}</Text>}
             <View style={styles.footer48Row}>
-              <Icon name="hourglass-outline" size={12} color={colors.textMuted} />
-              <Text style={styles.footer48}>Gone in 48 hours. Make it count.</Text>
+              <Icon name="hourglass-outline" size={12} color={colors.accent} />
+              <Text style={styles.footer48}>{vanishLabel(H48)}</Text>
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -1589,8 +1829,14 @@ export default function CreateDropScreen({
         </View>
       )}
 
+      {/* preview
+          behavior must be 'padding' on Android too: with `undefined` RN's
+          KeyboardAvoidingView hits its `default:` branch and renders a plain
+          View that does nothing, which left the caption input behind the
+          keyboard. 'padding' is self-correcting — it pads only by the measured
+          overlap, so a resizing window would add nothing. */}
       {step === 'preview' && (
-        <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView style={styles.flex} behavior="padding">
           <ScrollView contentContainerStyle={styles.previewContent} keyboardShouldPersistTaps="handled">
             <View style={styles.previewTop}>
               <Pressable onPress={backFromPreview} hitSlop={8}>
@@ -1959,14 +2205,249 @@ function ToggleRow({ label, value, onChange }: { label: string; value: boolean; 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   flex: { flex: 1 },
-  createContent: { padding: 22, paddingTop: TOP_INSET + 16, paddingBottom: 40 },
-  segment: {
+  createContent: { padding: 20, paddingTop: TOP_INSET + 14, paddingBottom: 40 },
+
+  // ---- create studio (redesigned) ----
+  cvTopBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  cvLivePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderWidth: 1,
+    borderColor: 'rgba(255,157,31,0.35)',
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+  },
+  cvLiveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.accent },
+  cvLiveText: { color: colors.accent, fontSize: 9.5, fontWeight: '800', letterSpacing: 1.4 },
+  cvHeadline: {
+    color: colors.text,
+    fontSize: 25,
+    fontWeight: '800',
+    letterSpacing: -0.5,
+    lineHeight: 31,
+    marginTop: 10,
+  },
+  cvSub: { color: colors.textMuted, fontSize: 13, lineHeight: 19, marginTop: 5 },
+
+  // segmented control
+  cvSeg: {
     flexDirection: 'row',
     backgroundColor: colors.surface,
     borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
     padding: 4,
-    marginBottom: 16,
+    marginTop: 16,
+    marginBottom: 4,
   },
+  cvSegPill: {
+    position: 'absolute',
+    top: 4,
+    left: 4,
+    bottom: 4,
+    borderRadius: radius.pill,
+    overflow: 'hidden',
+  },
+  cvSegItem: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+  },
+  cvSegText: { color: colors.textMuted, fontSize: 14, fontWeight: '700' },
+  cvSegTextActive: { color: colors.bg },
+
+  // drop zone
+  cvZone: {
+    width: '100%',
+    minHeight: 330,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: 'rgba(255,157,31,0.22)',
+    backgroundColor: colors.surface,
+    overflow: 'hidden',
+    justifyContent: 'center',
+    marginTop: 14,
+    shadowColor: colors.accent,
+    shadowOpacity: 0.14,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
+  },
+  cvZoneGlow: { position: 'absolute', top: -70, left: -60 },
+  cvZoneEmpty: { alignItems: 'center', paddingVertical: 34, paddingHorizontal: 20 },
+  cvZoneMedia: { flex: 1, width: '100%' },
+  cvZoneVideo: { width: '100%', height: 330 },
+  cvAddRing: { alignItems: 'center', justifyContent: 'center' },
+  cvAddGlow: { position: 'absolute' },
+  cvAddBtn: {
+    width: 68,
+    height: 68,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    shadowColor: colors.accentStrong,
+    shadowOpacity: 0.5,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 10,
+  },
+  cvZoneTitle: { color: colors.text, fontSize: 17, fontWeight: '800', marginTop: 18 },
+  cvZoneHint: { color: colors.textMuted, fontSize: 12.5, marginTop: 5 },
+  cvChips: { flexDirection: 'row', gap: 7, marginTop: 16 },
+  cvChip: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: radius.pill,
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+  },
+  cvChipText: { color: colors.textMuted, fontSize: 11, fontWeight: '700' },
+  cvCountBadge: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: colors.accent,
+    borderRadius: radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    ...shadows.glow,
+  },
+  cvCountText: { color: colors.bg, fontSize: 11, fontWeight: '800' },
+
+  // selection rail
+  cvRail: { gap: 9, paddingTop: 14, paddingRight: 6 },
+  cvThumb: {
+    width: 62,
+    height: 62,
+    borderRadius: 14,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  cvThumbInner: { width: '100%', height: '100%' },
+  cvThumbVideo: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceAlt,
+  },
+  cvThumbAdd: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderStyle: 'dashed',
+    borderColor: colors.accent,
+    backgroundColor: colors.accentSoft,
+  },
+
+  // readiness
+  cvStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 12,
+    gap: 10,
+  },
+  cvStatusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 1,
+    backgroundColor: 'rgba(52,211,153,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(52,211,153,0.35)',
+    borderRadius: radius.pill,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+  },
+  cvStatusText: { color: colors.text, fontSize: 11.5, fontWeight: '700' },
+  cvMiniBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+  },
+  cvMiniBtnText: { color: colors.accent, fontSize: 11.5, fontWeight: '800' },
+
+  // text composer
+  cvTextCard: {
+    borderRadius: radius.xl,
+    minHeight: 250,
+    padding: 20,
+    marginTop: 14,
+    overflow: 'hidden',
+    justifyContent: 'space-between',
+    ...shadows.md,
+  },
+  cvTextInput: {
+    fontSize: 25,
+    fontWeight: '800',
+    minHeight: 150,
+    textAlignVertical: 'top',
+    letterSpacing: -0.3,
+  },
+  cvMeterRow: { flexDirection: 'row', alignItems: 'center', gap: 9, marginTop: 10 },
+  cvMeterTrack: {
+    flex: 1,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    overflow: 'hidden',
+  },
+  cvMeterFill: { height: '100%', borderRadius: 2, backgroundColor: colors.accent },
+  cvMeterText: { color: 'rgba(255,255,255,0.7)', fontSize: 11, fontWeight: '700' },
+  cvSwatchRow: { flexDirection: 'row', alignItems: 'center', gap: 11, marginTop: 16 },
+  cvSwatchOuter: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 2,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cvSwatchOuterActive: {
+    borderColor: colors.accent,
+    shadowColor: colors.accent,
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 5,
+  },
+  cvSwatch: { width: 32, height: 32, borderRadius: 16 },
+  cvSectionLabel: {
+    color: colors.textFaint,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+    marginTop: 22,
+    marginBottom: 2,
+  },
+  cvStarters: { gap: 8, paddingVertical: 10, paddingRight: 6 },
+  cvStarter: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    borderRadius: radius.pill,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
+  },
+  cvStarterText: { color: colors.textMuted, fontSize: 12, fontWeight: '700' },
   panelColumn: {
     gap: 10,
     paddingVertical: 4,
@@ -2019,64 +2500,24 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     lineHeight: 17,
   },
-  segmentBtn: { flex: 1, paddingVertical: 10, borderRadius: radius.pill, alignItems: 'center' },
-  segmentBtnActive: { backgroundColor: colors.accent },
-  segmentText: { color: colors.textMuted, fontSize: 14, fontWeight: '600' },
-  segmentTextActive: { color: colors.bg },
   draftBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 9,
     backgroundColor: colors.accentSoft,
     borderWidth: 1,
     borderColor: colors.accent,
     borderRadius: radius.md,
-    padding: 12,
-    marginBottom: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 12,
+    marginBottom: 4,
   },
   draftBannerText: { color: colors.text, fontSize: 12, flex: 1 },
-  draftBannerCta: { color: colors.accent, fontSize: 13, fontWeight: '800', marginLeft: 10 },
-  previewBox: {
-    width: '100%',
-    height: 380,
-    borderRadius: radius.lg,
-    backgroundColor: colors.glass,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...shadows.md,
-  },
-  previewMedia: { width: '100%', height: '100%' },
-  previewEmpty: { alignItems: 'center' },
-  previewPlus: { color: colors.accent, fontSize: 44, fontWeight: '300' },
-  previewEmptyText: { color: colors.textMuted, fontSize: 14, marginTop: 8 },
-  countBadge: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    borderRadius: radius.pill,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  countBadgeText: { color: colors.text, fontSize: 11, fontWeight: '700' },
-  mediaActions: { flexDirection: 'row', marginTop: 14 },
-  textDropCard: {
-    borderRadius: radius.lg,
-    minHeight: 240,
-    padding: 20,
-    justifyContent: 'space-between',
-    ...shadows.md,
-  },
-  textDropInput: { fontSize: 26, fontWeight: '800', minHeight: 160, textAlignVertical: 'top' },
-  textDropHint: { color: 'rgba(255,255,255,0.6)', fontSize: 12, marginTop: 10 },
+  draftBannerCta: { color: colors.accent, fontSize: 12.5, fontWeight: '800' },
   textDropCardSm: { borderRadius: radius.lg, padding: 18, minHeight: 130, ...shadows.md },
   textDropBody: { fontSize: 20, fontWeight: '800' },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10, alignItems: 'center' },
-  colorSwatch: { width: 38, height: 38, borderRadius: 19, borderWidth: 2, borderColor: 'transparent' },
-  colorSwatchActive: { borderColor: colors.accent },
   error: { color: colors.danger, fontSize: 13, marginTop: 10 },
   footer48Row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 22 },
   footer48: { color: colors.textFaint, fontSize: 12, textAlign: 'center', fontWeight: '600' },
