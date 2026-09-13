@@ -649,9 +649,15 @@ const styles = StyleSheet.create({
   },
   chipRow: {
     flexGrow: 0,
-    maxHeight: 46,
+    // NO maxHeight. It was 46, which is less than the row's real content height
+    // (16 row padding + 14 chip padding/border + ~18 text line box = ~48), so the
+    // row was clipped and every chip label rendered sliced across the middle.
+    // Sizing to content also means the labels survive a larger system font scale.
   },
   chipRowContent: {
+    // without this the chips stretch to the row's height and the text is squeezed
+    // inside them — the other half of the same bug
+    alignItems: 'center',
     paddingHorizontal: 14,
     paddingVertical: 8,
     gap: 8,
@@ -672,6 +678,9 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: 12.5,
     fontWeight: '700',
+    // an explicit line box so the chip height is deterministic on every device
+    // instead of depending on font metrics
+    lineHeight: 17,
   },
   chipTextActive: {
     color: colors.accent,
