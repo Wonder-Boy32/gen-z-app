@@ -210,12 +210,18 @@ export default function DownloadFlowModal({ post, onClose }: Props) {
     await saveToGallery(shotUri, genzDownloadStamp());
   };
 
-  // Resolves with the captured pill PNG uri (or null if there's no username /
-  // the capture failed / timed out — the bake then falls back to the bundled
-  // wordmark). Cached per modal session.
+  // Resolves with the captured pill PNG uri, or null only if the capture really
+  // failed. Cached per modal session.
+  //
+  // This used to bail out early with `if (!username) return resolve(null)`, so a
+  // post whose profile never reached this component got NO branded watermark at
+  // all: the bake silently fell back to the bundled flat wordmark (white, no
+  // logo, no handle). That is the "username missing + not my colour or logo"
+  // report. The pill carries the GEN Z mark and the orange wordmark regardless of
+  // whether we know the handle, so the branding must never be conditional on the
+  // username — WatermarkPill already appends @handle only when it has one.
   const waitPillShot = (): Promise<string | null> =>
     new Promise((resolve) => {
-      if (!username) return resolve(null);
       if (pillUriRef.current) return resolve(pillUriRef.current);
       const done = (uri: string | null) => {
         pillWaiters.current = pillWaiters.current.filter((w) => w !== done);
@@ -223,7 +229,9 @@ export default function DownloadFlowModal({ post, onClose }: Props) {
         if (uri) pillUriRef.current = uri;
         resolve(uri);
       };
-      const timer = setTimeout(() => done(null), 3500);
+      // 6s rather than 3.5s: the pill contains an Image, and a cold asset decode
+      // on a slow Android device can easily miss a short window
+      const timer = setTimeout(() => done(null), 6000);
       pillWaiters.current.push(done);
     });
 
@@ -274,7 +282,7 @@ export default function DownloadFlowModal({ post, onClose }: Props) {
           </View>
         )}
 
-        {!!username && (phase === 'prep' || phase === 'bake') && (
+        {(phase === 'prep' || phase === 'bake' || phase === 'capture') && (
           <View
             ref={pillShotRef}
             collapsable={false}
@@ -283,18 +291,25 @@ export default function DownloadFlowModal({ post, onClose }: Props) {
               if (pillFired.current) return;
               pillFired.current = true;
               setTimeout(async () => {
-                try {
-                  const shot = await captureRef(pillShotRef.current, {
-                    format: 'png',
-                    quality: 1,
-                    result: 'tmpfile',
-                  });
-                  pillWaiters.current.forEach((w) => w(shot));
-                } catch {
-                  pillWaiters.current.forEach((w) => w(null));
+                // one retry, and a slightly later first attempt: the original
+                // fired at 200ms with no second chance, so a single failed
+                // capture permanently downgraded the watermark to the flat asset
+                let shot: string | null = null;
+                for (let attempt = 0; attempt < 2 && !shot; attempt++) {
+                  try {
+                    shot = await captureRef(pillShotRef.current, {
+                      format: 'png',
+                      quality: 1,
+                      result: 'tmpfile',
+                    });
+                  } catch {
+                    shot = null;
+                    await new Promise((r) => setTimeout(r, 250));
+                  }
                 }
+                pillWaiters.current.forEach((w) => w(shot));
                 pillWaiters.current = [];
-              }, 200);
+              }, 350);
             }}
           >
             <WatermarkPill username={username} />
