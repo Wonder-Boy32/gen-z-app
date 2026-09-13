@@ -77,6 +77,9 @@ type FeedPostRow = {
   drop_id: string | null;
   parent_drop_id: string | null;
   profile: { username: string; avatar_url: string | null; is_private: boolean; region: string | null } | null;
+  /** present only on items that reached the feed because an account you follow
+   *  reposted them — names the account whose repost surfaced the drop */
+  reposted_by?: { username: string; avatar_url: string | null; verified?: boolean } | null;
 };
 
 export type Pulse = {
@@ -526,6 +529,101 @@ export default function FeedScreen({
       (p) => !hidden.has(p.id) && !muted.has(p.user_id) && !blocked.has(p.user_id)
     );
 
+    // ---- reposts by accounts you follow ----------------------------------
+    // Reposting used to be invisible to everyone but the reposter: the feed only
+    // ever read YOUR repost rows, so a repost was effectively a private bookmark.
+    // Merge in reposts made by accounts you follow so a repost actually surfaces
+    // a drop. Runs before the preference filters below, so repost entries are
+    // subject to the same hidden / muted / blocked / content-type / region rules
+    // as organic rows, and before `ids` so their like / save / reposted-by-me
+    // state is resolved along with everything else.
+    //
+    // Skipped on the scoped lookups (drop / user / sound / hashtag) and on the
+    // specialised tabs, where a repost would only be noise.
+    const repostEligible =
+      !!user &&
+      following.size > 0 &&
+      (mode === 'foryou' || mode === 'following') &&
+      !dropMode &&
+      !userMode &&
+      !audioMode &&
+      !hashtagMode;
+
+    if (repostEligible) {
+      const { data: rpRows } = await supabase
+        .from('reposts')
+        .select('post_id, user_id, created_at')
+        .in('user_id', [...following])
+        .order('created_at', { ascending: false })
+        .limit(40);
+
+      const reposts = (rpRows ?? []) as { post_id: string; user_id: string; created_at: string }[];
+      const repostPostIds = [...new Set(reposts.map((r) => r.post_id))];
+
+      if (repostPostIds.length) {
+        // reposter identity is fetched explicitly rather than via an embedded
+        // join, so this does not depend on an FK constraint's generated name
+        const [{ data: rpPosts }, { data: rpProfiles }] = await Promise.all([
+          supabase
+            .from('posts')
+            .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region, verified)')
+            .in('id', repostPostIds)
+            .is('parent_drop_id', null),
+          supabase
+            .from('profiles')
+            .select('id, username, avatar_url, verified')
+            .in('id', [...new Set(reposts.map((r) => r.user_id))]),
+        ]);
+
+        const postById: Record<string, FeedPostRow> = {};
+        ((rpPosts ?? []) as FeedPostRow[]).forEach((p) => {
+          postById[p.id] = p;
+        });
+        const reposterById: Record<string, { username: string; avatar_url: string | null; verified: boolean }> = {};
+        ((rpProfiles ?? []) as any[]).forEach((u) => {
+          reposterById[u.id] = u;
+        });
+
+        const seen = new Set(rows.map((p) => p.id));
+        const repostAt: Record<string, number> = {};
+        const fromRepost: FeedPostRow[] = [];
+
+        // rpRows is already newest-first, so the first time a post is seen it is
+        // attributed to its most recent reposter
+        for (const r of reposts) {
+          // already in the feed organically, or already attributed to a newer
+          // reposter — either way the drop must not appear twice
+          if (seen.has(r.post_id)) continue;
+          // a repost entry must obey the same viewer filters as organic rows
+          if (muted.has(r.user_id) || blocked.has(r.user_id)) continue;
+          const p = postById[r.post_id];
+          // absent = expired, removed, or hidden by its own RLS policy — which is
+          // what enforces the 48h rule for reposts, for free
+          if (!p) continue;
+          if (hidden.has(p.id) || muted.has(p.user_id) || blocked.has(p.user_id)) continue;
+
+          const who = reposterById[r.user_id];
+          seen.add(r.post_id);
+          repostAt[r.post_id] = new Date(r.created_at).getTime();
+          fromRepost.push({
+            ...p,
+            reposted_by: who
+              ? { username: who.username, avatar_url: who.avatar_url, verified: who.verified }
+              : null,
+          });
+        }
+
+        if (fromRepost.length) {
+          // interleave by effective recency: repost time for repost entries, post
+          // time for organic rows. Organic rows are already created_at-desc, so
+          // their relative order is preserved; reposts land where they happened.
+          const when = (p: FeedPostRow) => repostAt[p.id] ?? new Date(p.created_at).getTime();
+          // keep the feed's existing ceiling so the pager does not grow
+          rows = [...rows, ...fromRepost].sort((a, b) => when(b) - when(a)).slice(0, 90);
+        }
+      }
+    }
+
     // feed preferences — content types (empty selection = show everything)
     if (feedPrefs.content.length) {
       const wantVideo = feedPrefs.content.includes('video');
@@ -657,6 +755,7 @@ export default function FeedScreen({
     const reasonRows = rows.map((p) => {
       const pulse = pulseMap.get(p.id);
       const reasons: string[] = [];
+      if (p.reposted_by) reasons.push(`@${p.reposted_by.username} reposted this`);
       if (following.has(p.user_id)) reasons.push('You follow this creator');
       if (now - new Date(p.created_at).getTime() < 6 * H) reasons.push('This Drop is fresh — new Drops get a discovery boost');
       if (pulse?.rising) reasons.push('This Drop is rising quickly');

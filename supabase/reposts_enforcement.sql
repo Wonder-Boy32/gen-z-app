@@ -20,14 +20,19 @@
 --      posts that a private account's own policy would otherwise hide. The post
 --      content stayed protected; the relationship metadata did not.
 --
--- VERIFIED SAFE BEFORE TIGHTENING SELECT: the app reads this table only with
--- .eq('user_id', <me>) — FeedScreen.tsx (feed icon state) and ProfileScreen.tsx
--- (your own reposts tab). Public profiles never read it at all; PublicProfileScreen
--- shows no reposts tab. The admin analytics in admin_center.sql / _admin_part3.sql
--- run inside SECURITY DEFINER functions, which bypass RLS, so those counters are
--- unaffected by this change.
+-- SELECT IS DELIBERATELY TWO-CASE — neither world-readable nor owner-only:
+--   (a) auth.uid() = user_id               -> your own reposts (profile Reposts tab)
+--   (b) an ACCEPTED follow of the reposter -> the home feed, so reposting can
+--       actually surface a drop to the people who follow you
+-- A first revision of this file made select owner-only. That silently defeated the
+-- feature: reposts became invisible to followers. `status = 'accepted'` is required
+-- so that a still-pending request to a private account never exposes their reposts.
+-- Verified: the only third-party read is the home-feed merge in FeedScreen.tsx; every
+-- other reader filters to .eq('user_id', <me>). The admin analytics in admin_center.sql
+-- / _admin_part3.sql run inside SECURITY DEFINER functions, which bypass RLS.
 --
--- No data migration is needed: nothing in the app ever selected another user's rows.
+-- This file is idempotent (drop policy if exists + create), so re-running all of it
+-- moves an already-migrated database to this revision.
 -- ============================================================
 
 
@@ -69,14 +74,26 @@ for insert with check (
 
 
 -- ------------------------------------------------------------
--- 2) SELECT — only the reposter reads their own repost rows.
---    Both existing readers already filter to user_id = me, so the app
---    behaves identically; this just stops the table being world-readable.
+-- 2) SELECT — readable by the reposter, and by accounts that follow the
+--    reposter with an ACCEPTED follow. That second case is what puts reposts
+--    into the home feed; without it a repost reaches nobody. Everyone else is
+--    excluded, which is what closes the old world-readable hole.
 -- ------------------------------------------------------------
 drop policy if exists "reposts_select" on public.reposts;
 
 create policy "reposts_select" on public.reposts
-for select using (auth.uid() = user_id);
+for select using (
+  -- (a) your own reposts — the profile Reposts tab
+  auth.uid() = user_id
+  -- (b) reposts by accounts you follow — the home feed
+  or exists (
+    select 1
+    from public.follows f
+    where f.follower_id = auth.uid()
+      and f.following_id = reposts.user_id
+      and f.status = 'accepted'
+  )
+);
 
 
 -- ------------------------------------------------------------

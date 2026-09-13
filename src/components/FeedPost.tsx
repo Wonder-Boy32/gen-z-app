@@ -66,6 +66,9 @@ export type FeedPost = {
   pulse?: { views30: number; likes30: number; comments30: number; rising: boolean; trending: boolean } | null;
   responses_count?: number;
   reasons?: string[];
+  /** present only on items that reached the feed because an account you follow
+   *  reposted them — names the account whose repost surfaced the drop */
+  reposted_by?: { username: string; avatar_url: string | null; verified?: boolean } | null;
 };
 
 const REACTIONS = ['🔥', '😂', '😮', '💯'];
@@ -338,6 +341,14 @@ export default function FeedPost({
         </View>
 
         <View style={styles.bottomLeft}>
+          {!!post.reposted_by && (
+            <View style={styles.repostRow}>
+              <Icon name="repeat" size={12} color={colors.cyan} />
+              <Text style={styles.repostText} numberOfLines={1}>
+                @{post.reposted_by.username} reposted
+              </Text>
+            </View>
+          )}
           <View style={styles.userRow}>
             <Pressable style={styles.userPress} onPress={onOpenProfile} hitSlop={6}>
               <Avatar
@@ -830,12 +841,32 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 4,
   },
-  bottomLeft: {
-    padding: 16,
-    paddingBottom: 22,
-    maxWidth: '78%',
-  },
-  userRow: {
+        bottomLeft: {
+          padding: 16,
+          paddingBottom: 22,
+          maxWidth: '78%',
+        },
+        // same pill language as the profile reposts tile (ProfileScreen tileRepost),
+        // sized up for the full-screen feed
+        repostRow: {
+          alignSelf: 'flex-start',
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 4,
+          backgroundColor: colors.overlay,
+          borderRadius: 6,
+          paddingHorizontal: 6,
+          paddingVertical: 2,
+          marginBottom: 6,
+          maxWidth: '100%',
+        },
+        repostText: {
+          color: colors.cyan,
+          fontSize: 12,
+          fontWeight: '600',
+          flexShrink: 1,
+        },
+        userRow: {
     flexDirection: 'row',
     alignItems: 'center',
   },
