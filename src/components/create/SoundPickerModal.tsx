@@ -2,8 +2,10 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
+  Keyboard,
   Modal,
   PanResponder,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -54,6 +56,29 @@ const fmt = (s: number) => {
 
 export default function SoundPickerModal({ visible, onClose, onSelect, initial }: Props) {
   const insets = useInsets();
+
+  // Android: this Modal is its own window and does NOT resize for the IME, so the
+  // sheet has to be lifted by the reported keyboard height itself. There was no
+  // keyboard handling here at all, which is why the keypad simply covered the
+  // search field. Exactly one mechanism per platform — iOS is left as it was.
+  const [kbHeight, setKbHeight] = useState(0);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const show = Keyboard.addListener('keyboardDidShow', (e) =>
+      setKbHeight(e?.endCoordinates?.height ?? 0)
+    );
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKbHeight(0));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+
+  // with the IME open the nav bar sits behind it, so the full reported height is
+  // the distance the sheet has to clear
+  const padBottom = Platform.OS === 'android' && kbHeight > 0 ? kbHeight : 16 + insets.bottom;
+
   const [tab, setTab] = useState<'trending' | 'search'>('trending');
   const [query, setQuery] = useState('');
   const [trending, setTrending] = useState<Track[]>([]);
@@ -141,7 +166,7 @@ export default function SoundPickerModal({ visible, onClose, onSelect, initial }
     setSearching(true);
     setErr(null);
     try {
-      const res = await fetch(`${ITUNES_SEARCH}?term=${encodeURIComponent(q.trim())}&entity=song&limit=25`);
+      const res = await fetch(`${ITUNES_SEARCH}?term=${encodeURIComponent(q.trim())}&entity=song&limit=50`);
       const j = await res.json();
       setResults(
         ((j.results ?? []) as any[]).map((r) => ({
@@ -247,7 +272,7 @@ export default function SoundPickerModal({ visible, onClose, onSelect, initial }
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.overlay}>
-        <View style={[styles.sheet, { paddingBottom: 16 + insets.bottom }]}>
+        <View style={[styles.sheet, { paddingBottom: padBottom }]}>
           <View style={styles.handle} />
 
           {!selected ? (
@@ -491,7 +516,9 @@ const styles = StyleSheet.create({
   err: { color: colors.danger, fontSize: 12, marginBottom: 8, textAlign: 'center' },
   loader: { paddingVertical: 36 },
   empty: { color: colors.textMuted, fontSize: 13, textAlign: 'center', paddingVertical: 32 },
-  list: { flexGrow: 0 },
+  // flexShrink so the results give way to the lifted sheet instead of pushing the
+  // composer off screen on a short device
+  list: { flexGrow: 0, flexShrink: 1 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
