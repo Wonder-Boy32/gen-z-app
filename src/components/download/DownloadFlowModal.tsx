@@ -12,6 +12,7 @@ import {
 import { captureRef } from 'react-native-view-shot';
 import { colors, radius } from '../../theme';
 import { TOP_INSET } from '../../utils/useInsets';
+import { supabase } from '../../supabase/client';
 import {
   fetchMediaToCache,
   genzDownloadStamp,
@@ -70,6 +71,10 @@ type Props = {
     media_items?: { url: string; type: string }[] | null;
     sound_url?: string | null;
     profile?: { username: string } | null;
+    // the post object does not always carry its profile join — FeedPost defends
+    // against exactly the same thing by printing @unknown — so keep the author
+    // id around to recover the handle from
+    user_id?: string;
   };
   onClose: () => void;
 };
@@ -89,7 +94,44 @@ function WatermarkPill({ username }: { username: string }) {
 
 export default function DownloadFlowModal({ post, onClose }: Props) {
   const items = mediaItemsOf(post);
-  const username = post.profile?.username ?? '';
+  // The @handle is the one part of the watermark the bake cannot draw for itself:
+  // drawtext is not in the slim ffmpeg whitelist, so the ONLY way a username
+  // reaches the saved video is this pill being captured with it.
+  //
+  // post.profile is optional and is sometimes missing on the post object, in
+  // which case this used to silently fall back to '' and the pill was captured
+  // with the mark and wordmark but no handle. Recover it from the author id.
+  const [handle, setHandle] = useState(post.profile?.username ?? '');
+  const handleSettled = useRef(!!post.profile?.username);
+
+  useEffect(() => {
+    if (post.profile?.username) {
+      handleSettled.current = true;
+      return;
+    }
+    let alive = true;
+    (async () => {
+      try {
+        if (!post.user_id) return;
+        const { data } = await supabase
+          .from('profiles')
+          .select('username')
+          .eq('id', post.user_id)
+          .maybeSingle();
+        const name = (data as { username?: string } | null)?.username;
+        if (alive && name) setHandle(name);
+      } catch {
+        // no handle available — the pill still carries the mark and the wordmark
+      } finally {
+        if (alive) handleSettled.current = true;
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [post.profile?.username, post.user_id]);
+
+  const username = post.profile?.username ?? handle;
   const [phase, setPhase] = useState<Phase>('prep');
   const [label, setLabel] = useState('Preparing…');
   const [index, setIndex] = useState(0);
@@ -291,6 +333,11 @@ export default function DownloadFlowModal({ post, onClose }: Props) {
               if (pillFired.current) return;
               pillFired.current = true;
               setTimeout(async () => {
+                // wait — bounded — for the handle lookup to land, so the pill is
+                // captured WITH @name rather than racing the request
+                for (let i = 0; i < 10 && !handleSettled.current; i++) {
+                  await new Promise((r) => setTimeout(r, 150));
+                }
                 // one retry, and a slightly later first attempt: the original
                 // fired at 200ms with no second chance, so a single failed
                 // capture permanently downgraded the watermark to the flat asset
