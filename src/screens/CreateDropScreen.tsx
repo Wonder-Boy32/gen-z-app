@@ -21,6 +21,8 @@ import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import { TOP_INSET } from '../utils/useInsets';
 import Icon, { IconName } from '../components/ui/Icon';
+import Avatar from '../components/Avatar';
+import VerifiedBadge from '../components/ui/VerifiedBadge';
 import Button from '../components/Button';
 import Draggable from '../components/create/Draggable';
 import MediaPickerSheet from '../components/create/MediaPickerSheet';
@@ -576,6 +578,63 @@ function vanishLabel(ms: number): string {
   return `Vanishes ${d.toLocaleDateString([], { weekday: 'short' })} at ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** Generic animated single-choice row — shared by the mode and visibility switches. */
+function ChoiceRow<T extends string>({
+  options,
+  value,
+  onChange,
+}: {
+  options: { id: T; label: string; icon: IconName }[];
+  value: T;
+  onChange: (v: T) => void;
+}) {
+  const [w, setW] = useState(0);
+  const idx = Math.max(0, options.findIndex((o) => o.id === value));
+  const v = useRef(new Animated.Value(idx)).current;
+
+  useEffect(() => {
+    Animated.spring(v, { toValue: idx, useNativeDriver: true, speed: 16, bounciness: 7 }).start();
+  }, [idx, v]);
+
+  const seg = w > 0 ? (w - 8) / options.length : 0;
+
+  return (
+    <View style={styles.cvSeg} onLayout={(e) => setW(e.nativeEvent.layout.width)}>
+      {seg > 0 && (
+        <Animated.View
+          style={[
+            styles.cvSegPill,
+            {
+              width: seg,
+              transform: [
+                {
+                  translateX: v.interpolate({
+                    inputRange: options.map((_, i) => i),
+                    outputRange: options.map((_, i) => i * seg),
+                  }),
+                },
+              ],
+            },
+          ]}
+        >
+          <GradientFill from={colors.accent} to={colors.accentStrong} steps={10} horizontal style={FILL} />
+        </Animated.View>
+      )}
+      {options.map((o) => {
+        const active = value === o.id;
+        return (
+          <Pressable key={o.id} style={styles.cvSegItem} onPress={() => onChange(o.id)} hitSlop={4}>
+            <Icon name={o.icon} size={14} color={active ? colors.bg : colors.textMuted} />
+            <Text style={[styles.cvSegText, active && styles.cvSegTextActive]} numberOfLines={1}>
+              {o.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
 export default function CreateDropScreen({
   onPosted,
   initialSound = null,
@@ -656,6 +715,40 @@ export default function CreateDropScreen({
   // focus the text composer after inserting a starter prompt
   const textInputRef = useRef<TextInput>(null);
 
+  // the poster's own identity, so the preview shows the real thing.
+  // Read-only, one small select — nothing here is written back.
+  const [me, setMe] = useState<{
+    username: string;
+    avatar_url: string | null;
+    verified: boolean | null;
+  } | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { data: auth } = await supabase.auth.getUser();
+        if (!auth?.user) return;
+        const { data } = await supabase
+          .from('profiles')
+          .select('username, avatar_url, verified')
+          .eq('id', auth.user.id)
+          .maybeSingle();
+        const row = data as {
+          username: string;
+          avatar_url: string | null;
+          verified: boolean | null;
+        } | null;
+        if (alive && row) setMe(row);
+      } catch {
+        // the preview just falls back to a neutral placeholder
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   // Android camera captures often report mimeType: null — detect video by
   // file extension as a fallback so recorded clips get a cover + correct type
   const isVideoAsset = (a: any): boolean =>
@@ -691,32 +784,35 @@ export default function CreateDropScreen({
     }
   }, [player, firstVideoUri]);
 
-  // ---- auto cover: hidden paused player + view-shot capture ----
+  // ---- auto cover: hidden MUTED player + view-shot capture ----
+  //
+  // This player must never run on its own. It previously took `coverSource`
+  // (= the same uri as the visible preview), was unmuted, and called play() both
+  // in its initializer and in an effect — so picking a video started a SECOND
+  // decoder of the same file, audible at the same time as the preview. That is
+  // the "one video plays twice" bug: two plays, doubled audio, two decoders.
+  //
+  // It is now created with no source, muted, and the source is attached only
+  // inside captureCoverNow() — i.e. only while a cover frame is actually being
+  // grabbed. It has no reason to produce sound even then: it exists purely to
+  // render a frame for the screenshot.
   const coverCaptureRef = useRef<View>(null);
-  const capturePlayer = useVideoPlayer(coverSource ? { uri: coverSource } : null, (p) => {
+  const capturePlayer = useVideoPlayer(null, (p) => {
     p.loop = false;
-    p.play();
+    p.muted = true;
   });
-  useEffect(() => {
-    if (!capturePlayer) return;
-    const sub = capturePlayer.addListener('timeUpdate', ({ currentTime }: { currentTime: number }) => {
-      if (currentTime >= 2.5) capturePlayer.pause();
-    });
-    return () => sub.remove();
-  }, [capturePlayer]);
-  useEffect(() => {
-    if (capturePlayer && coverSource) {
-      try {
-        capturePlayer.replace({ uri: coverSource });
-        capturePlayer.play();
-      } catch {
-        // ignore
-      }
-    }
-  }, [capturePlayer, coverSource]);
 
   const captureCoverNow = useCallback(async (): Promise<string | null> => {
-    if (!coverCaptureRef.current || !capturePlayer) return null;
+    if (!coverCaptureRef.current || !capturePlayer || !coverSource) return null;
+    try {
+      // attach the source only now, and stay silent — nothing else is decoding
+      // this file for us at this point
+      capturePlayer.muted = true;
+      capturePlayer.replace({ uri: coverSource });
+      await new Promise((r) => setTimeout(r, 250));
+    } catch {
+      // ignore — grab() below reports failure by returning null
+    }
     const grab = async (at: number): Promise<string | null> => {
       capturePlayer.pause();
       capturePlayer.currentTime = at; // a real frame — not the (often black) first frame
@@ -744,7 +840,7 @@ export default function CreateDropScreen({
     } catch {
       return null;
     }
-  }, [capturePlayer]);
+  }, [capturePlayer, coverSource]);
 
   // create-intent: reply-to-drop chain link
   useEffect(() => {
@@ -1838,30 +1934,107 @@ export default function CreateDropScreen({
       {step === 'preview' && (
         <KeyboardAvoidingView style={styles.flex} behavior="padding">
           <ScrollView contentContainerStyle={styles.previewContent} keyboardShouldPersistTaps="handled">
-            <View style={styles.previewTop}>
-              <Pressable onPress={backFromPreview} hitSlop={8}>
-                <Text style={styles.previewBack}>✕</Text>
+            {/* ---------- top bar ---------- */}
+            <View style={styles.pvTop}>
+              <Pressable onPress={backFromPreview} hitSlop={8} style={styles.pvClose}>
+                <Icon name="close" size={16} color={colors.text} />
               </Pressable>
-              <Text style={styles.previewTitle}>Preview</Text>
-              <View style={{ width: 24 }} />
+              <Text style={styles.pvTitle}>Preview</Text>
+              <View style={styles.pvBadge}>
+                <Icon name="hourglass-outline" size={11} color={colors.accent} />
+                <Text style={styles.pvBadgeText}>48H</Text>
+              </View>
             </View>
+            <Text style={styles.pvHint}>This is exactly how it lands in the feed.</Text>
 
-            {mode === 'media' ? (
-              <View style={styles.previewMediaBox}>
-                {firstIsVideo ? (
-                  <VideoView player={player} style={styles.previewMediaSm} contentFit="cover" />
+            {/* ---------- live post preview ---------- */}
+            <View style={styles.pvCard}>
+              <GradientFill from="#141E3A" to="#0A1020" steps={14} style={FILL} />
+              <CornerBrackets color="rgba(255,157,31,0.35)" size={18} inset={10} />
+
+              <View style={styles.pvHead}>
+                <Avatar
+                  url={me?.avatar_url ?? null}
+                  name={me?.username ?? 'you'}
+                  size={34}
+                  ring
+                  verified={!!me?.verified}
+                />
+                <View style={styles.pvWho}>
+                  <View style={styles.pvNameRow}>
+                    <Text style={styles.pvName} numberOfLines={1}>
+                      @{me?.username ?? 'you'}
+                    </Text>
+                    {!!me?.verified && <VerifiedBadge size={12} glow={false} />}
+                  </View>
+                  <Text style={styles.pvMeta} numberOfLines={1}>
+                    {location.trim() ? location.trim() : 'just now'} · 48h
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.pvMediaWrap}>
+                {mode === 'text' ? (
+                  <View style={[styles.pvTextCard, { backgroundColor: textColor }]}>
+                    <Text
+                      style={[
+                        styles.pvTextBody,
+                        {
+                          color:
+                            textColor === '#0D1426' || textColor === '#1E2A47'
+                              ? colors.text
+                              : colors.bg,
+                        },
+                      ]}
+                      numberOfLines={7}
+                    >
+                      {content.trim() || 'Your text drop'}
+                    </Text>
+                  </View>
+                ) : firstIsVideo ? (
+                  <VideoView player={player} style={styles.pvMedia} contentFit="cover" />
+                ) : hasMedia ? (
+                  <CollageView
+                    assets={assets}
+                    collage={assets.length > 1 ? collage : 'single'}
+                    style={styles.pvMedia}
+                  />
                 ) : (
-                  <CollageView assets={assets} collage={assets.length > 1 ? collage : 'single'} style={styles.previewMediaSm} />
+                  <View style={styles.pvMediaEmpty}>
+                    <Icon name="image-outline" size={22} color={colors.textFaint} />
+                    <Text style={styles.pvMediaEmptyText}>Nothing picked yet</Text>
+                  </View>
                 )}
               </View>
-            ) : (
-              <View style={[styles.textDropCardSm, { backgroundColor: textColor }]}>
-                <Text style={[styles.textDropBody, { color: textColor === '#0D1426' || textColor === '#1E2A47' ? colors.text : colors.bg }]} numberOfLines={6}>
-                  {content}
-                </Text>
-              </View>
-            )}
 
+              {caption.trim().length > 0 && (
+                <Text style={styles.pvCaptionText} numberOfLines={4}>
+                  {caption.trim()}
+                </Text>
+              )}
+
+              <View style={styles.pvActions}>
+                <View style={styles.pvAction}>
+                  <Icon name="heart-outline" size={16} color={colors.textMuted} />
+                  <Text style={styles.pvActionText}>0</Text>
+                </View>
+                <View style={styles.pvAction}>
+                  <Icon name="chatbubble-outline" size={15} color={colors.textMuted} />
+                  <Text style={styles.pvActionText}>0</Text>
+                </View>
+                <View style={styles.pvAction}>
+                  <Icon name="repeat-outline" size={16} color={colors.textMuted} />
+                  <Text style={styles.pvActionText}>0</Text>
+                </View>
+                <View style={styles.pvExpiry}>
+                  <Icon name="hourglass-outline" size={11} color={colors.accent} />
+                  <Text style={styles.pvExpiryText}>Gone in 48h</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* ---------- caption ---------- */}
+            <Text style={styles.pvSection}>Caption</Text>
             <TextInput
               style={styles.input}
               placeholder={mode === 'media' ? 'Write a caption... #hashtags @mentions' : 'Add a caption (optional)...'}
@@ -1994,21 +2167,19 @@ export default function CreateDropScreen({
             )}
 
             {/* privacy */}
-            <Text style={styles.sectionTitle}>Who can see this</Text>
-            <View style={styles.chipRow}>
-              {([
-                { id: 'everyone', label: '🌍 Everyone' },
-                { id: 'followers', label: '👥 Followers' },
-                { id: 'only_me', label: '🔒 Only me' },
-              ] as { id: Visibility; label: string }[]).map((v) => (
-                <Pressable key={v.id} style={[styles.chip, visibility === v.id && styles.chipActive]} onPress={() => setVisibility(v.id)}>
-                  <Text style={[styles.chipText, visibility === v.id && styles.chipTextActive]}>{v.label}</Text>
-                </Pressable>
-              ))}
-            </View>
+            <Text style={styles.pvSection}>Who can see this</Text>
+            <ChoiceRow
+              options={[
+                { id: 'everyone' as Visibility, label: 'Everyone', icon: 'globe-outline' },
+                { id: 'followers' as Visibility, label: 'Followers', icon: 'people-outline' },
+                { id: 'only_me' as Visibility, label: 'Only me', icon: 'lock-closed-outline' },
+              ]}
+              value={visibility}
+              onChange={setVisibility}
+            />
 
             {/* interactions */}
-            <Text style={styles.sectionTitle}>Interaction settings</Text>
+            <Text style={[styles.pvSection, { marginTop: 24 }]}>Interaction settings</Text>
             <ToggleRow label="Likes" value={allowLikes} onChange={setAllowLikes} />
             <ToggleRow label="Comments" value={allowComments} onChange={setAllowComments} />
             <ToggleRow label="Shares" value={allowShares} onChange={setAllowShares} />
@@ -2029,17 +2200,22 @@ export default function CreateDropScreen({
 
             {!!error && <Text style={styles.error}>{error}</Text>}
 
-            <Pressable style={[styles.dropBtn, uploading && styles.dropBtnDisabled]} onPress={publish} disabled={uploading}>
+            <Pressable
+              style={[styles.pvDrop, uploading && styles.pvDropDisabled]}
+              onPress={publish}
+              disabled={uploading}
+            >
+              <GradientFill from={colors.accent} to={colors.accentStrong} steps={12} horizontal style={FILL} />
               {uploading ? (
                 <ActivityIndicator color={colors.bg} />
               ) : (
                 <View style={styles.statRow}>
                   <Icon name="flame" size={20} color={colors.bg} />
-                  <Text style={styles.dropBtnText}>DROP IT</Text>
+                  <Text style={styles.pvDropText}>DROP IT</Text>
                 </View>
               )}
             </Pressable>
-            <Text style={styles.footer48}>Gone in 48 hours. Make it count.</Text>
+            <Text style={styles.footer48}>{vanishLabel(H48)} · make it count.</Text>
           </ScrollView>
         </KeyboardAvoidingView>
       )}
@@ -2769,17 +2945,116 @@ const styles = StyleSheet.create({
   previewTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
   previewBack: { color: colors.text, fontSize: 18 },
   previewTitle: { color: colors.text, fontSize: 16, fontWeight: '800' },
+
+  // ---- preview (redesigned) ----
+  pvTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  pvClose: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  pvTitle: { color: colors.text, fontSize: 16, fontWeight: '800' },
+  pvBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255,157,31,0.35)',
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+  },
+  pvBadgeText: { color: colors.accent, fontSize: 10, fontWeight: '800', letterSpacing: 1 },
+  pvHint: { color: colors.textMuted, fontSize: 12.5, marginTop: 10, marginBottom: 4 },
+
+  // the live post card
+  pvCard: {
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: 'rgba(255,157,31,0.2)',
+    backgroundColor: colors.surface,
+    padding: 14,
+    overflow: 'hidden',
+    marginTop: 10,
+    ...shadows.md,
+  },
+  pvHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  pvWho: { flex: 1 },
+  pvNameRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  pvName: { color: colors.text, fontSize: 13.5, fontWeight: '800', flexShrink: 1 },
+  pvMeta: { color: colors.textFaint, fontSize: 11.5, fontWeight: '600', marginTop: 2 },
+  pvMediaWrap: {
+    marginTop: 12,
+    borderRadius: radius.lg,
+    overflow: 'hidden',
+    backgroundColor: '#0A1020',
+    height: 250,
+  },
+  pvMedia: { width: '100%', height: '100%' },
+  pvMediaEmpty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
+  pvMediaEmptyText: { color: colors.textFaint, fontSize: 12, fontWeight: '600' },
+  pvTextCard: { flex: 1, padding: 18, justifyContent: 'center' },
+  pvTextBody: { fontSize: 20, fontWeight: '800', lineHeight: 26 },
+  pvCaptionText: { color: colors.text, fontSize: 13, lineHeight: 19, marginTop: 11 },
+  pvActions: { flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 12 },
+  pvAction: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  pvActionText: { color: colors.textMuted, fontSize: 12, fontWeight: '700' },
+  pvExpiry: {
+    marginLeft: 'auto',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255,157,31,0.3)',
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  pvExpiryText: { color: colors.accent, fontSize: 10.5, fontWeight: '800' },
+  pvSection: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: '800',
+    marginTop: 24,
+    marginBottom: 10,
+  },
+
+  // publish
+  pvDrop: {
+    marginTop: 20,
+    borderRadius: radius.pill,
+    paddingVertical: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    shadowColor: colors.accentStrong,
+    shadowOpacity: 0.45,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 8,
+  },
+  pvDropDisabled: { opacity: 0.6 },
+  pvDropText: { color: colors.bg, fontSize: 16, fontWeight: '900', letterSpacing: 1.4 },
   previewMediaBox: { height: 220, borderRadius: radius.lg, overflow: 'hidden', marginBottom: 14, ...shadows.md },
   previewMediaSm: { width: '100%', height: '100%' },
   input: {
     backgroundColor: colors.surfaceInput,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: radius.md,
+    borderRadius: radius.lg,
     paddingHorizontal: 16,
-    paddingVertical: 13,
+    paddingVertical: 14,
     color: colors.text,
     fontSize: 15,
+    lineHeight: 21,
+    minHeight: 52,
     marginTop: 12,
   },
   mentionWrap: { marginTop: 0 },
