@@ -27,6 +27,7 @@ import VerifiedBadge from '../components/ui/VerifiedBadge';
 import ReportProblemModal, { SUPPORT_EMAIL } from '../components/settings/ReportProblemModal';
 import AccountInfoModal from '../components/settings/AccountInfoModal';
 import { BlockedScreen, MutedScreen, HiddenWordsScreen } from '../components/settings/ListScreens';
+import { useSheetPad } from '../utils/useSheetPad';
 import {
   TwoFactorScreen,
   SessionsScreen,
@@ -536,6 +537,8 @@ function EditProfileModal({ visible, profile, onClose, onSaved }: any) {
   const [localAvatar, setLocalAvatar] = useState<string | null | undefined>(undefined);
   const [avatarPicker, setAvatarPicker] = useState(false);
 
+  const sheetPad = useSheetPad(36);
+
   useEffect(() => {
     if (visible && profile) {
       setDisplayName(profile.display_name ?? '');
@@ -566,7 +569,7 @@ function EditProfileModal({ visible, profile, onClose, onSaved }: any) {
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
-        <View style={styles.modalSheet}>
+        <View style={[styles.modalSheet, { paddingBottom: sheetPad }]}>
           <Text style={styles.modalTitle}>Edit profile</Text>
           <Pressable style={styles.modalAvatarRow} onPress={() => setAvatarPicker(true)}>
             <Avatar
@@ -603,6 +606,8 @@ function ChangeUsernameModal({ visible, onClose, onSaved }: any) {
   const [available, setAvailable] = useState<boolean | null>(null);
   const [checking, setChecking] = useState(false);
 
+  const sheetPad = useSheetPad(36);
+
   const check = async () => {
     const name = username.trim().toLowerCase();
     if (name.length < 3) {
@@ -628,7 +633,7 @@ function ChangeUsernameModal({ visible, onClose, onSaved }: any) {
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
-        <View style={styles.modalSheet}>
+        <View style={[styles.modalSheet, { paddingBottom: sheetPad }]}>
           <Text style={styles.modalTitle}>Change username</Text>
           <TextInput
             style={styles.modalInput}

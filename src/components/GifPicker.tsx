@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { colors, radius } from '../theme';
+import { useSheetPad } from '../utils/useSheetPad';
 
 const KEY = process.env.EXPO_PUBLIC_GIPHY_API_KEY ?? '';
 
@@ -28,6 +29,8 @@ export default function GifPicker({
   const [gifs, setGifs] = useState<Gif[]>([]);
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(false);
+
+  const sheetPad = useSheetPad(30);
 
   const fetchGifs = async (query: string) => {
     if (!KEY) return;
@@ -61,7 +64,7 @@ export default function GifPicker({
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.overlay}>
-        <View style={styles.sheet}>
+        <View style={[styles.sheet, { paddingBottom: sheetPad }]}>
           <View style={styles.header}>
             <Text style={styles.title}>GIFs</Text>
             <Pressable onPress={onClose} hitSlop={8}>

@@ -18,6 +18,7 @@ import { colors, radius, shadows } from '../../theme';
 import Icon, { IconName } from '../ui/Icon';
 import { CHAT_COLORS, WALLPAPERS, resolveChatPalette, customWallpaperUri, isCustomWallpaper } from '../../utils/chatTheme';
 import { uploadMedia } from '../../utils/upload';
+import { useSheetPad } from '../../utils/useSheetPad';
 
 export type ChatSettingsData = {
   muted: boolean;
@@ -98,6 +99,8 @@ export default function ChatSettingsSheet({
   const [added, setAdded] = useState(false);
   const [uploadingWall, setUploadingWall] = useState(false);
   const [query, setQuery] = useState('');
+
+  const sheetPad = useSheetPad(30);
 
   useEffect(() => {
     if (visible) {
@@ -240,7 +243,7 @@ export default function ChatSettingsSheet({
   return (
     <Modal visible transparent animationType="slide" onRequestClose={close} statusBarTranslucent>
       <Pressable style={styles.overlay} onPress={close}>
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+        <Pressable style={[styles.sheet, { paddingBottom: sheetPad }]} onPress={(e) => e.stopPropagation()}>
           <View style={styles.grabber} />
           {sub === null && (
             <>

@@ -268,7 +268,7 @@ export default function RecoveryFlow({ visible, onClose }: { visible: boolean; o
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} statusBarTranslucent>
-      <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={styles.container} behavior="padding">
         {/* ambient glows */}
         <View pointerEvents="none" style={styles.orbOrange} />
         <View pointerEvents="none" style={styles.orbViolet} />

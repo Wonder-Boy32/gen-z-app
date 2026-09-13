@@ -501,7 +501,7 @@ export default function ActivityScreen({
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior="padding"
     >
       <View style={styles.header}>
         <Pressable onPress={onBack} style={styles.backBtn} hitSlop={8}>

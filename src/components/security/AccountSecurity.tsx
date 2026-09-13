@@ -414,7 +414,7 @@ export function SecurityPasswordModal({ visible, email, onClose }: { visible: bo
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={styles.modalOverlay} behavior="padding">
         <View style={styles.modalCard}>
           <Text style={styles.cardTitle}>Change password</Text>
           <Text style={styles.infoSub}>Last changed: view Security alerts for history.</Text>
@@ -470,7 +470,7 @@ export function EmailModal({ visible, onClose }: { visible: boolean; onClose: ()
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={styles.modalOverlay} behavior="padding">
         <View style={styles.modalCard}>
           <Text style={styles.cardTitle}>{stage === 'enter' ? 'Change email' : 'Verify your new email'}</Text>
           {stage === 'enter' ? (
@@ -538,7 +538,7 @@ export function PhoneModal({ visible, onClose }: { visible: boolean; onClose: ()
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={styles.modalOverlay} behavior="padding">
         <View style={styles.modalCard}>
           <Text style={styles.cardTitle}>{stage === 'enter' ? 'Add phone number' : 'Verify phone number'}</Text>
           {stage === 'enter' ? (

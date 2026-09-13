@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { colors, radius } from '../../theme';
+import { useSheetPad } from '../../utils/useSheetPad';
 
 export type TextLayer = {
   id: string;
@@ -31,6 +32,8 @@ export default function TextLayerEditor({ visible, onClose, onAdd }: Props) {
   const [sizeId, setSizeId] = useState('m');
   const [bold, setBold] = useState(true);
 
+  const sheetPad = useSheetPad(36);
+
   useEffect(() => {
     if (visible) {
       setText('');
@@ -59,7 +62,7 @@ export default function TextLayerEditor({ visible, onClose, onAdd }: Props) {
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.overlay}>
-        <View style={styles.sheet}>
+        <View style={[styles.sheet, { paddingBottom: sheetPad }]}>
           <View style={styles.header}>
             <Text style={styles.title}>Aa Text</Text>
             <Pressable onPress={onClose} hitSlop={8}>

@@ -20,6 +20,7 @@ import Button from '../components/Button';
 import NewChatModal from '../components/NewChatModal';
 import Avatar from '../components/Avatar';
 import VerifiedBadge from '../components/ui/VerifiedBadge';
+import { useSheetPad } from '../utils/useSheetPad';
 
 type Conv = {
   id: string;
@@ -591,6 +592,8 @@ function NewGroupModal({
   const [candidates, setCandidates] = useState<{ id: string; username: string }[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
+  const sheetPad = useSheetPad(36);
+
   useEffect(() => {
     if (!visible) return;
     setName('');
@@ -625,7 +628,7 @@ function NewGroupModal({
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
-        <View style={styles.modalSheet}>
+        <View style={[styles.modalSheet, { paddingBottom: sheetPad }]}>
           <Text style={styles.modalTitle}>New group</Text>
           <TextInput
             style={styles.modalInput}

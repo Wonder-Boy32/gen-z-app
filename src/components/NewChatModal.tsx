@@ -14,6 +14,7 @@ import { colors, radius } from '../theme';
 import Avatar from './Avatar';
 import VerifiedBadge from './ui/VerifiedBadge';
 import Icon, { IconName } from './ui/Icon';
+import { useSheetPad } from '../utils/useSheetPad';
 
 type P = { id: string; username: string; avatar_url: string | null; last_seen_at: string | null };
 
@@ -30,6 +31,8 @@ export default function NewChatModal({ visible, onClose, onOpen }: Props) {
   const [following, setFollowing] = useState<P[]>([]);
   const [suggested, setSuggested] = useState<P[]>([]);
   const [trending, setTrending] = useState<P[]>([]);
+
+  const sheetPad = useSheetPad(30);
 
   useEffect(() => {
     if (!visible) return;
@@ -125,7 +128,7 @@ export default function NewChatModal({ visible, onClose, onOpen }: Props) {
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.overlay}>
-        <View style={styles.sheet}>
+        <View style={[styles.sheet, { paddingBottom: sheetPad }]}>
           <View style={styles.header}>
             <Text style={styles.title}>Who do you want to vibe with?</Text>
             <Pressable onPress={onClose} hitSlop={8}>

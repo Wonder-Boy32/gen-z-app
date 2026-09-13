@@ -26,6 +26,7 @@ import PeopleScreen from './PeopleScreen';
 import SettingsScreen from './SettingsScreen';
 import ProfileViewersScreen, { PROFILE_VIEWS_SEEN_KEY } from './ProfileViewersScreen';
 import AnonymousSettingsModal from '../components/AnonymousSettingsModal';
+import { useSheetPad } from '../utils/useSheetPad';
 import AnonymousCardModal from '../components/AnonymousCardModal';
 
 type Profile = {
@@ -581,6 +582,8 @@ function EditProfileModal({ visible, profile, onClose, onSaved }: any) {
   const [localAvatar, setLocalAvatar] = useState<string | null | undefined>(undefined);
   const [avatarPicker, setAvatarPicker] = useState(false);
 
+  const sheetPad = useSheetPad(36);
+
   useEffect(() => {
     if (visible && profile) {
       setDisplayName(profile.display_name ?? '');
@@ -613,7 +616,7 @@ function EditProfileModal({ visible, profile, onClose, onSaved }: any) {
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
-        <View style={styles.modalSheet}>
+        <View style={[styles.modalSheet, { paddingBottom: sheetPad }]}>
           <Text style={styles.modalTitle}>Edit profile</Text>
           <Pressable style={styles.modalAvatarRow} onPress={() => setAvatarPicker(true)}>
             <Avatar
