@@ -127,7 +127,7 @@ export default function PublicProfileScreen({
     } else {
       const core = await supabase
         .from('profiles')
-        .select('id, username, display_name, avatar_url, bio, is_private, created_at')
+        .select('id, username, display_name, avatar_url, bio, is_private, verified, created_at')
         .eq('id', userId)
         .maybeSingle();
       if (core?.data) {

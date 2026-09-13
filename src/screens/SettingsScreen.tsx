@@ -52,6 +52,7 @@ type Profile = {
   mention_who: string;
   activity_status: boolean;
   theme: string;
+  verified: boolean;
   created_at: string;
 };
 
@@ -101,7 +102,7 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
     const [profRes, prefsRes, blockRes, muteRes, wordRes, accountStats] = await Promise.all([
       supabase
         .from('profiles')
-        .select('username, display_name, bio, avatar_url, is_private, message_who, comment_who, mention_who, activity_status, theme, created_at')
+        .select('username, display_name, bio, avatar_url, verified, is_private, message_who, comment_who, mention_who, activity_status, theme, created_at')
         .eq('id', user.id)
         .maybeSingle(),
       supabase.from('settings').select('*').eq('user_id', user.id).maybeSingle(),
@@ -217,14 +218,14 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
             name={profile?.display_name || profile?.username || 'G'}
             size={68}
             ring
-            verified={!!(profile as any)?.verified}
+            verified={!!profile?.verified}
           />
           <View style={styles.heroInfo}>
             <View style={styles.heroNameRow}>
               <Text style={styles.heroName} numberOfLines={1}>
                 {profile?.display_name || profile?.username || 'Gen Z user'}
               </Text>
-              {!!(profile as any)?.verified && <VerifiedBadge size={15} glow={false} />}
+              {!!profile?.verified && <VerifiedBadge size={15} glow={false} />}
             </View>
             <Text style={styles.heroHandle}>@{profile?.username ?? 'unknown'}</Text>
             <Text style={styles.heroJoined}>
