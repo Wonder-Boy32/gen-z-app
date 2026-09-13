@@ -101,14 +101,24 @@ export default function PostViewer({ posts, index, onClose }: Props) {
   const toggleRepost = async (post: ViewerPost) => {
     const me = meRef.current;
     if (!me) return;
-    if (post.reposted_by_me) {
-      await supabase.from('reposts').delete().eq('post_id', post.id).eq('user_id', me);
-      patch(post.id, (p) => ({ ...p, reposted_by_me: false }));
-    } else {
-      await supabase.from('reposts').insert({ post_id: post.id, user_id: me });
-      patch(post.id, (p) => ({ ...p, reposted_by_me: true }));
-      notifyUser({ userId: post.user_id, actorId: me, type: 'repost', postId: post.id });
+    const reposting = !post.reposted_by_me;
+
+    const { error } = reposting
+      ? await supabase.from('reposts').insert({ post_id: post.id, user_id: me })
+      : await supabase.from('reposts').delete().eq('post_id', post.id).eq('user_id', me);
+
+    // 23505 = a concurrent tap already inserted the row, which is the end state
+    // we wanted — not a failure.
+    const benign = reposting && error?.code === '23505';
+    if (error && !benign) {
+      // only reflect the change once the write landed; the RLS policy in
+      // supabase/reposts_enforcement.sql can reject one outright
+      console.warn('repost failed', error.message);
+      return;
     }
+
+    patch(post.id, (p) => ({ ...p, reposted_by_me: reposting }));
+    if (reposting) notifyUser({ userId: post.user_id, actorId: me, type: 'repost', postId: post.id });
   };
 
   const toggleReaction = async (post: ViewerPost, r: string) => {

@@ -893,13 +893,29 @@ export default function FeedScreen({
   const toggleRepost = async (post: FeedPostFull) => {
     const me = myIdRef.current;
     if (!me) return;
-    setPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, reposted_by_me: !p.reposted_by_me } : p)));
-    if (post.reposted_by_me) {
-      await supabase.from('reposts').delete().eq('post_id', post.id).eq('user_id', me);
-    } else {
-      await supabase.from('reposts').insert({ post_id: post.id, user_id: me });
-      notifyUser({ userId: post.user_id, actorId: me, type: 'repost', postId: post.id });
+    const wasReposted = post.reposted_by_me;
+    const reposting = !wasReposted;
+
+    // optimistic — restored below if the write actually fails
+    setPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, reposted_by_me: reposting } : p)));
+
+    const { error } = reposting
+      ? await supabase.from('reposts').insert({ post_id: post.id, user_id: me })
+      : await supabase.from('reposts').delete().eq('post_id', post.id).eq('user_id', me);
+
+    // 23505 = a concurrent tap already inserted the row. The end state we wanted
+    // is "reposted", which is what the database now holds, so this is not a
+    // failure. Same idiom as recordView below.
+    const benign = reposting && error?.code === '23505';
+    if (error && !benign) {
+      // never leave the icon claiming a repost that did not land — the RLS
+      // policy in supabase/reposts_enforcement.sql can now reject one outright
+      setPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, reposted_by_me: wasReposted } : p)));
+      console.warn('repost failed', error.message);
+      return;
     }
+
+    if (reposting) notifyUser({ userId: post.user_id, actorId: me, type: 'repost', postId: post.id });
   };
 
   const toggleReaction = async (post: FeedPostFull, reaction: string) => {

@@ -174,7 +174,11 @@ export default function FeedPost({
   // creator interaction toggles (missing flag = allowed, for older posts)
   const canLike = post.allow_likes !== false;
   const canComment = post.allow_comments !== false;
-  const canRepost = post.allow_reposts !== false;
+  // reuse the existing module-level viewer id (set by FeedScreen + PostViewer via
+  // setFeedUserId) rather than adding a second "is this mine" mechanism — the same
+  // value already hides the Follow pill on own posts. The RLS policy in
+  // supabase/reposts_enforcement.sql rejects a self-repost regardless of the UI.
+  const canRepost = post.allow_reposts !== false && post.user_id !== currentUserId;
   const canShare = post.allow_shares !== false;
   const canDownload = post.allow_downloads !== false;
 
