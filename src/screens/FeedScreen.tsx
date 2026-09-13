@@ -22,6 +22,7 @@ import DropCountdown from '../components/DropCountdown';
 import Icon, { IconName } from '../components/ui/Icon';
 import VerifiedBadge from '../components/ui/VerifiedBadge';
 import Avatar from '../components/Avatar';
+import Button from '../components/Button';
 import FeedPost, { setFeedUserId } from '../components/FeedPost';
 import CommentsModal from '../components/CommentsModal';
 import ChainModal from '../components/ChainModal';
@@ -1059,8 +1060,8 @@ export default function FeedScreen({
         : 'The drops of people you follow appear here for 48 hours.',
     },
     foryou: {
-      title: 'Your Feed is warming up…',
-      text: 'Post your first Drop or check out the creators below.',
+      title: 'Nothing here yet',
+      text: 'Be the first to drop a moment — anything you post lives for 48 hours.',
     },
     live: {
       title: 'Nothing live right now',
@@ -1436,6 +1437,13 @@ export default function FeedScreen({
               )}
               <Text style={styles.emptyTitle}>{emptyCopy.title}</Text>
               <Text style={styles.emptyText}>{emptyCopy.text}</Text>
+              {/* primary action — the empty state should lead somewhere.
+                  onCreateIntent already opens the Create screen via HomeScreen */}
+              <Button
+                title="Create a Drop"
+                onPress={() => onCreateIntent?.({})}
+                style={styles.emptyCta}
+              />
               {suggestions.length > 0 && (
                 <View style={styles.suggestWrap}>
                   <View style={styles.suggestTitleRow}>
@@ -2179,6 +2187,7 @@ const styles = StyleSheet.create({
   feedContent: { flexGrow: 1 },
   emptyTitle: { color: colors.text, fontSize: 20, fontWeight: '700' },
   emptyText: { color: colors.textMuted, fontSize: 14, textAlign: 'center', marginTop: 10, lineHeight: 20 },
+  emptyCta: { width: '100%', maxWidth: 280, marginTop: 22 },
   suggestWrap: { marginTop: 24, width: '100%' },
   suggestTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 },
   suggestTitle: { color: colors.accent, fontSize: 14, fontWeight: '800' },

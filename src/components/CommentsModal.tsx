@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   FlatList,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -106,6 +107,42 @@ type Props = {
 export default function CommentsModal({ post, onClose, onPosted, onReplyWithDrop }: Props) {
   const insets = useInsets();
   const inputRef = useRef<TextInput>(null);
+
+  // ---- Android keyboard handling ------------------------------------------
+  // KeyboardAvoidingView does NOT help here on Android. In RN 0.86 it has no
+  // defaultProps, so `behavior={undefined}` falls through to its `default:`
+  // branch and renders a plain View with no paddingBottom — it subscribes to
+  // keyboardDidShow and then discards the result. That is why the keyboard
+  // covered the composer.
+  //
+  // iOS keeps KeyboardAvoidingView (proven to work there). Android gets the
+  // sheet lifted by the reported keyboard height instead. Exactly one mechanism
+  // is active per platform, so nothing fights.
+  const [kbHeight, setKbHeight] = useState(0);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const show = Keyboard.addListener('keyboardDidShow', (e) => {
+      setKbHeight(e?.endCoordinates?.height ?? 0);
+    });
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKbHeight(0));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+
+  // this component stays mounted while the sheet is closed, so clear a stale
+  // height on close — otherwise reopening could show an over-tall sheet
+  useEffect(() => {
+    if (!post) setKbHeight(0);
+  }, [post]);
+
+  // with the IME open the nav bar sits behind it, so the keyboard height is the
+  // full distance from the screen bottom that the composer must clear
+  const padBottom =
+    Platform.OS === 'android' && kbHeight > 0 ? kbHeight : Math.max(insets.bottom, 10);
+
   const [roots, setRoots] = useState<CommentNode[]>([]);
   const [dropReplies, setDropReplies] = useState<DropReply[]>([]);
   const [viewing, setViewing] = useState<DropReply | null>(null);
@@ -540,7 +577,7 @@ export default function CommentsModal({ post, onClose, onPosted, onReplyWithDrop
       <View style={styles.overlay}>
         <Pressable style={styles.scrim} onPress={onClose} />
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 10) }]}>
+          <View style={[styles.sheet, { paddingBottom: padBottom }]}>
             <View style={styles.handle} />
 
             {/* search */}
