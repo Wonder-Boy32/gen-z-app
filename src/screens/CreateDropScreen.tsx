@@ -11,6 +11,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
@@ -86,7 +87,7 @@ type HubTemplate = {
   group: string;
   title: string;
   sub: string;
-  tint: string;
+  accent: string;
   icon: HubIconName;
   mode: Mode;
   collage?: string;
@@ -102,7 +103,7 @@ const HUB_TEMPLATES: HubTemplate[] = [
     group: 'For you',
     title: 'Quick drop',
     sub: 'Pick media and go',
-    tint: 'rgba(255,157,31,0.16)',
+    accent: '#FF9D1F',
     icon: 'flash-outline',
     mode: 'media',
     openPicker: true,
@@ -112,7 +113,7 @@ const HUB_TEMPLATES: HubTemplate[] = [
     group: 'For you',
     title: 'Campus moment',
     sub: 'One photo, short caption',
-    tint: 'rgba(77,216,255,0.14)',
+    accent: '#4DD8FF',
     icon: 'school-outline',
     mode: 'media',
     openPicker: true,
@@ -122,7 +123,7 @@ const HUB_TEMPLATES: HubTemplate[] = [
     group: 'Text',
     title: 'Text card',
     sub: 'A line worth reading',
-    tint: 'rgba(139,123,255,0.18)',
+    accent: '#8B7BFF',
     icon: 'create-outline',
     mode: 'text',
   },
@@ -131,7 +132,7 @@ const HUB_TEMPLATES: HubTemplate[] = [
     group: 'Text',
     title: 'Bold statement',
     sub: 'Big words, dark card',
-    tint: 'rgba(255,92,124,0.16)',
+    accent: '#FF5C7C',
     icon: 'chatbox-ellipses-outline',
     mode: 'text',
   },
@@ -140,7 +141,7 @@ const HUB_TEMPLATES: HubTemplate[] = [
     group: 'Photos',
     title: 'Duo',
     sub: 'Two photos, side by side',
-    tint: 'rgba(52,211,153,0.15)',
+    accent: '#34D399',
     icon: 'copy-outline',
     mode: 'media',
     collage: 'duo',
@@ -151,7 +152,7 @@ const HUB_TEMPLATES: HubTemplate[] = [
     group: 'Photos',
     title: 'Photo dump',
     sub: 'Up to four in a grid',
-    tint: 'rgba(255,157,31,0.14)',
+    accent: '#FFB02E',
     icon: 'grid-outline',
     mode: 'media',
     collage: 'grid',
@@ -162,7 +163,7 @@ const HUB_TEMPLATES: HubTemplate[] = [
     group: 'Video',
     title: 'Video drop',
     sub: 'Trim, filter, add sound',
-    tint: 'rgba(139,123,255,0.16)',
+    accent: '#5B8CFF',
     icon: 'videocam-outline',
     mode: 'media',
     openPicker: true,
@@ -196,6 +197,279 @@ const TOOLS: { id: EditorOverlay; icon: IconName; color: string; label: string }
   { id: 'crop', icon: 'scan', color: '#FFFFFF', label: 'Crop' },
   { id: 'rotate', icon: 'sync', color: '#4DD8FF', label: 'Rotate' },
 ];
+
+// ============================================================
+// CREATE HUB — VISUAL PRIMITIVES
+//
+// Gradients and glow are COMPOSED FROM VIEWS on purpose: expo-linear-gradient
+// is not a dependency of this app, and adding a native module would mean
+// another native rebuild. Everything below is plain JSX + StyleSheet, so it
+// renders correctly on the APK that is already installed.
+// ============================================================
+
+type Rgb = { r: number; g: number; b: number };
+
+function hexToRgb(hex: string): Rgb {
+  const raw = hex.replace('#', '').trim();
+  const full = raw.length === 3 ? raw.split('').map((c) => c + c).join('') : raw;
+  return {
+    r: parseInt(full.slice(0, 2), 16) || 0,
+    g: parseInt(full.slice(2, 4), 16) || 0,
+    b: parseInt(full.slice(4, 6), 16) || 0,
+  };
+}
+
+function mixRgb(a: Rgb, b: Rgb, t: number): Rgb {
+  return {
+    r: Math.round(a.r + (b.r - a.r) * t),
+    g: Math.round(a.g + (b.g - a.g) * t),
+    b: Math.round(a.b + (b.b - a.b) * t),
+  };
+}
+
+const rgbaOf = (c: Rgb, alpha: number) => `rgba(${c.r},${c.g},${c.b},${alpha})`;
+
+// absolute fill, spelled out — this RN version's typings do not expose
+// FILL, and a plain object also spreads cleanly
+const FILL = { position: 'absolute' as const, top: 0, left: 0, right: 0, bottom: 0 };
+
+/**
+ * A real linear gradient assembled from `steps` stacked views.
+ * Keep `steps` low when the two colours are close — banding is invisible at
+ * low contrast, and each band is a view.
+ */
+function GradientFill({
+  from,
+  to,
+  steps = 14,
+  horizontal,
+  alphaFrom = 1,
+  alphaTo = 1,
+  style,
+}: {
+  from: string;
+  to: string;
+  steps?: number;
+  horizontal?: boolean;
+  alphaFrom?: number;
+  alphaTo?: number;
+  style?: any;
+}) {
+  const start = hexToRgb(from);
+  const end = hexToRgb(to);
+  const bands: React.ReactNode[] = [];
+  for (let i = 0; i < steps; i++) {
+    const t = steps <= 1 ? 0 : i / (steps - 1);
+    bands.push(
+      <View
+        key={i}
+        style={{
+          flex: 1,
+          backgroundColor: rgbaOf(mixRgb(start, end, t), alphaFrom + (alphaTo - alphaFrom) * t),
+        }}
+      />
+    );
+  }
+  return (
+    <View pointerEvents="none" style={[{ flexDirection: horizontal ? 'row' : 'column' }, style]}>
+      {bands}
+    </View>
+  );
+}
+
+/** Soft radial falloff, approximated with concentric translucent circles. */
+function Glow({
+  color,
+  size,
+  strength = 0.18,
+  style,
+}: {
+  color: string;
+  size: number;
+  strength?: number;
+  style?: any;
+}) {
+  const base = hexToRgb(color);
+  const rings = [
+    { scale: 1, alpha: 0.3 },
+    { scale: 0.66, alpha: 0.6 },
+    { scale: 0.36, alpha: 1 },
+  ];
+  return (
+    <View
+      pointerEvents="none"
+      style={[{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }, style]}
+    >
+      {rings.map((r) => {
+        const d = Math.round(size * r.scale);
+        return (
+          <View
+            key={r.scale}
+            style={{
+              position: 'absolute',
+              width: d,
+              height: d,
+              borderRadius: d / 2,
+              backgroundColor: rgbaOf(base, strength * r.alpha),
+            }}
+          />
+        );
+      })}
+    </View>
+  );
+}
+
+/**
+ * Press feedback — a small scale + opacity dip.
+ * `containerStyle` goes on the Pressable (use it for flex/margins so the item
+ * lays out correctly inside a row); `style` goes on the animated surface.
+ */
+function Press({
+  onPress,
+  style,
+  containerStyle,
+  children,
+  shrink = 0.97,
+}: {
+  onPress?: () => void;
+  style?: any;
+  containerStyle?: any;
+  children: React.ReactNode;
+  shrink?: number;
+}) {
+  const v = useRef(new Animated.Value(0)).current;
+  const to = (n: number) =>
+    Animated.spring(v, { toValue: n, useNativeDriver: true, speed: 42, bounciness: 0 }).start();
+
+  return (
+    <Pressable
+      style={containerStyle}
+      onPress={onPress}
+      onPressIn={() => to(1)}
+      onPressOut={() => to(0)}
+    >
+      <Animated.View
+        style={[
+          style,
+          {
+            transform: [{ scale: v.interpolate({ inputRange: [0, 1], outputRange: [1, shrink] }) }],
+            opacity: v.interpolate({ inputRange: [0, 1], outputRange: [1, 0.92] }),
+          },
+        ]}
+      >
+        {children}
+      </Animated.View>
+    </Pressable>
+  );
+}
+
+/** Template category pill — the selection crossfades instead of snapping. */
+function FilterPill({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  const v = useRef(new Animated.Value(active ? 1 : 0)).current;
+
+  useEffect(() => {
+    Animated.timing(v, {
+      toValue: active ? 1 : 0,
+      duration: 200,
+      useNativeDriver: false,
+    }).start();
+  }, [active, v]);
+
+  return (
+    <Pressable onPress={onPress} hitSlop={6}>
+      <Animated.View
+        style={[
+          styles.hbPill,
+          active && styles.hbPillGlow,
+          {
+            backgroundColor: v.interpolate({
+              inputRange: [0, 1],
+              outputRange: ['rgba(20,28,51,1)', 'rgba(255,157,31,0.15)'],
+            }),
+            borderColor: v.interpolate({
+              inputRange: [0, 1],
+              outputRange: ['rgba(30,42,71,1)', 'rgba(255,157,31,1)'],
+            }),
+          },
+        ]}
+      >
+        <Animated.Text
+          style={[
+            styles.hbPillText,
+            {
+              color: v.interpolate({
+                inputRange: [0, 1],
+                outputRange: [colors.textMuted, colors.accent],
+              }),
+            },
+          ]}
+        >
+          {label}
+        </Animated.Text>
+      </Animated.View>
+    </Pressable>
+  );
+}
+
+/**
+ * Template artwork. Photo templates render a miniature of the layout they
+ * produce (two tiles for Duo, a 2x2 for Photo dump) instead of a generic icon,
+ * so the card previews what you actually get.
+ */
+function TemplateArt({ t, width }: { t: HubTemplate; width: number }) {
+  const accent = t.accent;
+  const height = Math.round(width * 0.68);
+
+  return (
+    <View style={[styles.hbTplArt, { height }]}>
+      <GradientFill from="#131C36" to="#0B1120" steps={12} style={FILL} />
+      <GradientFill
+        from={accent}
+        to={accent}
+        steps={9}
+        horizontal
+        alphaFrom={0.34}
+        alphaTo={0}
+        style={FILL}
+      />
+      <Glow
+        color={accent}
+        size={Math.round(height * 1.5)}
+        strength={0.16}
+        style={{ position: 'absolute', top: -Math.round(height * 0.5), right: -Math.round(height * 0.35) }}
+      />
+      <View style={styles.hbTplArtCenter}>
+        {t.collage === 'duo' ? (
+          <View style={styles.hbMiniDuo}>
+            <View style={[styles.hbMiniTile, { backgroundColor: rgbaOf(hexToRgb(accent), 0.55) }]} />
+            <View style={[styles.hbMiniTile, { backgroundColor: rgbaOf(hexToRgb(accent), 0.28) }]} />
+          </View>
+        ) : t.collage === 'grid' ? (
+          <View style={styles.hbMiniGrid}>
+            {[0.55, 0.32, 0.4, 0.2].map((a, i) => (
+              <View
+                key={i}
+                style={[styles.hbMiniGridTile, { backgroundColor: rgbaOf(hexToRgb(accent), a) }]}
+              />
+            ))}
+          </View>
+        ) : (
+          <View style={[styles.hbTplIconChip, { borderColor: rgbaOf(hexToRgb(accent), 0.4) }]}>
+            <Icon name={t.icon} size={20} color={colors.text} />
+          </View>
+        )}
+      </View>
+    </View>
+  );
+}
 
 export default function CreateDropScreen({
   onPosted,
@@ -268,6 +542,11 @@ export default function CreateDropScreen({
   const [livePulse] = useState(new Animated.Value(1));
   const [hubFilter, setHubFilter] = useState<HubFilter>('For you');
   const [tagIdeas, setTagIdeas] = useState<{ tag: string; count: number }[]>([]);
+
+  // template cards scale with the device instead of a hardcoded width, so they
+  // never overflow a narrow Android screen or look lost on a large one
+  const { width: winW } = useWindowDimensions();
+  const tplW = Math.max(132, Math.min(158, Math.round(winW * 0.4)));
 
   // Android camera captures often report mimeType: null — detect video by
   // file extension as a fallback so recorded clips get a cover + correct type
@@ -813,81 +1092,146 @@ export default function CreateDropScreen({
     <View style={styles.container}>
       {step === 'hub' && (
         <ScrollView contentContainerStyle={styles.hubContent} showsVerticalScrollIndicator={false}>
-          <LogoHeader subtitle="Gone in 48 hours. Make it count." />
+          {/* ambient corner light — barely there, just enough to lift the header */}
+          <Glow color={colors.accent} size={230} strength={0.05} style={styles.hbAmbient} />
 
-          <Pressable style={styles.hubPrimary} onPress={() => startFresh('media')}>
-            <View style={styles.hubPrimarySheen} pointerEvents="none" />
-            <View style={styles.statRow}>
-              <Icon name="add-circle-outline" size={22} color={colors.bg} />
-              <Text style={styles.hubPrimaryTitle}>New drop</Text>
+          {/* ---------- header ---------- */}
+          <View style={styles.hbHeadRow}>
+            <View style={styles.hbMark}>
+              <Image source={require('../../assets/icon-navy.png')} style={styles.hbMarkImg} />
             </View>
-            <Text style={styles.hubPrimarySub}>Photo, video or a text card</Text>
-          </Pressable>
+            <Text style={styles.hbWordmark}>GEN Z</Text>
+          </View>
+          <Text style={styles.hbTitle}>
+            Create a <Text style={styles.hbTitleAccent}>moment</Text>
+          </Text>
+          <Text style={styles.hbSub}>Share what's happening right now.</Text>
 
-          <View style={styles.hubRow}>
-            <Pressable
-              style={styles.hubCard}
+          {/* ---------- hero: new drop ---------- */}
+          <Press containerStyle={styles.hbHeroWrap} style={styles.hbHero} onPress={() => startFresh('media')} shrink={0.985}>
+            <GradientFill from="#16203C" to="#0C1322" steps={16} style={FILL} />
+            <GradientFill
+              from={colors.accent}
+              to={colors.accentStrong}
+              steps={12}
+              horizontal
+              alphaFrom={0}
+              alphaTo={0.22}
+              style={FILL}
+            />
+            <Glow color={colors.accent} size={190} strength={0.2} style={styles.hbHeroGlow} />
+            <View style={styles.hbHeroRow}>
+              <View style={styles.hbHeroText}>
+                <Text style={styles.hbHeroEyebrow}>NEW DROP</Text>
+                <Text style={styles.hbHeroTitle}>Capture what's happening right now</Text>
+                <View style={styles.hbHeroMeta}>
+                  <Icon name="hourglass-outline" size={12} color={colors.accent} />
+                  <Text style={styles.hbHeroMetaText}>Disappears after 48 hours</Text>
+                </View>
+              </View>
+              <View style={styles.hbHeroBtn}>
+                <GradientFill
+                  from={colors.accent}
+                  to={colors.accentStrong}
+                  steps={10}
+                  style={FILL}
+                />
+                <Icon name="add" size={26} color={colors.bg} />
+              </View>
+            </View>
+          </Press>
+
+          {/* ---------- drafts | text ---------- */}
+          <View style={styles.hbRow}>
+            <Press
+              containerStyle={styles.hbRowItem}
+              style={styles.hbAction}
               onPress={() => (draft ? loadDraft() : startFresh('media'))}
             >
-              <Icon name="albums-outline" size={18} color={colors.accent} />
-              <Text style={styles.hubCardTitle}>Drafts</Text>
-              <Text style={styles.hubCardSub} numberOfLines={1}>
-                {draft ? new Date(draft.updated_at).toLocaleDateString() : 'Nothing saved'}
+              <GradientFill
+                from={colors.accent}
+                to={colors.accent}
+                steps={6}
+                horizontal
+                alphaFrom={0.13}
+                alphaTo={0}
+                style={FILL}
+              />
+              <View
+                style={[
+                  styles.hbActionIcon,
+                  { backgroundColor: colors.accentSoft, borderColor: 'rgba(255,157,31,0.28)' },
+                ]}
+              >
+                <Icon name="albums-outline" size={17} color={colors.accent} />
+              </View>
+              <Text style={styles.hbActionTitle}>Drafts</Text>
+              <Text style={styles.hbActionSub} numberOfLines={2}>
+                {draft ? 'Continue something you saved' : 'Nothing saved yet'}
               </Text>
-            </Pressable>
-            <Pressable style={styles.hubCard} onPress={() => startFresh('text')}>
-              <Icon name="create-outline" size={18} color={colors.accent} />
-              <Text style={styles.hubCardTitle}>Text card</Text>
-              <Text style={styles.hubCardSub} numberOfLines={1}>
+            </Press>
+
+            <Press
+              containerStyle={styles.hbRowItem}
+              style={styles.hbAction}
+              onPress={() => startFresh('text')}
+            >
+              <GradientFill
+                from={colors.violet}
+                to={colors.violet}
+                steps={6}
+                horizontal
+                alphaFrom={0.13}
+                alphaTo={0}
+                style={FILL}
+              />
+              <View
+                style={[
+                  styles.hbActionIcon,
+                  { backgroundColor: 'rgba(139,123,255,0.15)', borderColor: 'rgba(139,123,255,0.28)' },
+                ]}
+              >
+                <Icon name="create-outline" size={17} color={colors.violet} />
+              </View>
+              <Text style={styles.hbActionTitle}>Text</Text>
+              <Text style={styles.hbActionSub} numberOfLines={2}>
                 Say it in words
               </Text>
-            </Pressable>
+            </Press>
           </View>
 
-          <Text style={styles.sectionTitle}>Templates</Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.hubChips}
-          >
-            {HUB_FILTERS.map((f) => {
-              const active = hubFilter === f;
-              return (
-                <Pressable
-                  key={f}
-                  style={[styles.hubChip, active && styles.hubChipActive]}
-                  onPress={() => setHubFilter(f as HubFilter)}
-                >
-                  <Text style={[styles.hubChipText, active && styles.hubChipTextActive]}>{f}</Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
+          {/* ---------- templates ---------- */}
+          <View style={styles.hbTplHead}>
+            <Text style={styles.hbTplHeadTitle}>Templates</Text>
+            <Text style={styles.hbTplHeadSub}>Create faster</Text>
+          </View>
 
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.hubTemplates}
-          >
-            {HUB_TEMPLATES.filter((t) => t.group === hubFilter).map((t) => (
-              <Pressable key={t.id} style={styles.hubTemplate} onPress={() => applyTemplate(t)}>
-                <View style={[styles.hubTemplateArt, { backgroundColor: t.tint }]}>
-                  <Icon name={t.icon} size={20} color={colors.text} />
-                </View>
-                <Text style={styles.hubTemplateTitle} numberOfLines={1}>
-                  {t.title}
-                </Text>
-                <Text style={styles.hubTemplateSub} numberOfLines={2}>
-                  {t.sub}
-                </Text>
-              </Pressable>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.hbPills}>
+            {HUB_FILTERS.map((f) => (
+              <FilterPill
+                key={f}
+                label={f}
+                active={hubFilter === f}
+                onPress={() => setHubFilter(f as HubFilter)}
+              />
             ))}
           </ScrollView>
 
-          <View style={styles.footer48Row}>
-            <Icon name="hourglass-outline" size={12} color={colors.textMuted} />
-            <Text style={styles.footer48}>Every drop disappears after 48 hours.</Text>
-          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.hbTplRow}>
+            {HUB_TEMPLATES.filter((t) => t.group === hubFilter).map((t) => (
+              <Press key={t.id} style={[styles.hbTpl, { width: tplW }]} onPress={() => applyTemplate(t)}>
+                <TemplateArt t={t} width={tplW} />
+                <View style={styles.hbTplBody}>
+                  <Text style={styles.hbTplTitle} numberOfLines={1}>
+                    {t.title}
+                  </Text>
+                  <Text style={styles.hbTplSub} numberOfLines={2}>
+                    {t.sub}
+                  </Text>
+                </View>
+              </Press>
+            ))}
+          </ScrollView>
         </ScrollView>
       )}
 
@@ -1736,71 +2080,147 @@ const styles = StyleSheet.create({
   error: { color: colors.danger, fontSize: 13, marginTop: 10 },
   footer48Row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 22 },
   footer48: { color: colors.textFaint, fontSize: 12, textAlign: 'center', fontWeight: '600' },
-  hubContent: { padding: 18, paddingBottom: 40 },
+  // ---- create hub (redesigned) ----
+  // paddingTop uses the real status-bar height; the previous hub had none, so
+  // its header rendered underneath the status bar
+  hubContent: { padding: 18, paddingTop: TOP_INSET + 14, paddingBottom: 36 },
   hubBack: { flexDirection: 'row', alignItems: 'center', gap: 2, marginBottom: 4 },
   hubBackText: { color: colors.textMuted, fontSize: 13, fontWeight: '700' },
-  hubPrimary: {
-    backgroundColor: colors.accent,
-    borderRadius: radius.lg,
-    padding: 18,
-    marginTop: 14,
+
+  // header — mark + wordmark, then a two-line greeting
+  hbHeadRow: { flexDirection: 'row', alignItems: 'center', gap: 9, marginBottom: 15 },
+  hbMark: {
+    width: 30,
+    height: 30,
+    borderRadius: 9,
     overflow: 'hidden',
-    ...shadows.glow,
-  },
-  hubPrimarySheen: {
-    position: 'absolute',
-    top: -40,
-    right: -30,
-    width: 150,
-    height: 150,
-    borderRadius: 75,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-  },
-  hubPrimaryTitle: { color: colors.bg, fontSize: 20, fontWeight: '900', marginLeft: 8 },
-  hubPrimarySub: {
-    color: colors.bg,
-    fontSize: 13,
-    fontWeight: '600',
-    marginTop: 6,
-    marginLeft: 30,
-    opacity: 0.85,
-  },
-  hubRow: { flexDirection: 'row', gap: 12, marginTop: 12 },
-  hubCard: {
-    flex: 1,
     backgroundColor: colors.surface,
+  },
+  hbMarkImg: { width: 30, height: 30 },
+  hbWordmark: { color: colors.accent, fontSize: 13, fontWeight: '800', letterSpacing: 2.4 },
+  hbTitle: {
+    color: colors.text,
+    fontSize: 27,
+    fontWeight: '800',
+    letterSpacing: -0.6,
+    lineHeight: 33,
+  },
+  hbTitleAccent: { color: colors.accent },
+  hbSub: { color: colors.textMuted, fontSize: 13.5, marginTop: 5, lineHeight: 19 },
+  hbAmbient: { position: 'absolute', top: -52, right: -72 },
+
+  // hero — navy depth, a warm bloom entering from the right, and the only
+  // saturated orange surface on the screen (the round + button)
+  hbHeroWrap: { marginTop: 20 },
+  hbHero: {
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: 'rgba(255,157,31,0.22)',
+    backgroundColor: colors.surface,
+    padding: 18,
+    overflow: 'hidden',
+    shadowColor: colors.accent,
+    shadowOpacity: 0.16,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
+  },
+  hbHeroGlow: { position: 'absolute', right: -46, top: -34 },
+  hbHeroRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  hbHeroText: { flex: 1 },
+  hbHeroEyebrow: { color: colors.accent, fontSize: 10.5, fontWeight: '800', letterSpacing: 1.6 },
+  hbHeroTitle: { color: colors.text, fontSize: 19, fontWeight: '800', lineHeight: 25, marginTop: 7 },
+  hbHeroMeta: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 11 },
+  hbHeroMetaText: { color: colors.textMuted, fontSize: 11.5, fontWeight: '600' },
+  hbHeroBtn: {
+    width: 52,
+    height: 52,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    shadowColor: colors.accentStrong,
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 8,
+  },
+
+  // secondary actions
+  hbRow: { flexDirection: 'row', gap: 12, marginTop: 14 },
+  hbRowItem: { flex: 1 },
+  hbAction: {
+    minHeight: 106,
+    borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
     padding: 14,
-    gap: 6,
+    overflow: 'hidden',
+    ...shadows.sm,
   },
-  hubCardTitle: { color: colors.text, fontSize: 14, fontWeight: '800' },
-  hubCardSub: { color: colors.textFaint, fontSize: 12, fontWeight: '600' },
-  hubChips: { gap: 8, paddingVertical: 8, paddingRight: 6 },
-  hubChip: {
+  hbActionIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 11,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceAlt,
-    borderRadius: radius.pill,
-    paddingHorizontal: 13,
-    paddingVertical: 6,
-  },
-  hubChipActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
-  hubChipText: { color: colors.textMuted, fontSize: 12.5, fontWeight: '700' },
-  hubChipTextActive: { color: colors.accent },
-  hubTemplates: { gap: 12, paddingBottom: 8, paddingRight: 6 },
-  hubTemplate: { width: 128 },
-  hubTemplateArt: {
-    height: 84,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  hubTemplateTitle: { color: colors.text, fontSize: 13, fontWeight: '800', marginTop: 8 },
-  hubTemplateSub: { color: colors.textFaint, fontSize: 11.5, fontWeight: '600', marginTop: 2 },
+  hbActionTitle: { color: colors.text, fontSize: 14.5, fontWeight: '800', marginTop: 12 },
+  hbActionSub: {
+    color: colors.textFaint,
+    fontSize: 11.5,
+    fontWeight: '600',
+    marginTop: 3,
+    lineHeight: 16,
+  },
+
+  // templates
+  hbTplHead: { marginTop: 30 },
+  hbTplHeadTitle: { color: colors.text, fontSize: 17, fontWeight: '800', letterSpacing: -0.2 },
+  hbTplHeadSub: { color: colors.textMuted, fontSize: 12, fontWeight: '600', marginTop: 3 },
+  hbPills: { gap: 8, paddingVertical: 14, paddingRight: 6 },
+  hbPill: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: radius.pill, borderWidth: 1 },
+  hbPillGlow: {
+    shadowColor: colors.accent,
+    shadowOpacity: 0.3,
+    shadowRadius: 9,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 4,
+  },
+  hbPillText: { fontSize: 12.5, fontWeight: '700' },
+  hbTplRow: { gap: 12, paddingBottom: 10, paddingRight: 6 },
+  hbTpl: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    overflow: 'hidden',
+    ...shadows.sm,
+  },
+  hbTplArt: { width: '100%', overflow: 'hidden' },
+  hbTplArtCenter: {
+    ...FILL,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  hbTplIconChip: {
+    width: 40,
+    height: 40,
+    borderRadius: 13,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(6,10,22,0.34)',
+  },
+  hbMiniDuo: { flexDirection: 'row', gap: 5 },
+  hbMiniTile: { width: 24, height: 32, borderRadius: 7 },
+  hbMiniGrid: { width: 53, flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
+  hbMiniGridTile: { width: 24, height: 24, borderRadius: 7 },
+  hbTplBody: { padding: 12 },
+  hbTplTitle: { color: colors.text, fontSize: 13, fontWeight: '800' },
+  hbTplSub: { color: colors.textFaint, fontSize: 11, fontWeight: '600', marginTop: 3, lineHeight: 15 },
   ideaWrap: { marginTop: 12 },
   ideaLabel: { color: colors.accent, fontSize: 12, fontWeight: '800', marginLeft: 6 },
   ideaChips: { gap: 8, paddingVertical: 8, paddingRight: 6 },
