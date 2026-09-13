@@ -1,17 +1,26 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  FlatList,
   Image,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
-import Icon from '../components/ui/Icon';
+import Icon, { IconName } from '../components/ui/Icon';
 import VerifiedBadge from '../components/ui/VerifiedBadge';
+import {
+  GradientFill,
+  Glow,
+  Press,
+  CornerBrackets,
+  PillBar,
+  SectionHead,
+  FILL,
+} from '../components/ui/Futuristic';
 import PostViewer from '../components/PostViewer';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
@@ -51,7 +60,14 @@ type P = {
   comments_count: number;
   views_count: number;
   expires_at: string;
-  profile: { username: string; avatar_url: string | null } | null;
+  created_at: string | null;
+  profile: {
+    username: string;
+    avatar_url: string | null;
+    verified?: boolean;
+    // coarse community only — never a precise location
+    region?: string | null;
+  } | null;
 };
 
 type Props = {
@@ -63,10 +79,46 @@ type Props = {
 
 const engagement = (p: P) => p.likes_count + p.comments_count + p.views_count;
 
+type DiscCat = 'foryou' | 'trending' | 'fresh' | 'campus' | 'people' | 'drops';
+
+const DISC_CATS: { id: DiscCat; label: string }[] = [
+  { id: 'foryou', label: 'For You' },
+  { id: 'trending', label: '🔥 Trending' },
+  { id: 'fresh', label: '⚡ Just Dropped' },
+  { id: 'campus', label: '🎓 Campus' },
+  { id: 'people', label: '👥 People' },
+  { id: 'drops', label: '🔥 Drops' },
+];
+
+/**
+ * The 48-hour identity, expressed as time left rather than "48 hours".
+ * 🔥 under 6h, ⏳ otherwise, ⚡ inside the last hour.
+ */
+function timeLeft(expiresAt: string): { text: string; icon: IconName; urgent: boolean } {
+  const h = (new Date(expiresAt).getTime() - Date.now()) / 3600000;
+  if (!Number.isFinite(h) || h <= 0) {
+    return { text: 'Ended', icon: 'alert-circle-outline', urgent: true };
+  }
+  if (h < 1) {
+    return { text: `${Math.max(1, Math.round(h * 60))}m left`, icon: 'flash-outline', urgent: true };
+  }
+  if (h < 6) {
+    return { text: `${Math.round(h)}h left`, icon: 'flame-outline', urgent: true };
+  }
+  return { text: `${Math.round(h)}h left`, icon: 'hourglass-outline', urgent: false };
+}
+
 export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJoinDrop }: Props) {
   const [posts, setPosts] = useState<P[]>([]);
   const [drops, setDrops] = useState<(Drop & { posts: number })[]>([]);
-  const [creators, setCreators] = useState<{ id: string; username: string; avatar_url: string | null }[]>([]);
+  const [creators, setCreators] = useState<{
+    id: string;
+    username: string;
+    avatar_url: string | null;
+    verified?: boolean;
+    bio?: string | null;
+    region?: string | null;
+  }[]>([]);
   const [sounds, setSounds] = useState<{ audio: string; count: number }[]>([]);
   const [tags, setTags] = useState<{ tag: string; count: number }[]>([]);
   const [loading, setLoading] = useState(true);
@@ -75,6 +127,32 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
   const [openDrop, setOpenDrop] = useState<Drop | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [publicProfile, setPublicProfile] = useState<{ id: string; username: string } | null>(null);
+
+  // ---- discovery controls ----
+  const [cat, setCat] = useState<DiscCat>('foryou');
+  const [searchFocused, setSearchFocused] = useState(false);
+  // session-only. DiscoverScreen stays mounted across tab switches, so this
+  // survives normal use; it is deliberately not persisted anywhere.
+  const [recent, setRecent] = useState<string[]>([]);
+  const [myRegion, setMyRegion] = useState<string | null>(null);
+  const { width: winW } = useWindowDimensions();
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data: auth } = await supabase.auth.getUser();
+        if (!auth?.user) return;
+        const { data } = await supabase
+          .from('profiles')
+          .select('region')
+          .eq('id', auth.user.id)
+          .maybeSingle();
+        setMyRegion((data as { region?: string | null } | null)?.region ?? null);
+      } catch {
+        // the campus shelf just stays in its "set your campus" state
+      }
+    })();
+  }, []);
 
   const load = useCallback(async () => {
     const {
@@ -86,7 +164,7 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
       await Promise.all([
         supabase
           .from('posts')
-          .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url, verified)')
+          .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url, verified, region)')
           .is('parent_drop_id', null)
           .order('created_at', { ascending: false })
           .limit(200),
@@ -98,7 +176,7 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
           .limit(3),
         supabase
           .from('profiles')
-          .select('id, username, avatar_url, created_at, verified')
+          .select('id, username, avatar_url, created_at, verified, bio, region')
           .neq('id', me ?? '')
           .order('created_at', { ascending: false })
           .limit(8),
@@ -149,6 +227,39 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
     [posts]
   );
 
+  // newest first — the "Just Dropped" shelf, taken from the same pool so it costs
+  // no extra query and no extra latency
+  const justDropped = useMemo(
+    () =>
+      [...posts]
+        .sort((a, b) => +new Date(b.created_at ?? 0) - +new Date(a.created_at ?? 0))
+        .slice(0, 8),
+    [posts]
+  );
+
+  // Campus shelf, matched on the coarse region only. When we don't know the
+  // user's campus we show a prompt rather than guessing or asking for location.
+  const campusPosts = useMemo(
+    () => (myRegion ? posts.filter((p) => p.profile?.region === myRegion).slice(0, 6) : []),
+    [posts, myRegion]
+  );
+  const campusCreators = useMemo(
+    () => (myRegion ? creators.filter((c) => (c.region ?? null) === myRegion).slice(0, 8) : []),
+    [creators, myRegion]
+  );
+
+  /** record a term in this session's recent list (dedup, newest first, cap 6) */
+  const rememberSearch = (q: string) => {
+    const term = q.trim();
+    if (!term) return;
+    setRecent((r) => [term, ...r.filter((x) => x.toLowerCase() !== term.toLowerCase())].slice(0, 6));
+  };
+
+  /** For You shows everything; a specific category shows only its own shelf. */
+  const show = (c: DiscCat) => cat === 'foryou' || cat === c;
+
+  const nothingAtAll = !posts.length && !drops.length && !creators.length;
+
   // Open the tapped post in the full-screen pager (home-feed style). The
   // video's first bytes are warmed ahead so the first frame comes faster.
   const openViewer = (list: P[], index: number) => {
@@ -163,21 +274,43 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
     setViewer({ list, index });
   };
 
-  const renderCard = (p: P, index: number) => (
-    <Pressable style={styles.videoCard} onPress={() => openViewer(trendingVideos, index)}>
-      <CardMedia post={p} />
-      <View style={styles.cardOverlay}>
-        <View style={styles.statRow}>
-          <Icon name="heart" size={12} color={colors.logoWhite} />
-          <Text style={styles.cardLikes}>{fmtCount(p.likes_count)}</Text>
+  const renderCard = (p: P, list: P[]) => {
+    const idx = list.findIndex((x) => x.id === p.id);
+    const left = timeLeft(p.expires_at);
+    return (
+      <Press style={styles.videoCard} onPress={() => openViewer(list, idx)} shrink={0.98}>
+        <CardMedia post={p} />
+
+        {/* time-left badge — the 48h identity, never the raw number */}
+        <View style={[styles.tlBadge, left.urgent && styles.tlBadgeUrgent]}>
+          <Icon name={left.icon} size={11} color={left.urgent ? colors.danger : colors.accent} />
+          <Text style={[styles.tlText, left.urgent && styles.tlTextUrgent]}>{left.text}</Text>
         </View>
-        <View style={styles.cardUserRow}>
-          <Text style={styles.cardUser} numberOfLines={1}>@{p.profile?.username ?? 'unknown'}</Text>
-          {!!(p.profile as any)?.verified && <VerifiedBadge size={10} glow={false} />}
+
+        <View style={styles.cardOverlay}>
+          <View style={styles.cardUserRow}>
+            <Avatar url={p.profile?.avatar_url ?? null} name={p.profile?.username ?? '?'} size={22} ring />
+            <Text style={styles.cardUser} numberOfLines={1}>
+              @{p.profile?.username ?? 'unknown'}
+            </Text>
+            {!!p.profile?.verified && <VerifiedBadge size={10} glow={false} />}
+          </View>
+          {!!p.caption?.trim() && (
+            <Text style={styles.cardCaption} numberOfLines={2}>
+              {p.caption.trim()}
+            </Text>
+          )}
+          <View style={styles.statRow}>
+            <Icon name="heart" size={11} color={colors.logoWhite} />
+            <Text style={styles.cardLikes}>{fmtCount(p.likes_count)}</Text>
+            <Text style={styles.cardDot}>·</Text>
+            <Icon name="play" size={10} color={colors.textMuted} />
+            <Text style={styles.cardLikes}>{fmtCount(p.views_count)}</Text>
+          </View>
         </View>
-      </View>
-    </Pressable>
-  );
+      </Press>
+    );
+  };
 
   if (loading) {
     return (
@@ -189,151 +322,428 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
 
   return (
     <View style={styles.container}>
-      <View style={styles.searchHeader}>
-        <View style={styles.searchBox}>
-          <Text style={styles.searchIcon}>🔍</Text>
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search users, sounds, tags..."
-            placeholderTextColor={colors.textFaint}
-            autoCapitalize="none"
-            autoCorrect={false}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            returnKeyType="search"
-          />
-          {!!searchQuery && (
-            <Pressable onPress={() => setSearchQuery('')} hitSlop={8}>
-              <Text style={styles.searchClear}>✕</Text>
-            </Pressable>
-          )}
-        </View>
-      </View>
-
-      {searchQuery.trim() ? (
-        <SearchResults
-          query={searchQuery.trim()}
-          onPickQuery={setSearchQuery}
-          onOpenUser={onOpenUser}
-          onOpenAudio={onOpenAudio}
-          onOpenTag={onOpenTag}
-          onJoinDrop={onJoinDrop}
-        />
-      ) : (
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.sectionTitleRow}>
-          <Icon name="flame" size={16} color={colors.accent} />
-          <Text style={styles.sectionTitle}>Trending Now</Text>
-        </View>
-        {trendingVideos.length ? (
-          <FlatList
-            data={trendingVideos}
-            horizontal
-            keyExtractor={(p) => p.id}
-            showsHorizontalScrollIndicator={false}
-            renderItem={({ item, index }) => renderCard(item, index)}
-          />
-        ) : (
-          <Text style={styles.empty}>Nothing trending yet — post something.</Text>
-        )}
-
-        <View style={styles.sectionTitleRow}>
-          <Icon name="radio" size={16} color={colors.danger} />
-          <Text style={styles.sectionTitle}>Live Drops</Text>
-        </View>
-        {drops.length ? (
-          <FlatList
-            data={drops}
-            horizontal
-            keyExtractor={(d) => d.id}
-            showsHorizontalScrollIndicator={false}
-            renderItem={({ item }) => (
-              <Pressable style={styles.dropCard} onPress={() => setOpenDrop(item)}>
-                <Text style={styles.dropStatus}>{item.status === 'live' ? '● LIVE' : '🗳 VOTING'}</Text>
-                <Text style={styles.dropPrompt} numberOfLines={2}>
-                  “{item.prompt}”
-                </Text>
-                <DropCountdown
-                  endsAt={item.status === 'live' ? item.ends_at : item.voting_ends_at}
-                  mode={item.status as 'live' | 'voting'}
-                />
-                <Text style={styles.dropPosts}>{item.posts} submissions</Text>
+      {searchFocused ? (
+        /* ---------- focused search ---------- */
+        <View style={styles.dcSearchOverlay}>
+          <View style={styles.dcSearchBar}>
+            <Icon name="search" size={16} color={colors.accent} />
+            <TextInput
+              style={styles.dcSearchInput}
+              placeholder="Search people, moments, Drops..."
+              placeholderTextColor={colors.textFaint}
+              autoCapitalize="none"
+              autoCorrect={false}
+              autoFocus
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              onSubmitEditing={() => rememberSearch(searchQuery)}
+              returnKeyType="search"
+            />
+            {!!searchQuery && (
+              <Pressable onPress={() => setSearchQuery('')} hitSlop={8}>
+                <Icon name="close-circle" size={16} color={colors.textMuted} />
               </Pressable>
             )}
-          />
-        ) : (
-          <Text style={styles.empty}>No drops live right now — the next one is coming.</Text>
+            <Pressable
+              onPress={() => {
+                setSearchFocused(false);
+                setSearchQuery('');
+              }}
+              hitSlop={8}
+            >
+              <Text style={styles.dcCancel}>Cancel</Text>
+            </Pressable>
+          </View>
+
+          {searchQuery.trim() ? (
+            <SearchResults
+              query={searchQuery.trim()}
+              onPickQuery={(q) => {
+                setSearchQuery(q);
+                rememberSearch(q);
+              }}
+              onOpenUser={onOpenUser}
+              onOpenAudio={onOpenAudio}
+              onOpenTag={onOpenTag}
+              onJoinDrop={onJoinDrop}
+            />
+          ) : (
+            <View style={styles.dcSearchIdle}>
+              {recent.length > 0 && (
+                <>
+                  <Text style={styles.dcMiniLabel}>RECENT</Text>
+                  <View style={styles.dcChipWrap}>
+                    {recent.map((r) => (
+                      <Pressable
+                        key={r}
+                        style={styles.dcChip}
+                        onPress={() => {
+                          setSearchQuery(r);
+                          rememberSearch(r);
+                        }}
+                      >
+                        <Icon name="time-outline" size={12} color={colors.textMuted} />
+                        <Text style={styles.dcChipText}>{r}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </>
+              )}
+              <Text style={styles.dcMiniLabel}>SEARCH FOR</Text>
+              <View style={styles.dcChipWrap}>
+                {['people', 'drops', 'campus', 'trending'].map((s) => (
+                  <Pressable
+                    key={s}
+                    style={styles.dcChip}
+                    onPress={() => {
+                      setSearchQuery(s);
+                      rememberSearch(s);
+                    }}
+                  >
+                    <Icon name="search-outline" size={12} color={colors.accent} />
+                    <Text style={styles.dcChipText}>{s}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Text style={styles.dcSearchHint}>
+                Nothing found? Try a person, a Drop or a topic.
+              </Text>
+            </View>
+          )}
+        </View>
+      ) : (
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* ---------- header ---------- */}
+        <View style={styles.dcTop}>
+          <View style={styles.dcTopText}>
+            <Text style={styles.dcWord}>DISCOVER</Text>
+            <Text style={styles.dcTitle}>Find your next moment.</Text>
+          </View>
+          <View style={styles.dcBadge}>
+            <View style={styles.dcBadgeDot} />
+            <Text style={styles.dcBadgeText}>EXPLORE</Text>
+          </View>
+        </View>
+
+        {/* ---------- search entry point ---------- */}
+        <Press style={styles.dcSearch} onPress={() => setSearchFocused(true)} shrink={0.99}>
+          <GradientFill from="#141E3A" to="#0B1224" steps={10} horizontal style={FILL} />
+          <Glow color={colors.accent} size={140} strength={0.1} style={styles.dcSearchGlow} />
+          <Icon name="search" size={17} color={colors.accent} />
+          <Text style={styles.dcSearchText}>Search people, moments, Drops...</Text>
+          <View style={styles.dcSearchGo}>
+            <Icon name="arrow-forward" size={13} color={colors.bg} />
+          </View>
+        </Press>
+
+        {/* ---------- categories ---------- */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.dcCats}
+        >
+          <PillBar options={DISC_CATS} value={cat} onChange={setCat} />
+        </ScrollView>
+        {/* ---------- TRENDING NOW ---------- */}
+        {show('trending') && (
+          <>
+            <SectionHead icon="flame" title="Trending Now" sub="What everyone is checking out." />
+            {trendingVideos.length ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dcRow}>
+                {trendingVideos.map((p) => (
+                  <View key={p.id}>{renderCard(p, trendingVideos)}</View>
+                ))}
+              </ScrollView>
+            ) : (
+              <Text style={styles.empty}>Nothing trending yet — post something.</Text>
+            )}
+          </>
         )}
 
-        {/* 👀 Everyone Is Watching */}
-        <Text style={styles.sectionTitle}>👀 Everyone Is Watching</Text>
-        <View style={styles.grid}>
-          {watching.map((p, i) => (
-            <Pressable key={p.id} style={styles.gridTile} onPress={() => openViewer(watching, i)}>
-              <CardMedia post={p} />
-              <View style={styles.gridOverlay}>
-                <View style={styles.statRow}>
-                  <Icon name="heart" size={11} color={colors.logoWhite} />
-                  <Text style={styles.gridLikes}>{fmtCount(p.likes_count)}</Text>
-                </View>
-                <Text style={styles.gridViews}>{fmtCount(p.views_count)} views</Text>
-              </View>
-            </Pressable>
-          ))}
-        </View>
+        {/* ---------- ACTIVE DROPS ---------- */}
+        {show('drops') && (
+          <>
+            <SectionHead
+              icon="flash"
+              title="Active Drops"
+              sub="Join before they disappear."
+              tint={colors.danger}
+            />
+            {drops.length ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dcRow}>
+                {drops.map((d) => (
+                  <Press key={d.id} style={styles.dropCard} onPress={() => setOpenDrop(d)} shrink={0.98}>
+                    <GradientFill from="#1B1430" to="#0C1020" steps={12} style={FILL} />
+                    <CornerBrackets color="rgba(255,92,124,0.35)" size={16} inset={9} />
+                    <View style={styles.dropLive}>
+                      <View style={styles.dropLiveDot} />
+                      <Text style={styles.dropLiveText}>{d.status === 'live' ? 'LIVE' : 'VOTING'}</Text>
+                    </View>
+                    <Text style={styles.dropPrompt} numberOfLines={2}>
+                      {d.prompt}
+                    </Text>
+                    <DropCountdown
+                      endsAt={d.status === 'live' ? d.ends_at : d.voting_ends_at}
+                      mode={d.status as 'live' | 'voting'}
+                    />
+                    <View style={styles.dropFoot}>
+                      <Icon name="people" size={12} color={colors.textMuted} />
+                      <Text style={styles.dropPosts}>{d.posts} joined</Text>
+                    </View>
+                    <View style={styles.dropViewBtn}>
+                      <Text style={styles.dropViewText}>VIEW DROP</Text>
+                      <Icon name="arrow-forward" size={12} color={colors.bg} />
+                    </View>
+                  </Press>
+                ))}
+              </ScrollView>
+            ) : (
+              <Text style={styles.empty}>No drops live right now — the next one is coming.</Text>
+            )}
+          </>
+        )}
 
-        <View style={styles.sectionTitleRow}>
-          <Icon name="sparkles" size={16} color={colors.violet} />
-          <Text style={styles.sectionTitle}>New Creators</Text>
-        </View>
-        <FlatList
-          data={creators}
-          horizontal
-          keyExtractor={(c) => c.id}
-          showsHorizontalScrollIndicator={false}
-          renderItem={({ item }) => (
-            <Pressable style={styles.creatorCard} onPress={() => setPublicProfile({ id: item.id, username: item.username })}>
-              <Avatar url={item.avatar_url} name={item.username} size={72} ring verified={!!(item as any).verified} />
-              <View style={styles.creatorNameRow}>
-                <Text style={styles.creatorName} numberOfLines={1}>@{item.username}</Text>
-                {!!(item as any).verified && <VerifiedBadge size={11} glow={false} />}
+        {/* ---------- AROUND CAMPUS ---------- */}
+        {show('campus') && (
+          <>
+            <SectionHead
+              icon="school"
+              title="Around Campus"
+              sub="See what's happening around your campus."
+              tint={colors.violet}
+            />
+            {myRegion ? (
+              campusPosts.length || campusCreators.length ? (
+                <>
+                  {campusCreators.length > 0 && (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dcRow}>
+                      {campusCreators.map((c) => (
+                        <Press
+                          key={c.id}
+                          style={styles.person}
+                          onPress={() => setPublicProfile({ id: c.id, username: c.username })}
+                          shrink={0.97}
+                        >
+                          <Avatar url={c.avatar_url} name={c.username} size={54} ring verified={!!c.verified} />
+                          <Text style={styles.personName} numberOfLines={1}>
+                            @{c.username}
+                          </Text>
+                          <Text style={styles.personBio} numberOfLines={2}>
+                            {c.bio?.trim() || 'New on Gen Z'}
+                          </Text>
+                          <View style={styles.personFollow}>
+                            <Text style={styles.personFollowText}>Follow</Text>
+                          </View>
+                        </Press>
+                      ))}
+                    </ScrollView>
+                  )}
+                  {campusPosts.length > 0 && (
+                    <View style={styles.dcGrid}>
+                      {campusPosts.map((p, i) => (
+                        <Press
+                          key={p.id}
+                          style={[styles.tile, i % 3 === 0 && styles.tileBig]}
+                          onPress={() => openViewer(campusPosts, i)}
+                          shrink={0.98}
+                        >
+                          <CardMedia post={p} />
+                          <View style={styles.tileOverlay}>
+                            <Icon name={timeLeft(p.expires_at).icon} size={10} color={colors.accent} />
+                            <Text style={styles.tileTime}>{timeLeft(p.expires_at).text}</Text>
+                          </View>
+                        </Press>
+                      ))}
+                    </View>
+                  )}
+                </>
+              ) : (
+                <Text style={styles.empty}>Quiet around {myRegion} right now.</Text>
+              )
+            ) : (
+              <View style={styles.dcPrompt}>
+                <GradientFill from="#141E3A" to="#0B1224" steps={12} style={FILL} />
+                <CornerBrackets color="rgba(139,123,255,0.35)" size={16} inset={10} />
+                <Text style={styles.dcPromptTitle}>Choose your campus</Text>
+                <Text style={styles.dcPromptText}>
+                  Add a campus to your profile and moments from people around you show up here. We
+                  only ever use campus level — never your exact location.
+                </Text>
               </View>
-              <Text style={styles.creatorCta}>View stories</Text>
-            </Pressable>
-          )}
-          ListEmptyComponent={<Text style={styles.empty}>No new creators yet.</Text>}
-        />
+            )}
+          </>
+        )}
 
-        <View style={styles.sectionTitleRow}>
-          <Icon name="musical-notes" size={16} color={colors.cyan} />
-          <Text style={styles.sectionTitle}>Trending Sounds</Text>
-        </View>
-        <View style={styles.chipWrap}>
-          {sounds.map((s) => (
-            <Pressable key={s.audio} style={styles.chip} onPress={() => onOpenAudio(s.audio)}>
-              <View style={styles.statRow}>
-                <Icon name="musical-note" size={12} color={colors.cyan} />
-                <Text style={styles.chipText}>{s.audio}</Text>
-              </View>
-              <Text style={styles.chipCount}>{s.count} posts</Text>
-            </Pressable>
-          ))}
-          {!sounds.length && <Text style={styles.empty}>No sounds yet — add one to your post.</Text>}
-        </View>
+        {/* ---------- PEOPLE ---------- */}
+        {show('people') && (
+          <>
+            <SectionHead
+              icon="people"
+              title="People you might like"
+              sub="Fresh faces on Gen Z."
+              tint={colors.cyan}
+            />
+            {creators.length ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dcRow}>
+                {creators.map((c) => (
+                  <Press
+                    key={c.id}
+                    style={styles.person}
+                    onPress={() => setPublicProfile({ id: c.id, username: c.username })}
+                    shrink={0.97}
+                  >
+                    <Avatar url={c.avatar_url} name={c.username} size={54} ring verified={!!c.verified} />
+                    <View style={styles.personNameRow}>
+                      <Text style={styles.personName} numberOfLines={1}>
+                        @{c.username}
+                      </Text>
+                      {!!c.verified && <VerifiedBadge size={11} glow={false} />}
+                    </View>
+                    <Text style={styles.personBio} numberOfLines={2}>
+                      {c.bio?.trim() || 'New on Gen Z'}
+                    </Text>
+                    <View style={styles.personFollow}>
+                      <Text style={styles.personFollowText}>Follow</Text>
+                    </View>
+                  </Press>
+                ))}
+              </ScrollView>
+            ) : (
+              <Text style={styles.empty}>No new creators yet.</Text>
+            )}
+          </>
+        )}
 
-        <View style={styles.sectionTitleRow}>
-          <Icon name="pricetags" size={16} color={colors.cyan} />
-          <Text style={styles.sectionTitle}>Trending Tags</Text>
-        </View>
-        <View style={styles.chipWrap}>
-          {tags.map((t) => (
-            <Pressable key={t.tag} style={styles.chip} onPress={() => onOpenTag(t.tag)}>
-              <Text style={styles.chipText}>#{t.tag}</Text>
-              <Text style={styles.chipCount}>{t.count} posts</Text>
-            </Pressable>
-          ))}
-          {!tags.length && <Text style={styles.empty}>No tags yet — add #tags to your caption.</Text>}
-        </View>
+        {/* ---------- JUST DROPPED ---------- */}
+        {show('fresh') && (
+          <>
+            <SectionHead
+              icon="flash-outline"
+              title="Just Dropped"
+              sub="Fresh moments from the Gen Z community."
+              tint={colors.accent}
+            />
+            {justDropped.length ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dcRow}>
+                {justDropped.map((p, i) => (
+                  <Press
+                    key={p.id}
+                    style={styles.freshCard}
+                    onPress={() => openViewer(justDropped, i)}
+                    shrink={0.98}
+                  >
+                    <View style={styles.freshMedia}>
+                      <CardMedia post={p} />
+                      <View style={styles.freshNew}>
+                        <Text style={styles.freshNewText}>NEW</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.freshUser} numberOfLines={1}>
+                      @{p.profile?.username ?? 'unknown'}
+                    </Text>
+                    <View style={styles.statRow}>
+                      <Icon name={timeLeft(p.expires_at).icon} size={11} color={colors.accent} />
+                      <Text style={styles.freshTime}>{timeLeft(p.expires_at).text}</Text>
+                    </View>
+                  </Press>
+                ))}
+              </ScrollView>
+            ) : (
+              <Text style={styles.empty}>Nothing has dropped yet.</Text>
+            )}
+          </>
+        )}
+
+        {/* ---------- DISCOVERY GRID (mixed tile sizes) ---------- */}
+        {show('trending') && watching.length > 0 && (
+          <>
+            <SectionHead icon="eye" title="Everyone Is Watching" sub="The biggest moments on Gen Z." />
+            <View style={styles.dcGrid}>
+              {watching.map((p, i) => (
+                <Press
+                  key={p.id}
+                  style={[styles.tile, (i % 4 === 0 || i % 4 === 3) && styles.tileBig]}
+                  onPress={() => openViewer(watching, i)}
+                  shrink={0.98}
+                >
+                  <CardMedia post={p} />
+                  <View style={styles.tileOverlay}>
+                    <View style={styles.statRow}>
+                      <Icon name="heart" size={10} color={colors.logoWhite} />
+                      <Text style={styles.tileLikes}>{fmtCount(p.likes_count)}</Text>
+                    </View>
+                    <View style={styles.statRow}>
+                      <Icon name={timeLeft(p.expires_at).icon} size={10} color={colors.accent} />
+                      <Text style={styles.tileTime}>{timeLeft(p.expires_at).text}</Text>
+                    </View>
+                  </View>
+                </Press>
+              ))}
+            </View>
+          </>
+        )}
+
+        {/* ---------- SOUNDS + TAGS ---------- */}
+        {cat === 'foryou' && (
+          <>
+            <SectionHead
+              icon="musical-notes"
+              title="Trending Sounds"
+              sub="What people are posting to."
+              tint={colors.cyan}
+            />
+            <View style={styles.chipWrap}>
+              {sounds.map((s) => (
+                <Pressable key={s.audio} style={styles.chip} onPress={() => onOpenAudio(s.audio)}>
+                  <View style={styles.statRow}>
+                    <Icon name="musical-note" size={12} color={colors.cyan} />
+                    <Text style={styles.chipText}>{s.audio}</Text>
+                  </View>
+                  <Text style={styles.chipCount}>{s.count} posts</Text>
+                </Pressable>
+              ))}
+              {!sounds.length && <Text style={styles.empty}>No sounds yet — add one to your post.</Text>}
+            </View>
+
+            <SectionHead
+              icon="pricetags"
+              title="Trending Tags"
+              sub="Topics picking up."
+              tint={colors.cyan}
+            />
+            <View style={styles.chipWrap}>
+              {tags.map((t) => (
+                <Pressable key={t.tag} style={styles.chip} onPress={() => onOpenTag(t.tag)}>
+                  <Text style={styles.chipText}>#{t.tag}</Text>
+                  <Text style={styles.chipCount}>{t.count} posts</Text>
+                </Pressable>
+              ))}
+              {!tags.length && <Text style={styles.empty}>No tags yet — add #tags to your caption.</Text>}
+            </View>
+          </>
+        )}
+
+        {/* ---------- EMPTY STATE ---------- */}
+        {nothingAtAll && (
+          <View style={styles.dcEmpty}>
+            <GradientFill from="#141E3A" to="#0A1020" steps={14} style={FILL} />
+            <Glow color={colors.accent} size={220} strength={0.14} style={styles.dcEmptyGlow} />
+            <CornerBrackets color="rgba(255,157,31,0.4)" size={20} inset={12} />
+            <Text style={styles.dcEmptyTitle}>Nothing to discover yet.</Text>
+            <Text style={styles.dcEmptyText}>
+              Be one of the first people to create a moment.
+            </Text>
+            <Press style={styles.dcEmptyBtn} onPress={onJoinDrop}>
+              <GradientFill from={colors.accent} to={colors.accentStrong} steps={10} horizontal style={FILL} />
+              <Icon name="add" size={16} color={colors.bg} />
+              <Text style={styles.dcEmptyBtnText}>CREATE A MOMENT</Text>
+            </Press>
+          </View>
+        )}
       </ScrollView>
       )}
 
@@ -396,6 +806,295 @@ function CardMedia({ post }: { post: P }) {
 }
 
 const styles = StyleSheet.create({
+  // ---- discover (redesigned) ----
+  dcTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 4,
+  },
+  dcTopText: { flex: 1 },
+  dcWord: { color: colors.accent, fontSize: 11.5, fontWeight: '800', letterSpacing: 3 },
+  dcTitle: {
+    color: colors.text,
+    fontSize: 25,
+    fontWeight: '800',
+    letterSpacing: -0.5,
+    lineHeight: 31,
+    marginTop: 4,
+  },
+  dcBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderWidth: 1,
+    borderColor: 'rgba(255,157,31,0.35)',
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  dcBadgeDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.accent },
+  dcBadgeText: { color: colors.accent, fontSize: 9.5, fontWeight: '800', letterSpacing: 1.3 },
+
+  // search entry point
+  dcSearch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(255,157,31,0.22)',
+    backgroundColor: colors.surface,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    marginTop: 16,
+    overflow: 'hidden',
+    ...shadows.md,
+  },
+  dcSearchGlow: { position: 'absolute', top: -60, right: -50 },
+  dcSearchText: { flex: 1, color: colors.textMuted, fontSize: 14, fontWeight: '600' },
+  dcSearchGo: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.accent,
+  },
+  dcCats: { gap: 8, paddingVertical: 16, paddingRight: 6 },
+
+  // section spacing
+  dcRow: { gap: 12, paddingTop: 14, paddingRight: 6 },
+
+  // discovery grid with deliberately uneven tiles
+  dcGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    paddingTop: 14,
+  },
+  tile: {
+    width: '48.5%',
+    height: 168,
+    borderRadius: radius.lg,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    justifyContent: 'flex-end',
+  },
+  tileBig: { width: '100%', height: 250 },
+  tileOverlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    backgroundColor: 'rgba(4,8,18,0.62)',
+  },
+  tileLikes: { color: colors.logoWhite, fontSize: 10.5, fontWeight: '700' },
+  tileTime: { color: colors.accent, fontSize: 10, fontWeight: '800' },
+
+  // people
+  person: {
+    width: 146,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    padding: 13,
+    alignItems: 'center',
+    ...shadows.sm,
+  },
+  personNameRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 9 },
+  personName: { color: colors.text, fontSize: 12.5, fontWeight: '800', marginTop: 9, maxWidth: 118 },
+  personBio: {
+    color: colors.textFaint,
+    fontSize: 10.5,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: 4,
+    lineHeight: 14,
+    minHeight: 28,
+  },
+  personFollow: {
+    marginTop: 10,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    backgroundColor: colors.accentSoft,
+    paddingHorizontal: 16,
+    paddingVertical: 5,
+  },
+  personFollowText: { color: colors.accent, fontSize: 11.5, fontWeight: '800' },
+
+  // campus prompt
+  dcPrompt: {
+    marginTop: 14,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(139,123,255,0.28)',
+    backgroundColor: colors.surface,
+    padding: 16,
+    overflow: 'hidden',
+  },
+  dcPromptTitle: { color: colors.text, fontSize: 15, fontWeight: '800' },
+  dcPromptText: { color: colors.textMuted, fontSize: 12, lineHeight: 17, marginTop: 6 },
+
+  // empty state
+  dcEmpty: {
+    marginTop: 20,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: 'rgba(255,157,31,0.25)',
+    backgroundColor: colors.surface,
+    padding: 26,
+    alignItems: 'center',
+    overflow: 'hidden',
+    ...shadows.md,
+  },
+  dcEmptyGlow: { position: 'absolute', top: -70, right: -60 },
+  dcEmptyTitle: { color: colors.text, fontSize: 17, fontWeight: '800', marginTop: 6 },
+  dcEmptyText: {
+    color: colors.textMuted,
+    fontSize: 12.5,
+    textAlign: 'center',
+    marginTop: 6,
+    lineHeight: 18,
+  },
+  dcEmptyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    borderRadius: radius.pill,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
+    marginTop: 18,
+    overflow: 'hidden',
+  },
+  dcEmptyBtnText: { color: colors.bg, fontSize: 12.5, fontWeight: '900', letterSpacing: 1.1 },
+
+  // focused search
+  dcSearchOverlay: { flex: 1, paddingTop: TOP_INSET + 10, paddingHorizontal: 16 },
+  dcSearchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceInput,
+    paddingHorizontal: 13,
+    paddingVertical: 11,
+  },
+  dcSearchInput: { flex: 1, color: colors.text, fontSize: 14.5, padding: 0 },
+  dcCancel: { color: colors.accent, fontSize: 13, fontWeight: '800' },
+  dcSearchIdle: { paddingTop: 18 },
+  dcMiniLabel: {
+    color: colors.textFaint,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+    marginBottom: 9,
+    marginTop: 6,
+  },
+  dcChipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
+  dcChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  dcChipText: { color: colors.textMuted, fontSize: 12.5, fontWeight: '700' },
+  dcSearchHint: {
+    color: colors.textFaint,
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 14,
+  },
+
+  // trending card additions
+  tlBadge: {
+    position: 'absolute',
+    top: 9,
+    left: 9,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(4,8,18,0.72)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,157,31,0.35)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  tlBadgeUrgent: { borderColor: 'rgba(255,92,124,0.5)' },
+  tlText: { color: colors.accent, fontSize: 10, fontWeight: '800' },
+  tlTextUrgent: { color: colors.danger },
+  cardCaption: { color: colors.text, fontSize: 11.5, lineHeight: 15, marginTop: 5 },
+  cardDot: { color: colors.textFaint, fontSize: 11, marginHorizontal: 3 },
+
+  // drops
+  dropLive: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    alignSelf: 'flex-start',
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(255,92,124,0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,92,124,0.45)',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+  },
+  dropLiveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.danger },
+  dropLiveText: { color: colors.danger, fontSize: 10, fontWeight: '800', letterSpacing: 1 },
+  dropFoot: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 8 },
+  dropViewBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 12,
+    borderRadius: radius.pill,
+    backgroundColor: colors.accent,
+    paddingVertical: 9,
+  },
+  dropViewText: { color: colors.bg, fontSize: 11.5, fontWeight: '900', letterSpacing: 1 },
+
+  // just dropped
+  freshCard: {
+    width: 132,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    overflow: 'hidden',
+    ...shadows.sm,
+  },
+  freshMedia: { width: '100%', height: 132, overflow: 'hidden' },
+  freshNew: {
+    position: 'absolute',
+    top: 7,
+    left: 7,
+    borderRadius: radius.pill,
+    backgroundColor: colors.accent,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  freshNewText: { color: colors.bg, fontSize: 9, fontWeight: '900', letterSpacing: 0.8 },
+  freshUser: { color: colors.text, fontSize: 11.5, fontWeight: '800', paddingHorizontal: 10, marginTop: 9 },
+  freshTime: { color: colors.accent, fontSize: 10, fontWeight: '800', marginBottom: 10, marginLeft: 2 },
   container: {
     flex: 1,
     backgroundColor: colors.bg,
