@@ -52,7 +52,7 @@ makes them harder to unpick later.
 
 | Issue | Detail |
 |---|---|
-| **Broken counter** | The app reads `profiles.lifetime_likes` (`accountStats.ts:48`, `ProfileScreen.tsx:172`, `PublicProfileScreen.tsx:167`) but `supabase/lifetime_likes.sql:17-18` creates `total_likes_received`. Only a root-level `lifetime_likes_fix.sql:12` creates `lifetime_likes`. **If that root script was never run, "likes banked" reads a missing column.** `MIGRATIONS.md:140` already flags it. |
+| ~~Broken counter~~ **RETRACTED** | **This entry was wrong.** Verified against the live database: `profiles` has **both** `lifetime_likes` (bigint) **and** `total_likes_received` (integer), and both are correctly maintained — they just measure different things. `bump_lifetime_likes()` (`lifetime_likes.sql:24`, despite its name) writes `total_likes_received` and is triggered on `likes` inserts/deletes: a running like total. `bank_likes_on_post_delete()` (`lifetime_likes_fix.sql:16-37`) writes `lifetime_likes` and is triggered when a **post** is deleted, so it counts likes that survived the 48h expiry. Live data shows `sum(total_likes_received)=6` vs `sum(lifetime_likes)=4` — the gap is simply likes sitting on posts that have not expired yet. **No bug.** The only real smell is the misleading function name. |
 | **3 location columns** | `profiles.region` (`feed_advanced.sql:74`), `profiles.location` (`profile3.sql:9`), `profiles.location_region` (`admin_center.sql:26`). Different features read different ones. |
 | **2 mute tables** | `muted_users` (`feed_advanced.sql:27-36`) and `muted_accounts` (`profile3.sql:37-49`). The feed only reads the first. |
 | **2 trending engines** | `FeedScreen.tsx:707-713` (velocity top-5) vs `DiscoverScreen.tsx:235-242` (engagement sort). |

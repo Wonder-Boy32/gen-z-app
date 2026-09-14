@@ -120,64 +120,21 @@ grant execute on function public.genzplus_is_active(uuid) to anon, authenticated
 
 -- ------------------------------------------------------------
 -- 4) ACTIVATION — the ONLY writer of the entitlement table
--- SECURITY DEFINER and revoked from clients, so it can only be reached from the
--- server-side verification path (service role, or another SECURITY DEFINER
--- function that has itself verified a payment with the provider).
+--
+-- The authoritative definition lives in genzplus_opay.sql, NOT here.
+-- This file previously also defined genzplus_activate, with `default 'lifetime'`
+-- and an `else null` fall-through that meant any unrecognised plan silently
+-- granted premium forever. That stale copy has been REMOVED rather than left
+-- here, because running this file AFTER genzplus_opay.sql (which installs the
+-- corrected 2-month version) would have silently replaced it — reintroducing the
+-- lifetime fall-through and losing the 2-month period.
+--
+-- Ownership, to avoid a second divergence:
+--   genzplus_opay.sql owns genzplus_activate, genzplus_review_payment,
+--                        genzplus_pending_payments, payment_config, genzplus_payments
+--   this file owns       genzplus_members, genzplus_badge, genzplus_is_active,
+--                        genzplus_initiate
 -- ------------------------------------------------------------
-create or replace function public.genzplus_activate(
-  p_user uuid,
-  p_reference text,
-  p_provider text,
-  p_amount_kobo bigint,
-  p_plan text default 'lifetime'
-)
-returns jsonb
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_expires timestamptz;
-begin
-  if p_user is null then
-    return jsonb_build_object('ok', false, 'error', 'user required');
-  end if;
-
-  -- Never activate on an underpayment. ₦20,000 floor, in kobo.
-  if p_amount_kobo is null or p_amount_kobo < 2000000 then
-    return jsonb_build_object(
-      'ok', false,
-      'error', 'amount below GenZ+ price',
-      'expected_kobo', 2000000,
-      'received_kobo', p_amount_kobo
-    );
-  end if;
-
-  v_expires := case
-    when p_plan = 'yearly'  then now() + interval '1 year'
-    when p_plan = 'monthly' then now() + interval '1 month'
-    else null                                            -- lifetime
-  end;
-
-  insert into public.genzplus_members
-    (user_id, active, plan, amount_kobo, provider, provider_reference, expires_at, updated_at)
-  values
-    (p_user, true, coalesce(p_plan, 'lifetime'), p_amount_kobo,
-     p_provider, p_reference, v_expires, now())
-  on conflict (user_id) do update
-    set active             = true,
-        plan               = excluded.plan,
-        amount_kobo        = excluded.amount_kobo,
-        provider           = excluded.provider,
-        provider_reference = excluded.provider_reference,
-        expires_at         = excluded.expires_at,
-        updated_at         = now();
-
-  return jsonb_build_object('ok', true, 'user_id', p_user, 'expires_at', v_expires);
-end $$;
-
-revoke all on function public.genzplus_activate(uuid, text, text, bigint, text)
-  from public, anon, authenticated;
 
 
 -- ------------------------------------------------------------
