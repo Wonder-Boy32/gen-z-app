@@ -21,6 +21,7 @@ import VerifiedBadge from '../components/ui/VerifiedBadge';
 import PostViewer from '../components/PostViewer';
 import ChatThread from './ChatThread';
 import AnonymousSendScreen from './AnonymousSendScreen';
+import { fetchStatuses, shortTimeLeft, type ProfileStatus } from '../services/profileStatus';
 
 type Profile = {
   id: string;
@@ -100,6 +101,30 @@ export default function PublicProfileScreen({
   const [chatBusy, setChatBusy] = useState(false);
   const [viewer, setViewer] = useState<number | null>(null);
   const [anonOpen, setAnonOpen] = useState(false);
+  const [mood, setMood] = useState<ProfileStatus | null>(null);
+
+  // Read the other member's live mood, if they set one. A separate effect on the
+  // resolved id, so the existing load() pipeline is untouched and a mood arriving
+  // late never delays the profile itself.
+  useEffect(() => {
+    let alive = true;
+    const id = profile?.id;
+    if (!id) {
+      setMood(null);
+      return;
+    }
+    fetchStatuses([id])
+      .then((map) => {
+        if (alive) setMood(map[id] ?? null);
+      })
+      .catch(() => {
+        // a missing mood is not worth surfacing as an error
+        if (alive) setMood(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [profile?.id]);
   const myIdRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
@@ -354,6 +379,17 @@ export default function PublicProfileScreen({
                   </View>
                   <Text style={styles.username}>@{profile?.username ?? username}</Text>
 
+              {/* Read-only here: only the owner can set their own mood. */}
+              {!!mood && (
+                <View style={moodStyles.chip}>
+                  <Text style={moodStyles.emoji}>{mood.emoji}</Text>
+                  <Text style={moodStyles.label} numberOfLines={1}>
+                    {mood.label}
+                  </Text>
+                  <Text style={moodStyles.time}>{shortTimeLeft(mood.expiresAt)}</Text>
+                </View>
+              )}
+
                   {/* info chips */}
                   <View style={styles.chipRow}>
                     {!!profile?.location && (
@@ -505,6 +541,27 @@ export default function PublicProfileScreen({
     </Modal>
   );
 }
+
+// Kept in its own sheet so this feature cannot disturb existing profile styles.
+const moodStyles = StyleSheet.create({
+  chip: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+    backgroundColor: colors.accentSoft,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    maxWidth: '100%',
+  },
+  emoji: { fontSize: 14 },
+  label: { color: colors.text, fontSize: 13, fontWeight: '600', flexShrink: 1 },
+  time: { color: colors.accent, fontSize: 11, fontWeight: '700' },
+});
 
 const styles = StyleSheet.create({
   container: {

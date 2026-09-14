@@ -28,6 +28,8 @@ import ProfileViewersScreen, { PROFILE_VIEWS_SEEN_KEY } from './ProfileViewersSc
 import AnonymousSettingsModal from '../components/AnonymousSettingsModal';
 import { useSheetPad } from '../utils/useSheetPad';
 import AnonymousCardModal from '../components/AnonymousCardModal';
+import MoodStatusModal from '../components/MoodStatusModal';
+import { fetchMyStatus, shortTimeLeft, type ProfileStatus } from '../services/profileStatus';
 
 type Profile = {
   username: string;
@@ -110,6 +112,19 @@ export default function ProfileScreen({
   const [shareOpen, setShareOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [anonSettingsOpen, setAnonSettingsOpen] = useState(false);
+  const [moodOpen, setMoodOpen] = useState(false);
+  const [mood, setMood] = useState<ProfileStatus | null>(null);
+
+  // The mood lives in its own table and gets its own read, deliberately separate
+  // from load() so the existing profile pipeline is untouched. It reads the live
+  // view, so an expired mood comes back null instead of needing a client check.
+  const loadMood = useCallback(async () => {
+    setMood(await fetchMyStatus());
+  }, []);
+
+  useEffect(() => {
+    loadMood();
+  }, [loadMood]);
   const [anonCardOpen, setAnonCardOpen] = useState(false);
   const [peopleMode, setPeopleMode] = useState<'followers' | 'following' | null>(null);
   const [viewersOpen, setViewersOpen] = useState(false);
@@ -309,6 +324,28 @@ export default function ProfileScreen({
                 {profile?.verified && <VerifiedBadge size={19} style={styles.verified} />}
               </View>
               <Text style={styles.username}>@{profile?.username ?? 'unknown'}</Text>
+
+              {/* Temporary mood — tap to set, change or clear. It clears itself. */}
+              <Pressable
+                style={[moodStyles.chip, !mood && moodStyles.chipEmpty]}
+                onPress={() => setMoodOpen(true)}
+              >
+                {mood ? (
+                  <>
+                    <Text style={moodStyles.emoji}>{mood.emoji}</Text>
+                    <Text style={moodStyles.label} numberOfLines={1}>
+                      {mood.label}
+                    </Text>
+                    <Text style={moodStyles.time}>{shortTimeLeft(mood.expiresAt)}</Text>
+                  </>
+                ) : (
+                  <>
+                    <Text style={moodStyles.emoji}>✨</Text>
+                    <Text style={moodStyles.placeholder}>Set a status</Text>
+                  </>
+                )}
+              </Pressable>
+
               {!!profile?.pronouns && <Text style={styles.meta}>{profile.pronouns}</Text>}
               {!!profile?.location && (
                 <View style={styles.metaRow}>
@@ -489,6 +526,12 @@ export default function ProfileScreen({
       <ShareProfileModal visible={shareOpen} profile={profile} onClose={() => setShareOpen(false)} onShare={shareProfile} />
 
       <AnonymousSettingsModal visible={anonSettingsOpen} onClose={() => setAnonSettingsOpen(false)} />
+      <MoodStatusModal
+        visible={moodOpen}
+        onClose={() => setMoodOpen(false)}
+        current={mood}
+        onChanged={loadMood}
+      />
 
       {anonCardOpen && profile && (
         <AnonymousCardModal
@@ -673,6 +716,33 @@ function ShareProfileModal({ visible, profile, onClose, onShare }: any) {
     </Modal>
   );
 }
+
+// Mood chip styling sits in its own sheet so this feature cannot disturb the
+// existing profile styles.
+const moodStyles = StyleSheet.create({
+  chip: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+    backgroundColor: colors.accentSoft,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    maxWidth: '100%',
+  },
+  chipEmpty: {
+    backgroundColor: colors.surfaceAlt,
+    borderColor: colors.border,
+  },
+  emoji: { fontSize: 14 },
+  label: { color: colors.text, fontSize: 13, fontWeight: '600', flexShrink: 1 },
+  time: { color: colors.accent, fontSize: 11, fontWeight: '700' },
+  placeholder: { color: colors.textMuted, fontSize: 13, fontWeight: '600' },
+});
 
 const styles = StyleSheet.create({
   container: {
