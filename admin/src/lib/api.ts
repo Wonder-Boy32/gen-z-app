@@ -144,6 +144,16 @@ export interface AuditEntry { admin_email: string | null; action: string; catego
 export interface SeriesPoint { day: string; new_users: number; drops_created: number; drops_expired: number; views: number; likes: number; comments: number; reposts: number; saves: number; follows: number; messages: number; anon_messages: number; reports: number; dau: number; }
 export interface Snapshot { wau: number; mau: number; retention_7d: number; total_drops_viewed: number; total_likes: number; total_comments: number; total_reposts: number; total_saves: number; total_follows: number; total_conversations: number; total_messages: number; total_anon_messages: number; total_bans: number; total_suspensions: number; total_reports: number; }
 
+export interface GenZPlusPaymentRow {
+  id: string;
+  user_id: string;
+  username: string | null;
+  reference: string;
+  amount_kobo: number;
+  note: string | null;
+  created_at: string;
+}
+
 // ---- API ----------------------------------------------------------------
 export const api = {
   whoami: () => rpc<Whoami>('admin_whoami'),
@@ -195,4 +205,16 @@ export const api = {
   adminRemove: (id: string) => rpc('admin_admin_remove', { p_user_id: id }),
   adminSetRole: (id: string, role: string) => rpc('admin_admin_set_role', { p_user_id: id, p_role: role }),
   mfaStatus: (enabled: boolean) => rpc('admin_mfa_status', { p_enabled: enabled }),
+
+  // ---- GenZ+ payments (supabase/genzplus_opay.sql) ----
+  // Members transfer ₦20,000 by OPay and submit a reference; an admin confirms it.
+  // A `returns table` function arrives as a plain array, not a wrapper object.
+  genzplusPending: (limit = 100) =>
+    rpc<GenZPlusPaymentRow[]>('genzplus_pending_payments', { p_limit: limit }),
+  genzplusReview: (id: string, approve: boolean, note: string) =>
+    rpc<{ ok?: boolean; error?: string; approved?: boolean }>('genzplus_review_payment', {
+      p_payment: id,
+      p_approve: approve,
+      p_note: note,
+    }),
 };

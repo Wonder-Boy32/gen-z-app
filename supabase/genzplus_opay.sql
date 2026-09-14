@@ -223,6 +223,21 @@ revoke all on function public.genzplus_activate(uuid, text, text, bigint, text)
 
 
 -- ------------------------------------------------------------
+-- 3b) PERMISSION — so payment review can be granted per role
+--     Both RPCs below require 'payments.view', which is also the permission the
+--     admin console's nav module checks. Keeping the two in step means the UI
+--     never hides a button the backend would allow, and never shows one it
+--     would refuse. super_admin bypasses permission checks by design.
+--     Seeded for 'admin' only — money handling is not handed to moderators,
+--     support or analytics by default.
+-- ------------------------------------------------------------
+insert into public.admin_permissions (role, permission) values
+  ('admin', 'payments.view'),
+  ('admin', 'payments.manage')
+on conflict (role, permission) do nothing;
+
+
+-- ------------------------------------------------------------
 -- 4) ADMIN REVIEW — the only way a claim turns into premium
 --    Gated on the existing admin system (admin_center.sql), which raises
 --    unauthorized / not_an_admin / permission_denied.
@@ -243,10 +258,10 @@ declare
   v_res jsonb;
 begin
   -- Reuse the existing role gate rather than inventing a second one.
-  -- A null permission means any active admin may review; pass a permission
-  -- string instead once you want to restrict this to specific roles.
+  -- Requires 'payments.view' so the backend matches the admin console's nav
+  -- module exactly. super_admin bypasses permission checks by design.
   begin
-    v_admin := public.admin_require(null);
+    v_admin := public.admin_require('payments.view');
   exception when others then
     return jsonb_build_object('ok', false, 'error', sqlerrm);
   end;
@@ -281,6 +296,13 @@ begin
           reviewed_by = v_admin, reviewed_at = now()
       where id = p_payment;
 
+    -- Money moved a member's account to premium: that belongs in the audit log.
+    perform public.admin_audit(
+      'genzplus_payment_approve', 'payments', 'genzplus_payment', p_payment::text, p_note,
+      jsonb_build_object('user_id', v_row.user_id, 'amount_kobo', v_row.amount_kobo,
+                         'reference', v_row.reference, 'activation', v_res)
+    );
+
     return jsonb_build_object('ok', true, 'approved', true, 'activation', v_res);
   end if;
 
@@ -288,6 +310,12 @@ begin
     set status = 'rejected', review_note = p_note,
         reviewed_by = v_admin, reviewed_at = now()
     where id = p_payment;
+
+  perform public.admin_audit(
+    'genzplus_payment_reject', 'payments', 'genzplus_payment', p_payment::text, p_note,
+    jsonb_build_object('user_id', v_row.user_id, 'amount_kobo', v_row.amount_kobo,
+                       'reference', v_row.reference)
+  );
 
   return jsonb_build_object('ok', true, 'approved', false);
 end $$;
@@ -313,7 +341,7 @@ as $$
 declare v_admin uuid;
 begin
   begin
-    v_admin := public.admin_require(null);
+    v_admin := public.admin_require('payments.view');
   exception when others then
     raise exception '%', sqlerrm;
   end;

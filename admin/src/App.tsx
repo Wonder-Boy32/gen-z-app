@@ -24,12 +24,13 @@ import Settings from './screens/Settings';
 import Flags from './screens/Flags';
 import Audit from './screens/Audit';
 import Admins from './screens/Admins';
+import Payments from './screens/Payments';
 
 const SCREENS: Record<string, ComponentType<any>> = {
   overview: Overview, pulse: Pulse, users: Users, drops: Drops, moderation: Moderation,
   anon: Anonymous, safety: Safety, chat: Chat, chains: Chains, around: AroundYou,
   discovery: Discovery, analytics: Analytics, notifications: Notifications,
-  settings: Settings, flags: Flags, audit: Audit, admins: Admins,
+  settings: Settings, flags: Flags, audit: Audit, admins: Admins, payments: Payments,
 };
 
 function Shell() {

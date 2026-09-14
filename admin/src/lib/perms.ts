@@ -28,6 +28,7 @@ export const MODULES: AdminModule[] = [
   { key: 'flags', label: 'Feature Flags', icon: 'flag', perm: 'flags.manage', section: 'system', mobile: false },
   { key: 'audit', label: 'Audit Log', icon: 'file-text', perm: 'audit.view', section: 'system', mobile: false },
   { key: 'admins', label: 'Admins', icon: 'user-check', perm: 'admins.manage', section: 'system', mobile: false },
+  { key: 'payments', label: 'GenZ+ Payments', icon: 'credit-card', perm: 'payments.view', section: 'system', mobile: false },
 ];
 
 export function canAccess(perms: string[], role: string, module: AdminModule): boolean {
