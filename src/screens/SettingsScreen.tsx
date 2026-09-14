@@ -39,8 +39,21 @@ import {
   DeactivateModal,
   DeleteModal,
 } from '../components/security/AccountSecurity';
+import GenZPlusScreen from '../components/premium/GenZPlusScreen';
+import GetVerifiedScreen from '../components/premium/GetVerifiedScreen';
+import { fetchGenZPlusEntitlement } from '../services/genzplus';
+import { fetchVerificationState, type VerificationStatus } from '../services/verification';
 
 const APP_VERSION = '0.1.0';
+
+// GenZ+ (premium) and verification (authenticity) are separate systems, so they
+// get separate labels rather than one shared "badge" concept.
+const VERIFY_LABEL: Record<VerificationStatus, string> = {
+  none: '',
+  pending: 'UNDER REVIEW',
+  approved: 'VERIFIED',
+  rejected: 'NOT APPROVED',
+};
 
 type Profile = {
   username: string;
@@ -67,6 +80,23 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
   const [stats, setStats] = useState<AccountStats | null>(null);
   const [counts, setCounts] = useState({ blocked: 0, muted: 0, words: 0 });
   const [userId, setUserId] = useState<string | null>(null);
+  const [genzPlusOpen, setGenzPlusOpen] = useState(false);
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  const [genzPlusActive, setGenzPlusActive] = useState(false);
+  const [verifyStatus, setVerifyStatus] = useState<VerificationStatus>('none');
+
+  // Both statuses are read from the database — neither can be self-granted, so
+  // re-reading is the only honest source. Kept separate from load() above so the
+  // existing settings behaviour is untouched.
+  const loadBadges = useCallback(async () => {
+    const [ent, ver] = await Promise.all([fetchGenZPlusEntitlement(), fetchVerificationState()]);
+    setGenzPlusActive(ent.active);
+    setVerifyStatus(ver.status);
+  }, []);
+
+  useEffect(() => {
+    loadBadges();
+  }, [loadBadges]);
   const [email, setEmail] = useState('');
   const [security, setSecurity] = useState<{ mfa_enabled: boolean; phone: string | null; phone_verified: boolean } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -243,6 +273,48 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
           <Metric label="likes banked" value={statValue(stats?.lifetimeLikes)} />
         </View>
 
+        {/* ---------------- premium ---------------- */}
+        {/* Deliberately its own block rather than a generic Section: GenZ+ and
+            verification should read as noteworthy, while staying in the same
+            dark-surface + accent language as the rest of Settings. */}
+        <View style={styles.premiumWrap}>
+          <Pressable style={styles.premiumRow} onPress={() => setGenzPlusOpen(true)}>
+            <View style={styles.premiumIcon}>
+              <Icon name="sparkles" size={17} color={colors.bg} />
+            </View>
+            <View style={styles.premiumInfo}>
+              <View style={styles.premiumTitleRow}>
+                <Text style={styles.premiumLabel}>GenZ+</Text>
+                {genzPlusActive && (
+                  <View style={styles.premiumTag}>
+                    <Text style={styles.premiumTagText}>ACTIVE</Text>
+                  </View>
+                )}
+              </View>
+              <Text style={styles.premiumDetail}>
+                Unlock more. Stand out. Experience GenZ differently.
+              </Text>
+            </View>
+            <Icon name="chevron-forward" size={16} color={colors.textFaint} />
+          </Pressable>
+
+          <View style={styles.premiumDivider} />
+
+          <Pressable style={styles.premiumRow} onPress={() => setVerifyOpen(true)}>
+            <View style={[styles.premiumIcon, styles.premiumIconVerify]}>
+              <Icon name="checkmark" size={17} color={colors.bg} />
+            </View>
+            <View style={styles.premiumInfo}>
+              <Text style={styles.premiumLabel}>Get Verified</Text>
+              <Text style={styles.premiumDetail}>Show people you're really you.</Text>
+            </View>
+            {!!VERIFY_LABEL[verifyStatus] && (
+              <Text style={styles.verifyStatusText}>{VERIFY_LABEL[verifyStatus]}</Text>
+            )}
+            <Icon name="chevron-forward" size={16} color={colors.textFaint} />
+          </Pressable>
+        </View>
+
         {/* ---------------- account ---------------- */}
         <Section title="Account">
           <Row icon="person-outline" label="Edit profile" detail="Name, bio, avatar" onPress={() => setEditOpen(true)} />
@@ -413,6 +485,21 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
       {sessionsOpen && <SessionsScreen onClose={() => setSessionsOpen(false)} />}
       {alertsOpen && <SecurityAlertsScreen onClose={() => setAlertsOpen(false)} />}
       {codesOpen && <RecoveryCodesScreen onClose={() => setCodesOpen(false)} />}
+      {genzPlusOpen && (
+        <GenZPlusScreen
+          onClose={() => setGenzPlusOpen(false)}
+          onActivated={() => setGenzPlusActive(true)}
+        />
+      )}
+      {verifyOpen && (
+        <GetVerifiedScreen
+          onClose={() => {
+            setVerifyOpen(false);
+            // re-read: an application just submitted should show as pending here
+            loadBadges();
+          }}
+        />
+      )}
       <EmailModal visible={emailOpen} onClose={() => setEmailOpen(false)} />
       <PhoneModal visible={phoneOpen} onClose={() => setPhoneOpen(false)} />
       <DeactivateModal visible={deactOpen} onClose={() => setDeactOpen(false)} onDone={() => setDeactOpen(false)} />
@@ -747,6 +834,46 @@ const styles = StyleSheet.create({
     marginLeft: 4,
     marginRight: 4,
   },
+
+  // ---- premium block (GenZ+ / Get Verified) ----
+  premiumWrap: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    overflow: 'hidden',
+    marginBottom: 16,
+    ...(shadows.glow as object),
+  },
+  premiumRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  premiumIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.pill,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  premiumIconVerify: { backgroundColor: colors.violet },
+  premiumInfo: { flex: 1 },
+  premiumTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  premiumLabel: { color: colors.text, fontSize: 17, fontWeight: '700', letterSpacing: 0.2 },
+  premiumDetail: { color: colors.textMuted, fontSize: 13, lineHeight: 18, marginTop: 2 },
+  premiumTag: {
+    backgroundColor: colors.accent,
+    borderRadius: radius.pill,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  premiumTagText: { color: colors.bg, fontSize: 11, fontWeight: '700', letterSpacing: 1.2 },
+  premiumDivider: { height: 1, backgroundColor: colors.border, marginLeft: 60 },
+  verifyStatusText: { color: colors.textFaint, fontSize: 11, fontWeight: '700', letterSpacing: 1.2 },
 
   row: {
     flexDirection: 'row',
