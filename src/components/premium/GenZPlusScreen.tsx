@@ -2,30 +2,32 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   AppState,
-  Linking,
   Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { colors, radius, shadows } from '../../theme';
 import { TOP_INSET } from '../../utils/useInsets';
+import { copyToClipboard } from '../../utils/clipboard';
 import Icon from '../ui/Icon';
 import Button from '../Button';
 import {
+  GENZPLUS_MIN_REFERENCE,
   GENZPLUS_PRICE_LABEL,
-  beginGenZPlusPurchase,
+  daysUntil,
   fetchGenZPlusEntitlement,
+  fetchPaymentClaim,
+  fetchPaymentConfig,
+  formatDate,
+  submitPaymentClaim,
   type GenZPlusEntitlement,
+  type PaymentClaim,
+  type PaymentConfig,
 } from '../../services/genzplus';
-
-// The spec pinned the price but not the period, so this defaults to one-time /
-// lifetime to match the database default (plan = 'lifetime'). If it should read
-// "Yearly" or "Monthly", change this string AND pass the matching plan to
-// genzplus_activate() on the server — nothing else needs to move.
-const PLAN_LABEL = 'One-time payment';
 
 const BENEFITS = [
   {
@@ -55,6 +57,14 @@ const BENEFITS = [
   },
 ];
 
+const NO_CLAIM: PaymentClaim = {
+  status: 'none',
+  reference: null,
+  submittedAt: null,
+  reviewNote: null,
+};
+
+type Step = 'paywall' | 'confirm' | 'transfer';
 type Notice = { tone: 'info' | 'error'; text: string } | null;
 
 export default function GenZPlusScreen({
@@ -66,25 +76,33 @@ export default function GenZPlusScreen({
   onActivated?: () => void;
 }) {
   const [ent, setEnt] = useState<GenZPlusEntitlement | null>(null);
+  const [config, setConfig] = useState<PaymentConfig | null>(null);
+  const [claim, setClaim] = useState<PaymentClaim>(NO_CLAIM);
   const [loading, setLoading] = useState(true);
-  const [confirming, setConfirming] = useState(false);
+  const [step, setStep] = useState<Step>('paywall');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
+  const [reference, setReference] = useState('');
+  const [note, setNote] = useState('');
+  const [copied, setCopied] = useState(false);
 
-  // Entitlement comes from the database every time — never from local state.
-  // This is what makes the screen honest: a client cannot fake its way to
-  // "active", so re-reading is the only way to know.
-  // Held in a ref so `load` keeps a STABLE identity. SettingsScreen passes an
-  // inline arrow, so depending on it directly would re-create this callback on
-  // every parent render and re-fire the load effect below each time.
+  // Held in a ref so `load` keeps a STABLE identity — SettingsScreen passes an
+  // inline arrow, and depending on it directly would re-create the callback on
+  // every parent render and re-fire the load effect below.
   const onActivatedRef = useRef(onActivated);
   useEffect(() => {
     onActivatedRef.current = onActivated;
   }, [onActivated]);
 
   const load = useCallback(async () => {
-    const next = await fetchGenZPlusEntitlement();
+    const [next, cfg, cl] = await Promise.all([
+      fetchGenZPlusEntitlement(),
+      fetchPaymentConfig(),
+      fetchPaymentClaim(),
+    ]);
     setEnt(next);
+    setConfig(cfg);
+    setClaim(cl);
     setLoading(false);
     if (next.active) onActivatedRef.current?.();
   }, []);
@@ -93,9 +111,8 @@ export default function GenZPlusScreen({
     load();
   }, [load]);
 
-  // A purchase finishes in the provider's browser. When the user comes back,
-  // re-read entitlement so premium appears the moment the server has confirmed
-  // the payment — rather than requiring a manual refresh.
+  // Once an admin confirms the payment, the user may still be sitting on this
+  // screen. Re-read when the app returns to the foreground.
   useEffect(() => {
     const sub = AppState.addEventListener('change', (s) => {
       if (s === 'active') load();
@@ -103,44 +120,43 @@ export default function GenZPlusScreen({
     return () => sub.remove();
   }, [load]);
 
-  const startPurchase = async () => {
+  const active = !!ent?.active;
+  const pending = claim.status === 'pending';
+  const rejected = claim.status === 'rejected';
+
+  const priceLabel = config?.amountLabel ?? GENZPLUS_PRICE_LABEL;
+  const periodLabel = `every ${config?.periodMonths ?? 2} months`;
+  const daysLeft = daysUntil(ent?.expiresAt ?? null);
+
+  const copyAccount = async () => {
+    if (!config?.accountNumber) return;
+    await copyToClipboard(config.accountNumber);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1800);
+  };
+
+  const submit = async () => {
     setBusy(true);
     setNotice(null);
-
-    const out = await beginGenZPlusPurchase();
+    const out = await submitPaymentClaim({
+      reference,
+      note,
+      amountKobo: config?.amountKobo,
+    });
     setBusy(false);
 
-    if (out.status === 'already_active') {
-      setConfirming(false);
-      setNotice({ tone: 'info', text: 'You are already GenZ+.' });
-      load();
-      return;
-    }
-    if (out.status === 'unavailable') {
-      // Server says payments are not configured yet. Show its reason plainly
-      // instead of pretending to charge.
-      setConfirming(false);
-      setNotice({ tone: 'info', text: out.message });
-      return;
-    }
-    if (out.status === 'failed') {
+    if (!out.ok) {
       setNotice({ tone: 'error', text: out.message });
       return;
     }
 
-    setConfirming(false);
-    try {
-      await Linking.openURL(out.checkoutUrl);
-      setNotice({
-        tone: 'info',
-        text: 'Finish the payment in the browser, then come back here. GenZ+ activates automatically once the payment is confirmed.',
-      });
-    } catch {
-      setNotice({ tone: 'error', text: 'Could not open the payment page.' });
-    }
+    setReference('');
+    setNote('');
+    setStep('paywall');
+    setNotice({ tone: 'info', text: out.message });
+    // Re-read: the claim is now pending, which replaces the CTA with a status card.
+    load();
   };
-
-  const active = !!ent?.active;
 
   return (
     <Modal visible animationType="slide" onRequestClose={onClose} statusBarTranslucent>
@@ -179,16 +195,42 @@ export default function GenZPlusScreen({
             </View>
 
             {/* ---------------- status ---------------- */}
-            {active ? (
+            {active && (
               <View style={[styles.card, styles.cardActive]}>
                 <Text style={styles.cardTitle}>You are GenZ+</Text>
                 <Text style={styles.cardBody}>
                   {ent?.expiresAt
-                    ? `Active until ${new Date(ent.expiresAt).toLocaleDateString()}.`
+                    ? `Active until ${formatDate(ent.expiresAt)}${
+                        daysLeft !== null && daysLeft > 0 ? ` — ${daysLeft} day${daysLeft === 1 ? '' : 's'} left` : ''
+                      }.`
                     : 'Active permanently — thank you for supporting GenZ.'}
                 </Text>
               </View>
-            ) : null}
+            )}
+
+            {pending && (
+              <View style={[styles.card, styles.cardPending]}>
+                <Text style={styles.cardTitle}>Payment under review</Text>
+                <Text style={styles.cardBody}>
+                  {claim.submittedAt ? `Submitted ${formatDate(claim.submittedAt)}. ` : ''}
+                  We are confirming your transfer. GenZ+ activates as soon as it clears —
+                  open this screen again to check.
+                </Text>
+                {!!claim.reference && (
+                  <Text style={styles.refLine}>Reference: {claim.reference}</Text>
+                )}
+              </View>
+            )}
+
+            {rejected && (
+              <View style={[styles.card, styles.cardRejected]}>
+                <Text style={styles.cardTitle}>We could not confirm that payment</Text>
+                <Text style={styles.cardBody}>
+                  {claim.reviewNote ||
+                    'We could not match that reference to a transfer. Check the reference and submit it again.'}
+                </Text>
+              </View>
+            )}
 
             {/* ---------------- benefits ---------------- */}
             <Text style={styles.sectionLabel}>WHAT YOU GET</Text>
@@ -203,13 +245,13 @@ export default function GenZPlusScreen({
             ))}
 
             {/* ---------------- price ---------------- */}
-            {!active && (
+            {!pending && (
               <View style={styles.priceBlock}>
                 <Text style={styles.priceLine}>
-                  GenZ+ — {GENZPLUS_PRICE_LABEL}
+                  GenZ+ — {priceLabel}
                 </Text>
                 <Text style={styles.priceSub}>
-                  {PLAN_LABEL} · activates immediately after payment
+                  {periodLabel} · activates once your payment is confirmed
                 </Text>
               </View>
             )}
@@ -225,31 +267,117 @@ export default function GenZPlusScreen({
               </View>
             )}
 
-            {/* ---------------- confirmation step ---------------- */}
-            {!active && confirming && (
+            {/* ---------------- step: confirm ---------------- */}
+            {!pending && step === 'confirm' && (
               <View style={[styles.card, styles.confirmCard]}>
                 <Text style={styles.confirmTitle}>Confirm your purchase</Text>
                 <View style={styles.confirmRow}>
                   <Text style={styles.confirmKey}>Item</Text>
-                  <Text style={styles.confirmVal}>GenZ+ ({PLAN_LABEL})</Text>
+                  <Text style={styles.confirmVal}>GenZ+ ({periodLabel})</Text>
                 </View>
                 <View style={styles.confirmRow}>
                   <Text style={styles.confirmKey}>Total</Text>
-                  <Text style={styles.confirmTotal}>{GENZPLUS_PRICE_LABEL}</Text>
+                  <Text style={styles.confirmTotal}>{priceLabel}</Text>
                 </View>
                 <Text style={styles.confirmNote}>
-                  You will be taken to a secure checkout. GenZ+ is activated by our
-                  server only after the payment is confirmed.
+                  You will transfer this amount to our OPay account, then submit your
+                  transfer reference. GenZ+ is activated by our team after the payment is
+                  confirmed — never by tapping a button.
                 </Text>
+                <Button title="Continue to payment" onPress={() => setStep('transfer')} />
+                <Pressable
+                  onPress={() => {
+                    setStep('paywall');
+                    setNotice(null);
+                  }}
+                  style={styles.cancelBtn}
+                  hitSlop={8}
+                >
+                  <Text style={styles.cancelText}>Cancel</Text>
+                </Pressable>
+              </View>
+            )}
+
+            {/* ---------------- step: transfer ---------------- */}
+            {!pending && step === 'transfer' && (
+              <View style={[styles.card, styles.payCard]}>
+                <Text style={styles.confirmTitle}>Pay {priceLabel} by OPay</Text>
+
+                <View style={styles.payRow}>
+                  <Text style={styles.payKey}>Amount</Text>
+                  <Text style={styles.payAmount}>{priceLabel}</Text>
+                </View>
+
+                <View style={styles.payRow}>
+                  <Text style={styles.payKey}>Bank</Text>
+                  <Text style={styles.payVal}>OPay</Text>
+                </View>
+
+                {!!config?.accountName && (
+                  <View style={styles.payRow}>
+                    <Text style={styles.payKey}>Account name</Text>
+                    <Text style={styles.payVal}>{config.accountName}</Text>
+                  </View>
+                )}
+
+                <View style={styles.payRow}>
+                  <Text style={styles.payKey}>Account number</Text>
+                  <View style={styles.payNumberCell}>
+                    <Text style={styles.payNumber}>{config?.accountNumber ?? '—'}</Text>
+                    <Pressable onPress={copyAccount} hitSlop={8} style={styles.copyBtn}>
+                      <Icon
+                        name={copied ? 'checkmark' : 'copy-outline'}
+                        size={15}
+                        color={copied ? colors.success : colors.accent}
+                      />
+                      <Text style={[styles.copyText, copied && styles.copyTextDone]}>
+                        {copied ? 'Copied' : 'Copy'}
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+
+                {!config?.accountName && (
+                  <Text style={styles.payWarn}>
+                    Confirm the account name in your OPay app before sending.
+                  </Text>
+                )}
+
+                {!!config?.instructions && (
+                  <Text style={styles.payInstructions}>{config.instructions}</Text>
+                )}
+
+                <Text style={styles.fieldLabel}>Transfer reference</Text>
+                <TextInput
+                  style={styles.input}
+                  value={reference}
+                  onChangeText={setReference}
+                  placeholder="From your OPay receipt"
+                  placeholderTextColor={colors.textFaint}
+                  autoCapitalize="characters"
+                  maxLength={64}
+                />
+
+                <Text style={styles.fieldLabel}>Note (optional)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={note}
+                  onChangeText={setNote}
+                  placeholder="Anything we should know"
+                  placeholderTextColor={colors.textFaint}
+                  maxLength={200}
+                />
+
+                <View style={{ height: 14 }} />
                 <Button
-                  title={busy ? 'Starting…' : `Pay ${GENZPLUS_PRICE_LABEL}`}
-                  onPress={startPurchase}
+                  title={busy ? 'Submitting…' : "I've sent the payment"}
+                  onPress={submit}
                   loading={busy}
-                  disabled={busy}
+                  disabled={busy || reference.trim().length < GENZPLUS_MIN_REFERENCE}
                 />
                 <Pressable
                   onPress={() => {
-                    setConfirming(false);
+                    setStep('paywall');
                     setNotice(null);
                   }}
                   style={styles.cancelBtn}
@@ -261,12 +389,12 @@ export default function GenZPlusScreen({
             )}
 
             {/* ---------------- CTA ---------------- */}
-            {!active && !confirming && (
+            {!pending && step === 'paywall' && (
               <Button
-                title="✨ Unlock GenZ+"
+                title={active ? '✨ Extend GenZ+' : '✨ Unlock GenZ+'}
                 onPress={() => {
                   setNotice(null);
-                  setConfirming(true);
+                  setStep('confirm');
                 }}
               />
             )}
@@ -349,10 +477,13 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   cardActive: { borderColor: colors.accent, backgroundColor: colors.surfaceAlt },
+  cardPending: { borderColor: colors.borderStrong, backgroundColor: colors.surfaceAlt },
+  cardRejected: { borderColor: colors.danger },
   cardEmoji: { fontSize: 22 },
   cardInfo: { flex: 1 },
   cardTitle: { color: colors.text, fontSize: 17, fontWeight: '700', letterSpacing: 0.2 },
   cardBody: { color: colors.textMuted, fontSize: 15, lineHeight: 21, marginTop: 3 },
+  refLine: { color: colors.textFaint, fontSize: 12, marginTop: 8, letterSpacing: 0.3 },
 
   priceBlock: {
     alignItems: 'center',
@@ -398,6 +529,43 @@ const styles = StyleSheet.create({
   confirmNote: { color: colors.textFaint, fontSize: 12, lineHeight: 18, marginVertical: 12 },
   cancelBtn: { alignItems: 'center', paddingVertical: 12, marginTop: 4 },
   cancelText: { color: colors.textMuted, fontSize: 15, fontWeight: '600' },
+
+  payCard: {
+    flexDirection: 'column',
+    borderColor: colors.accent,
+    backgroundColor: colors.surfaceAlt,
+    paddingBottom: 14,
+  },
+  payRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  payKey: { color: colors.textMuted, fontSize: 14 },
+  payVal: { color: colors.text, fontSize: 15, fontWeight: '600', flexShrink: 1, textAlign: 'right' },
+  payAmount: { color: colors.accent, fontSize: 18, fontWeight: '800' },
+  payNumberCell: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  payNumber: { color: colors.text, fontSize: 17, fontWeight: '800', letterSpacing: 1.1 },
+  copyBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  copyText: { color: colors.accent, fontSize: 12, fontWeight: '700', letterSpacing: 0.4 },
+  copyTextDone: { color: colors.success },
+  payWarn: { color: colors.textFaint, fontSize: 12, lineHeight: 18, marginTop: 10 },
+  payInstructions: { color: colors.textMuted, fontSize: 13, lineHeight: 19, marginTop: 12 },
+
+  fieldLabel: { color: colors.textMuted, fontSize: 13, fontWeight: '500', marginTop: 14, marginBottom: 6 },
+  input: {
+    backgroundColor: colors.surfaceInput,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    color: colors.text,
+    fontSize: 15,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+  },
 
   fineprint: {
     color: colors.textFaint,
