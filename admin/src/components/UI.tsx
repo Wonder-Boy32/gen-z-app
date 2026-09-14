@@ -30,7 +30,11 @@ export function Spinner() { return <div className="spinner" />; }
 
 export function Stat({ label, value, tone, suffix }: { label: string; value: React.ReactNode; tone?: 'accent' | 'green' | 'red' | 'violet'; suffix?: string }) {
   return (
-    <div className="stat">
+    // `accent` also tints the card itself (see .stat.accent in theme.css). The
+    // container class was never emitted, so that rule and the value rule were both
+    // dead and tone="accent" did nothing at all. Only accent gets a container
+    // class because it is the only tone theme.css defines one for.
+    <div className={`stat${tone === 'accent' ? ' accent' : ''}`}>
       <div className="lbl">{label}</div>
       <div className={`val${tone ? ` ${tone}` : ''}`}>
         {typeof value === 'number' ? value.toLocaleString() : value}

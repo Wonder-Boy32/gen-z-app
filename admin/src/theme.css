@@ -126,7 +126,7 @@ input, select, textarea, button { font-family: inherit; }
 .stat .val { font-size: 22px; font-weight: 800; margin-top: 4px; }
 .stat .lbl { color: var(--text-muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; }
 .stat.accent { border-color: rgba(255, 157, 31, 0.4); background: linear-gradient(160deg, rgba(255,157,31,0.10), var(--surface)); }
-.stat .val.accent-val { color: var(--accent); }
+.stat .val.accent { color: var(--accent); }
 .stat .val.green { color: var(--green); }
 .stat .val.red { color: var(--red); }
 .stat .val.violet { color: var(--violet); }
