@@ -151,6 +151,9 @@ const CHANNEL_FOR: Record<NotifyType, string> = {
   comment_like: 'likes',
   anon_message: 'messages',
   call: 'messages',
+  // "post uploaded" is the user's own housekeeping, not someone else's action,
+  // so it belongs on the general channel rather than in likes/comments.
+  upload: 'default',
 };
 
 export function channelFor(type: NotifyType): string {

@@ -15,11 +15,11 @@
       "expo-dev-client",
       [
         "expo-notifications",
-        {
-          "icon": "./assets/icon-launcher.png",
-          "color": "#FF9D1F",
-          "defaultChannel": "default"
-        }
+          {
+            "icon": "./assets/notif-icon.png",
+            "color": "#FF9D1F",
+            "defaultChannel": "default"
+          }
       ],
       "ffmpeg-expo",
       [
@@ -32,16 +32,16 @@
         "expo-splash-screen",
         {
           "backgroundColor": "#060A16",
-          "image": "./assets/icon-launcher.png",
-          "imageWidth": 180
+          "image": "./assets/brand-splash.png",
+          "imageWidth": 220
         }
       ]
     ],
     "android": {
       "package": "com.genz.app",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/icon-launcher.png",
-        "backgroundColor": "#8A88C3"
+        "foregroundImage": "./assets/adaptive-foreground.png",
+        "backgroundColor": "#060A16"
       },
       "permissions": [
         "android.permission.RECORD_AUDIO",

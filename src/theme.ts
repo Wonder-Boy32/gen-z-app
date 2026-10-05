@@ -46,6 +46,42 @@ export const colors = {
   shadow: '#000000',
 };
 
+// ============================================================
+// Brand identity — the GenZ mark palette
+// ============================================================
+// The logo runs on a three-colour sweep rather than a single accent:
+//
+//     G  →  warm orange into red-orange
+//     Z  →  magenta-violet into electric blue
+//     ring → orange (left) → magenta (top-right) → blue (bottom)
+//
+// Kept in its own export instead of being folded into `colors`, because
+// `colors.accent` is used in hundreds of places as a single UI accent and
+// swapping it for a gradient would break them all. Anything that needs the
+// brand sweep should read from here.
+//
+// The stop arrays are ready for a gradient renderer (expo-linear-gradient or
+// react-native-svg's LinearGradient). Neither is installed yet, so nothing
+// consumes them automatically — the logo ships as pre-rendered PNG assets,
+// which is also what app.json requires for the icon and splash.
+export const brand = {
+  navy: '#060A16',
+  orange: '#FF8A00',
+  red: '#F73B2E',
+  magenta: '#E0409E',
+  violet: '#A855F7',
+  blue: '#2563EB',
+
+  /** the "G" */
+  markGradient: ['#FF8A00', '#F73B2E'] as const,
+  /** the "Z" */
+  zGradient: ['#E0409E', '#2563EB'] as const,
+  /** the neon ring around the app icon */
+  ringGradient: ['#FF8A00', '#E0409E', '#2563EB'] as const,
+  /** everywhere the brand needs a single representative sweep */
+  fullGradient: ['#FF8A00', '#E0409E', '#2563EB'] as const,
+};
+
 // consistent spacing scale
 export const spacing = {
   xs: 4,

@@ -7,6 +7,7 @@ import Button from './Button';
 import { PRESETS } from './presets';
 import { uploadMedia } from '../utils/upload';
 import { supabase } from '../supabase/client';
+import { friendlyError } from '../utils/friendlyError';
 
 type Props = {
   visible: boolean;
@@ -49,7 +50,7 @@ export default function AvatarPickerModal({ visible, current, name, onClose, onS
       const url = await uploadMedia(`avatars/${user.id}/avatar-${Date.now()}.jpg`, uri, 'image/jpeg');
       setSelected(url);
     } catch (e: any) {
-      setError(e?.message ?? 'Upload failed — try again');
+      setError(friendlyError(e, 'Upload failed — try again'));
     } finally {
       setBusy(false);
     }
@@ -74,7 +75,7 @@ export default function AvatarPickerModal({ visible, current, name, onClose, onS
       onSaved(selected);
       onClose();
     } catch (e: any) {
-      setError(e?.message ?? 'Could not save avatar');
+      setError(friendlyError(e, 'Could not save avatar'));
     } finally {
       setBusy(false);
     }

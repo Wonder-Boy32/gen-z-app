@@ -14,6 +14,7 @@ import { colors, radius } from '../../theme';
 import { TOP_INSET } from '../../utils/useInsets';
 import Icon from '../ui/Icon';
 import Button from '../Button';
+import { friendlyError } from '../../utils/friendlyError';
 import {
   VERIFICATION_MIN_REASON,
   fetchVerificationState,
@@ -59,13 +60,13 @@ export default function GetVerifiedScreen({ onClose }: { onClose: () => void }) 
     const out = await submitVerificationRequest({ displayName, reason, links });
     setBusy(false);
     if (!out.ok) {
-      setNotice({ tone: 'error', text: out.message });
+      setNotice({ tone: 'error', text: friendlyError(out) });
       return;
     }
     setApplying(false);
     setReason('');
     setLinks('');
-    setNotice({ tone: 'info', text: out.message });
+    setNotice({ tone: 'info', text: friendlyError(out) });
     load();
   };
 

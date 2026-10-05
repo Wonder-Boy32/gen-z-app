@@ -1,0 +1,111 @@
+<!--
+  GEN Z — "Confirm signup" email template (paste into Supabase)
+  Supabase Dashboard -> Authentication -> Email Templates -> "Confirm signup"
+
+  WHY THIS FILE EXISTS
+  The previous template only used {{ .ConfirmationURL }}, so the email contained
+  a LINK and no code — while the app now asks the user to type a code. Both
+  halves have to agree, so this template leads with the 6-digit code.
+
+  {{ .Token }} is Supabase's 6-digit OTP variable (confirmed in the Supabase
+  email-template docs). It is deliberately shown BOTH ways:
+    · as the big code the app asks for
+    · with the link kept as a fallback, so a user whose mail client mangles
+      formatting still has a working route in
+  That redundancy is the point — one path failing should never strand a signup.
+
+  Also check: Authentication -> Settings -> "Email OTP Length" is 6, to match
+  the 6 boxes the app accepts.
+-->
+<div style="display:none;font-size:1px;color:#0b1220;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">
+  Your GEN Z confirmation code is inside.
+</div>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#0b1220;margin:0;padding:0;">
+  <tr>
+    <td align="center" style="padding:32px 16px;">
+
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;background:#131c2e;border:1px solid #24314d;border-radius:18px;">
+        <tr>
+          <td align="center" style="padding:34px 32px 8px 32px;">
+            <div style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:800;letter-spacing:5px;color:#ff8a2b;">
+              GEN&nbsp;Z
+            </div>
+          </td>
+        </tr>
+
+        <tr>
+          <td align="center" style="padding:14px 32px 0 32px;">
+            <h1 style="margin:0;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:23px;line-height:1.3;font-weight:700;color:#ffffff;">
+              Confirm your email address
+            </h1>
+          </td>
+        </tr>
+
+        <tr>
+          <td align="center" style="padding:12px 32px 0 32px;">
+            <p style="margin:0;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.6;color:#a7b2c9;">
+              Enter this code in the app to finish creating your account.
+            </p>
+          </td>
+        </tr>
+
+        <!-- THE CODE -->
+        <tr>
+          <td align="center" style="padding:26px 32px 6px 32px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+              <tr>
+                <td align="center" style="background:#0e1626;border:1px solid #2c3a58;border-radius:14px;padding:22px 12px;">
+                  <div style="font-family:'Courier New',Courier,monospace;font-size:36px;font-weight:700;letter-spacing:12px;color:#ff8a2b;text-indent:12px;">
+                    {{ .Token }}
+                  </div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <tr>
+          <td align="center" style="padding:14px 32px 0 32px;">
+            <p style="margin:0;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:1.6;color:#7d8aa5;">
+              The code expires shortly. If it does, open the app and tap
+              &ldquo;Resend code&rdquo;.
+            </p>
+          </td>
+        </tr>
+
+        <!-- LINK FALLBACK -->
+        <tr>
+          <td align="center" style="padding:22px 32px 0 32px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td align="center" style="border-radius:10px;background:#ff8a2b;">
+                  <a href="{{ .ConfirmationURL }}"
+                     style="display:inline-block;padding:13px 28px;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;color:#1a1206;text-decoration:none;border-radius:10px;">
+                    Or tap to confirm
+                  </a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:30px 32px 0 32px;">
+            <div style="border-top:1px solid #24314d;height:1px;line-height:1px;font-size:0;">&nbsp;</div>
+          </td>
+        </tr>
+
+        <tr>
+          <td align="center" style="padding:18px 32px 34px 32px;">
+            <p style="margin:0;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:1.6;color:#66738c;">
+              Did you not try to sign up? You can safely ignore this email &mdash;
+              no account will be activated without this code.
+            </p>
+          </td>
+        </tr>
+      </table>
+
+    </td>
+  </tr>
+</table>

@@ -16,6 +16,7 @@ import PublicProfileScreen from './PublicProfileScreen';
 import Avatar from '../components/Avatar';
 import VerifiedBadge from '../components/ui/VerifiedBadge';
 import Icon from '../components/ui/Icon';
+import { useAndroidBack } from '../utils/useAndroidBack';
 
 // Shared with ProfileScreen: the timestamp of the last time the owner
 // opened this screen, so the eye icon can badge what is new since then.
@@ -63,6 +64,17 @@ export default function ProfileViewersScreen({ onBack }: { onBack: () => void })
   const [refreshing, setRefreshing] = useState(false);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [publicProfile, setPublicProfile] = useState<{ id: string; username: string } | null>(null);
+
+  // Android back control. The viewer list and the profile it opens are two
+  // navigation levels, so back must return to the list rather than leaving the
+  // screen. Declining lets ProfileScreen close the list afterwards.
+  useAndroidBack(() => {
+    if (publicProfile) {
+      setPublicProfile(null);
+      return true;
+    }
+    return false;
+  });
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);

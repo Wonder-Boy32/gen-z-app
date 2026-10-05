@@ -2,8 +2,8 @@
 // Download-to-gallery helpers (TikTok-style saves)
 // - respects the creator's allow_downloads choice
 // - fetches remote media to cache, then hands it to the UI
-//   (photo watermark) or the ffmpeg bake (video watermark +
-//   jingle outro), then saves the final file to the gallery
+//   (photo watermark) or the ffmpeg bake (video watermark only —
+//   no audio is ever added), then saves the final file to the gallery
 // ============================================================
 import { supabase } from '../supabase/client';
 

@@ -12,6 +12,7 @@ import {
 import { captureRef } from 'react-native-view-shot';
 import { colors, radius } from '../../theme';
 import { TOP_INSET } from '../../utils/useInsets';
+import { friendlyError } from '../../utils/friendlyError';
 import { supabase } from '../../supabase/client';
 import {
   fetchMediaToCache,
@@ -54,8 +55,9 @@ import {
 
 // ============================================================
 // DownloadFlowModal — TikTok-style save-to-gallery.
-//   video:  ffmpeg bakes a corner GENZ watermark + the GENZ
-//           jingle outro into a copy of the file
+//   video:  ffmpeg bakes a corner GENZ watermark into a copy of the file.
+//           No audio is ever added — downloading never re-scores the video,
+//           so the creator's own sound is what the viewer hears.
 //   photo:  ffmpeg bakes the corner watermark (original res);
 //           falls back to an on-screen capture where ffmpeg
 //           is unavailable (Expo Go)
@@ -174,8 +176,8 @@ export default function DownloadFlowModal({ post, onClose }: Props) {
                 music = null;
               }
             }
-            // measure duration from the LOCAL file (reliable) so the jingle
-            // lands at the end of the baked video
+            // measure duration from the LOCAL file (reliable) — the bake needs it
+            // for an exact -t cap when the picked track is looped to fit
             const durSec = await localVideoDurationSec(local);
             const wmShot = await waitPillShot();
             const out = await bakeDownloadVideo(local, music, durSec, wmShot);
@@ -295,7 +297,7 @@ export default function DownloadFlowModal({ post, onClose }: Props) {
             onShot={finishPhotoCapture}
             onShotError={(e: any) => {
               capturedOnce.current = true;
-              Alert.alert('Download failed', e?.message ?? 'Could not save the photo.', [
+              Alert.alert('Download failed', friendlyError(e, 'Could not save the photo. Please try again.'), [
                 { text: 'OK', onPress: onClose },
               ]);
             }}

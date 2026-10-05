@@ -15,6 +15,7 @@ import { TOP_INSET } from '../../utils/useInsets';
 import { copyToClipboard } from '../../utils/clipboard';
 import Icon from '../ui/Icon';
 import Button from '../Button';
+import { friendlyError } from '../../utils/friendlyError';
 import {
   GENZPLUS_MIN_REFERENCE,
   GENZPLUS_PRICE_LABEL,
@@ -146,14 +147,14 @@ export default function GenZPlusScreen({
     setBusy(false);
 
     if (!out.ok) {
-      setNotice({ tone: 'error', text: out.message });
+      setNotice({ tone: 'error', text: friendlyError(out) });
       return;
     }
 
     setReference('');
     setNote('');
     setStep('paywall');
-    setNotice({ tone: 'info', text: out.message });
+    setNotice({ tone: 'info', text: friendlyError(out) });
     // Re-read: the claim is now pending, which replaces the CTA with a status card.
     load();
   };

@@ -35,3 +35,9 @@ scripts/api-spec.json
 .DS_Store
 *.log
 npm-debug.*
+
+# build cache (Node compile cache)
+node-compile-cache/
+
+# dated brand-asset backups - keep out of history
+assets/_brand-backup*/

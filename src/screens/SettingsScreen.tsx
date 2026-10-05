@@ -13,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import { supabase } from '../supabase/client';
+import { markDeliberateSignOut } from '../utils/sessionGuard';
 import { colors, radius, shadows } from '../theme';
 import { TOP_INSET } from '../utils/useInsets';
 import { copyToClipboard } from '../utils/clipboard';
@@ -43,6 +44,7 @@ import GenZPlusScreen from '../components/premium/GenZPlusScreen';
 import GetVerifiedScreen from '../components/premium/GetVerifiedScreen';
 import { fetchGenZPlusEntitlement } from '../services/genzplus';
 import { fetchVerificationState, type VerificationStatus } from '../services/verification';
+import { useAndroidBack } from '../utils/useAndroidBack';
 
 const APP_VERSION = '0.1.0';
 
@@ -82,6 +84,38 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
   const [userId, setUserId] = useState<string | null>(null);
   const [genzPlusOpen, setGenzPlusOpen] = useState(false);
   const [verifyOpen, setVerifyOpen] = useState(false);
+
+  // Android back control. Six sub-screens are swapped in as early returns
+  // (bare conditionals, not <Modal>s), so each is its own navigation level and
+  // back must peel off exactly one instead of escaping Settings entirely.
+  // Checked newest-opened first so the top-most overlay is the one removed.
+  useAndroidBack(() => {
+    if (twoFAOpen) {
+      setTwoFAOpen(false);
+      return true;
+    }
+    if (sessionsOpen) {
+      setSessionsOpen(false);
+      return true;
+    }
+    if (alertsOpen) {
+      setAlertsOpen(false);
+      return true;
+    }
+    if (codesOpen) {
+      setCodesOpen(false);
+      return true;
+    }
+    if (genzPlusOpen) {
+      setGenzPlusOpen(false);
+      return true;
+    }
+    if (verifyOpen) {
+      setVerifyOpen(false);
+      return true;
+    }
+    return false;
+  });
   const [genzPlusActive, setGenzPlusActive] = useState(false);
   const [verifyStatus, setVerifyStatus] = useState<VerificationStatus>('none');
 
@@ -185,6 +219,7 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
   const logout = async () => {
     // stop this phone receiving pushes for the account that is leaving
     await unregisterPush();
+    markDeliberateSignOut(); // the user chose this — do not auto-restore it
     await supabase.auth.signOut();
   };
 

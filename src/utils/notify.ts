@@ -1,6 +1,18 @@
 import { supabase } from '../supabase/client';
 
-export type NotifyType = 'follow' | 'like' | 'comment' | 'reply' | 'reaction' | 'repost' | 'comment_like' | 'anon_message' | 'call';
+export type NotifyType =
+  | 'follow'
+  | 'like'
+  | 'comment'
+  | 'reply'
+  | 'reaction'
+  | 'repost'
+  | 'comment_like'
+  | 'anon_message'
+  | 'call'
+  // local-only: "your post finished uploading". Never stored, never sent to
+  // another user — it is shown by the app to the person who posted.
+  | 'upload';
 
 type NotifyOpts = {
   /** recipient of the notification */
