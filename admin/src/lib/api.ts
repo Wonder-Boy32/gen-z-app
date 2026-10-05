@@ -144,6 +144,44 @@ export interface AuditEntry { admin_email: string | null; action: string; catego
 export interface SeriesPoint { day: string; new_users: number; drops_created: number; drops_expired: number; views: number; likes: number; comments: number; reposts: number; saves: number; follows: number; messages: number; anon_messages: number; reports: number; dau: number; }
 export interface Snapshot { wau: number; mau: number; retention_7d: number; total_drops_viewed: number; total_likes: number; total_comments: number; total_reposts: number; total_saves: number; total_follows: number; total_conversations: number; total_messages: number; total_anon_messages: number; total_bans: number; total_suspensions: number; total_reports: number; }
 
+export interface AlertSummary {
+  unresolved: number;
+  verification: number;
+  payments: number;
+  reports: number;
+}
+
+export interface AdminAlert {
+  id: string;
+  kind: string;
+  severity: string;
+  title: string;
+  body: string | null;
+  target_type: string | null;
+  target_id: string | null;
+  actor_id: string | null;
+  route: string | null;
+  created_at: string;
+  acknowledged_at: string | null;
+  resolved_at: string | null;
+  actor_username: string | null;
+}
+
+export interface VerificationRequestRow {
+  id: string;
+  user_id: string;
+  display_name: string | null;
+  reason: string;
+  links: string | null;
+  status: string;
+  review_note: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+  username: string | null;
+  avatar_url: string | null;
+  verified: boolean | null;
+}
+
 export interface GenZPlusPaymentRow {
   id: string;
   user_id: string;
@@ -217,4 +255,42 @@ export const api = {
       p_approve: approve,
       p_note: note,
     }),
+
+  // ---- Verification queue (supabase/admin_verification_queue.sql) ----
+  // verification_requests.sql has NO update policy by design, so an application
+  // can only be decided through a SECURITY DEFINER function. Until these
+  // existed there was no such function at all: applications were collected and
+  // then unreadable by every admin.
+  // Unwrapped to a plain array deliberately. The RPC returns
+  // `jsonb_build_object('requests', …)`, but leaving that wrapper on the return
+  // type makes `useLoad` infer `{ requests } | never[]` — a union with no
+  // `.map`/`.length`, which is a type error at every use site. Every other list
+  // screen here consumes a plain array (see genzplusPending above), so this
+  // matches the established shape.
+  verificationQueue: async (status: string | null = 'pending') => {
+    const res = await rpc<{ requests: VerificationRequestRow[] }>('admin_verification_list', {
+      p_status: status,
+      p_limit: 100,
+      p_offset: 0,
+    });
+    return res?.requests ?? [];
+  },
+  verificationReview: (id: string, approve: boolean, note: string) =>
+    rpc<{ ok?: boolean; error?: string; approved?: boolean }>('admin_verification_resolve', {
+      p_request: id,
+      p_approve: approve,
+      p_note: note,
+    }),
+
+  // ---- Admin alerts (supabase/admin_alerts.sql) ----
+  // The direction that was missing: users -> admins. admin_notifications is an
+  // admin writing to users; nothing existed the other way, so a submitted
+  // verification application was invisible until someone opened the right
+  // screen by luck. `alertSummary` drives the bell and every nav badge.
+  alertSummary: () => rpc<AlertSummary>('admin_alert_summary'),
+  alertList: async (limit = 50) => {
+    const res = await rpc<{ alerts: AdminAlert[] }>('admin_alert_list', { p_limit: limit });
+    return res?.alerts ?? [];
+  },
+  alertAck: (id: string) => rpc<{ ok?: boolean }>('admin_alert_ack', { p_id: id }),
 };

@@ -17,6 +17,11 @@
   --red: #ff5c7c;
   --yellow: #fce123;
   --cyan: #a8e6f2;
+  /* brand mark sweep — orange → magenta → blue (matches the app logo) */
+  --brand-orange: #ff8a00;
+  --brand-magenta: #e0409e;
+  --brand-blue: #2563eb;
+  --brand-sweep: linear-gradient(135deg, #ff8a00 0%, #e0409e 52%, #2563eb 100%);
   --radius: 14px;
   --radius-lg: 20px;
   --sidebar-w: 232px;
@@ -50,14 +55,24 @@ input, select, textarea, button { font-family: inherit; }
 .topbar { display: none; }
 
 .logo { display: flex; align-items: center; gap: 10px; padding: 4px 8px 18px; }
+/* Brand mark: the logo sweep instead of the old flat two-stop orange ramp, so
+   the admin lockup matches the app icon. White "GZ" now reads against the
+   saturated gradient (the old dark navy text was chosen for a lighter ramp). */
 .logo-mark {
   width: 34px; height: 34px; border-radius: 10px;
-  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  background: var(--brand-sweep);
   display: flex; align-items: center; justify-content: center;
-  color: #060a16; font-weight: 900; font-size: 16px;
+  color: #ffffff; font-weight: 900; font-size: 16px;
+  box-shadow: 0 2px 10px rgba(224, 64, 158, 0.32);
 }
 .logo-text { font-size: 16px; font-weight: 800; letter-spacing: 0.4px; }
-.logo-text span { color: var(--accent); }
+.logo-text span {
+  background: linear-gradient(135deg, var(--brand-magenta), var(--brand-blue));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
 
 .nav-group { margin-top: 6px; }
 .nav-group-label {

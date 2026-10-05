@@ -29,6 +29,9 @@ export const MODULES: AdminModule[] = [
   { key: 'audit', label: 'Audit Log', icon: 'file-text', perm: 'audit.view', section: 'system', mobile: false },
   { key: 'admins', label: 'Admins', icon: 'user-check', perm: 'admins.manage', section: 'system', mobile: false },
   { key: 'payments', label: 'GenZ+ Payments', icon: 'credit-card', perm: 'payments.view', section: 'system', mobile: false },
+  // Uses the SAME permission the backend requires for the review RPC, so the
+  // nav can never show this screen to an admin the server would then refuse.
+  { key: 'verification', label: 'Verification', icon: 'user-check', perm: 'users.manage', section: 'content', mobile: false },
 ];
 
 export function canAccess(perms: string[], role: string, module: AdminModule): boolean {
