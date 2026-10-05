@@ -7,7 +7,10 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "postinstall": "node scripts/ensure-rn-android.js && node scripts/patch-ffmpeg-expo.js"
+    "postinstall": "node scripts/ensure-rn-android.js && node scripts/patch-ffmpeg-expo.js",
+    "check:env": "node scripts/preflight-env.js",
+    "build:preview": "node scripts/preflight-env.js && eas build --platform android --profile preview",
+    "build:prod": "node scripts/preflight-env.js && eas build --platform android --profile production"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",

@@ -52,6 +52,29 @@ yarn-error.*
 .DS_Store
 Thumbs.db
 
-# --- local env files (EXPO_PUBLIC_* come from the EAS environment) ---
-.env
-.env.*.local
+# ============================================================
+# DO NOT ADD .env, .env.local OR ANY .env.* FILE TO THIS FILE.
+# Doing exactly that shipped a build that died on launch.
+#
+# The reasoning that produced the mistake, so it is not repeated: a comment here
+# used to claim "EXPO_PUBLIC_* come from the EAS environment". That is FALSE.
+# Verified with `eas env:list --environment preview` and `--environment
+# production`, both of which answer "No variables found for this environment."
+#
+# So the ONLY source of EXPO_PUBLIC_SUPABASE_URL / _ANON_KEY / _GIPHY_API_KEY in
+# this project is the local .env file, and Metro reads it from the uploaded
+# project at build time. Exclude it and src/supabase/client.ts throws at module
+# load ("Missing Supabase env vars"), which in a release build is not a red box
+# but a process death: the splash appears, then the app drops back to the home
+# screen. No message, nothing to search, no way for the user to tell why.
+#
+# Uploading it is not a secret leak. Every EXPO_PUBLIC_* value is inlined into the
+# JS bundle and already ships inside the APK, so these were never secret - the
+# Supabase anon key is designed to be public and is enforced by RLS, not by
+# being hidden.
+#
+# Note also that EAS was previously uploading these files ANYWAY despite them
+# being listed in .gitignore - the same behaviour that pushed 239 MB of .repro*
+# scratch into the archive. Gitignored did not mean excluded. This file is the
+# exclusion mechanism that actually works, so what it omits matters.
+# ============================================================
