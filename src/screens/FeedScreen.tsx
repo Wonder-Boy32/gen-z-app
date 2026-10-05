@@ -32,6 +32,7 @@ import { notifyUser } from '../utils/notify';
 import DropExperienceScreen from './DropExperienceScreen';
 import PublicProfileScreen from './PublicProfileScreen';
 import ProfilePeekModal from '../components/ProfilePeekModal';
+import InviteSheet from '../components/InviteSheet';
 // `peek as cachePeek` — this file already has a local `peek` state at line 202
 // for the profile-peek modal, and the unaliased import shadowed it.
 import { cacheKey, filterLive, peek as cachePeek, put } from '../utils/fastCache';
@@ -207,6 +208,7 @@ export default function FeedScreen({
   const [audioMode, setAudioMode] = useState<string | null>(initialAudioMode);
   const [hashtagMode, setHashtagMode] = useState<string | null>(initialHashtagMode);
   const [locationMode, setLocationMode] = useState<string | null>(initialLocationMode);
+  const [inviteOpen, setInviteOpen] = useState(false);
   const [showDrop, setShowDrop] = useState(false);
   const [publicProfile, setPublicProfile] = useState<{ id: string; username: string } | null>(null);
   const [peek, setPeek] = useState<{ id: string; username: string } | null>(null);
@@ -1690,6 +1692,14 @@ export default function FeedScreen({
                 onPress={() => onCreateIntent?.({})}
                 style={styles.emptyCta}
               />
+              {/* The feed is empty because there are not enough PEOPLE yet, which
+                  posting alone cannot fix — inviting is the only thing that does.
+                  It belongs here rather than buried in settings, because this is
+                  the screen where the absence is felt. */}
+              <Pressable style={styles.inviteCta} onPress={() => setInviteOpen(true)}>
+                <Icon name="person-add-outline" size={16} color={colors.accent} />
+                <Text style={styles.inviteCtaText}>Invite friends to Gen Z</Text>
+              </Pressable>
               {suggestions.length > 0 && (
                 <View style={styles.suggestWrap}>
                   <View style={styles.suggestTitleRow}>
@@ -1814,6 +1824,16 @@ export default function FeedScreen({
           }}
         />
       )}
+
+      <InviteSheet
+        visible={inviteOpen}
+        onClose={() => setInviteOpen(false)}
+        // A successful redemption is the one moment the feed could genuinely have
+        // new content behind it, so re-read rather than assume nothing changed.
+        onRedeemed={() => {
+          void load();
+        }}
+      />
 
       {publicProfile && (
         <PublicProfileScreen
@@ -2434,6 +2454,17 @@ const styles = StyleSheet.create({
   emptyTitle: { color: colors.text, fontSize: 20, fontWeight: '700' },
   emptyText: { color: colors.textMuted, fontSize: 14, textAlign: 'center', marginTop: 10, lineHeight: 20 },
   emptyCta: { width: '100%', maxWidth: 280, marginTop: 22 },
+  // Secondary to "Create a Drop": lighter, so posting stays the primary action
+  // while inviting is still one tap away on the screen that needs it most.
+  inviteCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    marginTop: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  inviteCtaText: { color: colors.accent, fontSize: 13.5, fontWeight: '800' },
   suggestWrap: { marginTop: 24, width: '100%' },
   suggestTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 },
   suggestTitle: { color: colors.accent, fontSize: 14, fontWeight: '800' },

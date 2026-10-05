@@ -1,7 +1,57 @@
+# .easignore — what EAS Build must NOT upload.
+#
+# WHY THIS EXISTS
+#
+# The last build uploaded a 247 MB archive and took 7m 11s just to upload, then
+# spent so long computing the project fingerprint that the local CLI hit its
+# timeout and THE BUILD WAS NEVER CREATED. That is the concrete cost of this file
+# not existing.
+#
+# The cause was measurable: the entire git repository is 260 files totalling
+# 6.1 MB (biggest single file: a 1 MB icon). The other ~240 MB was `.repro*`
+# scratch directories left over from debugging — gitignored, so they never
+# reached the repository, but still walked and uploaded by the archiver.
+# Gitignored does not reliably mean "excluded from the build".
+#
+# WHEN THIS FILE EXISTS, EAS USES IT INSTEAD OF .gitignore — so everything the
+# build genuinely needs must be absent from here, not just everything unwanted.
+# `scripts/`, `assets/`, `src/`, `App.tsx`, `index.ts`, `app.json` and
+# `package-lock.json` are deliberately NOT listed below.
+
+# --- scratch reproduction dirs (the bulk of the 247 MB) ---
+.repro/
+.repro2/
+.repro3/
+.repro4/
+.repro5/
+.repro6/
+.repro7/
+.repro8/
+.repro*/
+
+# --- dependencies: EAS installs these from package-lock.json ---
 node_modules/
+admin/node_modules/
+
+# --- the admin console is a separate app and is not part of the mobile build ---
+admin/
+
+# --- build / tooling caches ---
+node-compile-cache/
 .expo/
 .expo-shared/
-dist/
-build/
+
+# --- dated brand-asset backups ---
+assets/_brand-backup*/
+
+# --- local junk ---
+temp/
 *.log
+npm-debug.*
+yarn-error.*
 .DS_Store
+Thumbs.db
+
+# --- local env files (EXPO_PUBLIC_* come from the EAS environment) ---
+.env
+.env.*.local
