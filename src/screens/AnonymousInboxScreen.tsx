@@ -94,6 +94,34 @@ export default function AnonymousInboxScreen({
     load();
   }, [load]);
 
+  // Viewing the inbox IS reading it.
+  //
+  // BUG THIS FIXES: read_at was only ever written by markRead(), and markRead
+  // is wired to a card's onPress. So a message you had plainly opened the inbox
+  // and read kept its unread badge until you happened to tap that exact card —
+  // the badge sat at "1" on a thread you had already seen. Now everything
+  // visible is marked read once it has loaded.
+  //
+  // This settles after one pass: once read_at is set locally, the next run finds
+  // no unread rows and returns immediately.
+  useEffect(() => {
+    if (loading || !msgs.length) return;
+    const unread = msgs.filter((m) => !m.read_at);
+    if (!unread.length) return;
+
+    const now = new Date().toISOString();
+    setMsgs((prev) => prev.map((m) => (m.read_at ? m : { ...m, read_at: now })));
+    void (async () => {
+      const { error } = await supabase
+        .from('anonymous_messages_public')
+        .update({ read_at: now })
+        .in('id', unread.map((m) => m.id));
+      // Surface a failed write instead of letting the optimistic local state
+      // hide it — a badge that will not clear should not fail silently.
+      if (error) console.warn('[anon] marking read failed:', error.message);
+    })();
+  }, [loading, msgs]);
+
   // live refresh: when a new anonymous message arrives (the send RPC creates
   // a notification row), reload from the public view. We watch notifications,
   // NEVER the anonymous_messages table — its realtime payload would leak

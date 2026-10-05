@@ -5,6 +5,8 @@ import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import Icon from '../components/ui/Icon';
 import { TOP_INSET } from '../utils/useInsets';
+import { friendlyError } from '../utils/friendlyError';
+import { screenTextError } from '../utils/contentFilter';
 import { uploadMedia } from '../utils/upload';
 
 const MAX_LEN = 500;
@@ -53,6 +55,17 @@ export default function AnonymousSendScreen({
       setError('Write something or add a photo first.');
       return;
     }
+
+    // Anonymous text is the highest-risk content in the app: the sender has no
+    // account attached to their name, which is exactly the condition that
+    // suppresses restraint. Screen it here rather than relying on the recipient
+    // to report it. App Store 1.2 explicitly covers anonymous chat.
+    const blocked = screenTextError(text);
+    if (blocked) {
+      setError(blocked);
+      return;
+    }
+
     setSending(true);
     setError(null);
     try {
@@ -71,13 +84,17 @@ export default function AnonymousSendScreen({
       if (rpcErr) {
         const msg = (rpcErr.message ?? '').toLowerCase();
         const key = Object.keys(ERR_TEXT).find((k) => msg.includes(k.toLowerCase()));
-        setError(key ? ERR_TEXT[key] : `Couldn't send: ${rpcErr.message}`);
+        setError(
+          key
+            ? ERR_TEXT[key]
+            : `Couldn't send — ${friendlyError(rpcErr, 'please try again.')}`
+        );
         setSending(false);
         return;
       }
       setSent(true);
     } catch (e: any) {
-      setError(`Couldn't send: ${e?.message ?? 'unknown error'}`);
+      setError(`Couldn't send — ${friendlyError(e, 'please try again.')}`);
     }
     setSending(false);
   };

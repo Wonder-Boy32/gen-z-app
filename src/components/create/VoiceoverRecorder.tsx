@@ -5,6 +5,7 @@ import { supabase } from '../../supabase/client';
 import { colors, radius, shadows } from '../../theme';
 import Icon from '../ui/Icon';
 import { uploadMedia } from '../../utils/upload';
+import { friendlyError } from '../../utils/friendlyError';
 
 // Hold-to-record voiceover. Records with expo-audio, uploads the clip to the
 // media bucket and reports back the public URL. (Mixing the voiceover INTO
@@ -47,7 +48,7 @@ export default function VoiceoverRecorder({ url, durationMs, onRecorded, onRemov
       setElapsed(0);
       timer.current = setInterval(() => setElapsed((e) => e + 1), 1000);
     } catch (e: any) {
-      setError(e?.message ?? 'Could not start recording.');
+      setError(friendlyError(e, 'Could not start recording.'));
     }
   };
 
@@ -75,7 +76,7 @@ export default function VoiceoverRecorder({ url, durationMs, onRecorded, onRemov
       );
       onRecorded(publicUrl, ms > 0 ? ms : 3000);
     } catch (e: any) {
-      setError(e?.message ?? 'Could not save voiceover.');
+      setError(friendlyError(e, 'Could not save voiceover.'));
     } finally {
       setBusy(false);
     }

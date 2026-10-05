@@ -11,7 +11,15 @@ import {
   View,
 } from 'react-native';
 import { supabase } from '../supabase/client';
-import ChatThread from './ChatThread';
+import { useAndroidBack } from '../utils/useAndroidBack';
+// MESSAGING v2 — switched to the engine-backed ConversationScreen.
+// TO REVERT INSTANTLY: point this back at './ChatThread'.
+import ConversationScreen from '../components/chat/ConversationScreen';
+// MESSAGING v2 screens — message requests (§32), My Saves (§18), privacy centre (§35)
+import RequestsScreen from './RequestsScreen';
+import SavesScreen from './SavesScreen';
+import PrivacyScreen from './PrivacyScreen';
+import NotificationSettingsScreen from './NotificationSettingsScreen';
 import AnonymousInboxScreen from './AnonymousInboxScreen';
 import { colors, radius } from '../theme';
 import Icon from '../components/ui/Icon';
@@ -59,6 +67,26 @@ export default function ChatsScreen({
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [anonOpen, setAnonOpen] = useState(false);
 
+  // Android back: close the open thread or inbox instead of letting the press
+  // fall through to Android's default, which finishes the activity and dumps
+  // the user out to the launcher.
+  //
+  // ONE handler covers both screens, because they are alternatives rendered
+  // from this same component. Returning false when neither is open lets the
+  // press continue outward — HomeScreen then pops to the Feed tab, and only
+  // once everything has declined does Android exit the app.
+  useAndroidBack(() => {
+    if (anonOpen) {
+      setAnonOpen(false);
+      return true;
+    }
+    if (conversationId) {
+      setConversationId(null);
+      return true;
+    }
+    return false;
+  });
+
   if (anonOpen) {
     return (
       <AnonymousInboxScreen
@@ -69,7 +97,7 @@ export default function ChatsScreen({
     );
   }
   if (conversationId) {
-    return <ChatThread conversationId={conversationId} onBack={() => setConversationId(null)} />;
+    return <ConversationScreen conversationId={conversationId} onBack={() => setConversationId(null)} />;
   }
   return (
     <ConversationList
@@ -100,6 +128,10 @@ function ConversationList({
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [groupModal, setGroupModal] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [requestsOpen, setRequestsOpen] = useState(false);
+  const [savesOpen, setSavesOpen] = useState(false);
+  const [privacyOpen, setPrivacyOpen] = useState(false);
+  const [notifSettingsOpen, setNotifSettingsOpen] = useState(false);
   const [filter, setFilter] = useState<'all' | 'unread' | 'favorites' | 'groups' | 'requests' | 'drops'>('all');
   const [search, setSearch] = useState('');
   const [activeUsers, setActiveUsers] = useState<ActiveUser[]>([]);
@@ -138,7 +170,7 @@ function ConversationList({
 
     const { data: parts } = await supabase
       .from('conversation_participants')
-      .select('conversation_id, last_read_at, conversation:conversations(id, type, name)')
+      .select('conversation_id, last_read_at, last_read_seq, conversation:conversations(id, type, name)')
       .eq('user_id', me);
     const rows = (parts ?? []) as any[];
     if (!rows.length) {
@@ -157,8 +189,12 @@ function ConversationList({
         .neq('user_id', me),
       supabase
         .from('messages')
-        .select('conversation_id, sender_id, content, msg_type, created_at')
+        .select('conversation_id, sender_id, content, msg_type, created_at, seq')
         .in('conversation_id', ids)
+        // A soft-deleted or expired message must never count as unread.
+        // Disappearing messages set deleted_at when they expire, so without this
+        // they stayed in the unread tally long after the bytes were gone.
+        .is('deleted_at', null)
         .order('created_at', { ascending: false })
         .limit(500),
       supabase.from('follows').select('following_id').eq('follower_id', me).eq('status', 'accepted'),
@@ -209,12 +245,37 @@ function ConversationList({
     const readAt = new Map<string, number>();
     rows.forEach((r) => readAt.set(r.conversation_id, r.last_read_at ? new Date(r.last_read_at).getTime() : 0));
 
+    // The authoritative read cursor, where it exists.
+    //
+    // WHY SEQUENCE AND NOT TIME: last_read_at is stamped with the DEVICE clock,
+    // while message.created_at is stamped with the DATABASE clock. Comparing two
+    // different clocks means that whenever the device runs even slightly behind
+    // the server, the newest messages stay permanently "newer than last read" —
+    // the badge shows a count that opening the chat can never clear. seq is
+    // assigned by the server, so seq-vs-seq is exact and clock-independent.
+    //
+    // Nullable on purpose: reads recorded by the pre-engine thread only ever
+    // wrote last_read_at, so those fall back to the timestamp comparison rather
+    // than suddenly flagging every old message as unread.
+    const readSeq = new Map<string, number>();
+    rows.forEach((r) => {
+      if (typeof r.last_read_seq === 'number') readSeq.set(r.conversation_id, r.last_read_seq);
+    });
+
     const lastByConv = new Map<string, { content: string | null; msg_type: string; created_at: string }>();
     const unreadByConv = new Map<string, number>();
     (msgs ?? []).forEach((m: any) => {
       if (!lastByConv.has(m.conversation_id)) lastByConv.set(m.conversation_id, m);
       // only messages from OTHERS count as unread — your own sends never flag yourself
-      if (m.sender_id !== me && new Date(m.created_at).getTime() > (readAt.get(m.conversation_id) ?? 0)) {
+      if (m.sender_id === me) return;
+
+      const cursor = readSeq.get(m.conversation_id);
+      const unread =
+        cursor !== undefined
+          ? typeof m.seq === 'number' && m.seq > cursor
+          : new Date(m.created_at).getTime() > (readAt.get(m.conversation_id) ?? 0);
+
+      if (unread) {
         unreadByConv.set(m.conversation_id, (unreadByConv.get(m.conversation_id) ?? 0) + 1);
       }
     });
@@ -541,8 +602,84 @@ function ConversationList({
               <Icon name="people-outline" size={18} color={colors.text} />
               <Text style={styles.menuRowText}>New group</Text>
             </Pressable>
+
+            <Pressable
+              style={styles.menuRow}
+              onPress={() => {
+                setMenuOpen(false);
+                setRequestsOpen(true);
+              }}
+              accessibilityRole="button"
+            >
+              <Icon name="mail-unread-outline" size={18} color={colors.text} />
+              <Text style={styles.menuRowText}>Message requests</Text>
+            </Pressable>
+
+            <Pressable
+              style={styles.menuRow}
+              onPress={() => {
+                setMenuOpen(false);
+                setSavesOpen(true);
+              }}
+              accessibilityRole="button"
+            >
+              <Icon name="bookmark-outline" size={18} color={colors.text} />
+              <Text style={styles.menuRowText}>My saves</Text>
+            </Pressable>
+
+            <Pressable
+              style={styles.menuRow}
+              onPress={() => {
+                setMenuOpen(false);
+                setPrivacyOpen(true);
+              }}
+              accessibilityRole="button"
+            >
+              <Icon name="shield-checkmark-outline" size={18} color={colors.text} />
+              <Text style={styles.menuRowText}>Privacy</Text>
+            </Pressable>
+
+            <Pressable
+              style={styles.menuRow}
+              onPress={() => {
+                setMenuOpen(false);
+                setNotifSettingsOpen(true);
+              }}
+              accessibilityRole="button"
+            >
+              <Icon name="notifications-outline" size={18} color={colors.text} />
+              <Text style={styles.menuRowText}>Notifications</Text>
+            </Pressable>
           </View>
         </Pressable>
+      </Modal>
+
+      <Modal
+        visible={requestsOpen}
+        animationType="slide"
+        onRequestClose={() => setRequestsOpen(false)}
+      >
+        <RequestsScreen onBack={() => setRequestsOpen(false)} />
+      </Modal>
+
+      <Modal visible={savesOpen} animationType="slide" onRequestClose={() => setSavesOpen(false)}>
+        <SavesScreen onBack={() => setSavesOpen(false)} />
+      </Modal>
+
+      <Modal
+        visible={privacyOpen}
+        animationType="slide"
+        onRequestClose={() => setPrivacyOpen(false)}
+      >
+        <PrivacyScreen onBack={() => setPrivacyOpen(false)} />
+      </Modal>
+
+      <Modal
+        visible={notifSettingsOpen}
+        animationType="slide"
+        onRequestClose={() => setNotifSettingsOpen(false)}
+      >
+        <NotificationSettingsScreen onBack={() => setNotifSettingsOpen(false)} />
       </Modal>
     </View>
   );
