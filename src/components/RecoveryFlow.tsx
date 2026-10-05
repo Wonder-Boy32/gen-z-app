@@ -12,10 +12,13 @@ import {
   View,
 } from 'react-native';
 import { supabase } from '../supabase/client';
+import { markDeliberateSignOut } from '../utils/sessionGuard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors, radius, shadows } from '../theme';
 import Icon from './ui/Icon';
 import Avatar from './Avatar';
+import { TOP_INSET } from '../utils/useInsets';
+import { friendlyError } from '../utils/friendlyError';
 
 // ============================================================
 // GEN Z — ACCOUNT RECOVERY (Forgot password)
@@ -162,7 +165,7 @@ export default function RecoveryFlow({ visible, onClose }: { visible: boolean; o
       setResult(r);
       setStep('confirm');
     } catch (e: any) {
-      setError(e.message);
+      setError(friendlyError(e));
     } finally {
       setBusy(false);
     }
@@ -189,7 +192,7 @@ export default function RecoveryFlow({ visible, onClose }: { visible: boolean; o
       setStep('otp');
       saveSession({ identifier: identifier.trim(), method: m, masked: (r as any)?.masked ?? null, sentAt: Date.now() });
     } catch (e: any) {
-      setError(e.message);
+      setError(friendlyError(e));
     } finally {
       setBusy(false);
     }
@@ -208,7 +211,7 @@ export default function RecoveryFlow({ visible, onClose }: { visible: boolean; o
       setStep('newpw');
       setSessionTokens(r);
     } catch (e: any) {
-      setError(e.message);
+      setError(friendlyError(e));
     } finally {
       setBusy(false);
     }
@@ -232,6 +235,7 @@ export default function RecoveryFlow({ visible, onClose }: { visible: boolean; o
         if (upErr) throw upErr;
         await rpc('auth_invalidate_sessions').catch(() => {});
         await rpc('security_log', { p_event: 'password_changed', p_meta: { via: 'recovery' } }).catch(() => {});
+        markDeliberateSignOut(); // password reset ends the session on purpose
         await supabase.auth.signOut().catch(() => {});
       } else {
         setError('Verification session expired. Start over.');
@@ -240,7 +244,7 @@ export default function RecoveryFlow({ visible, onClose }: { visible: boolean; o
       }
       setStep('done');
     } catch (e: any) {
-      setError(e.message);
+      setError(friendlyError(e));
     } finally {
       setBusy(false);
     }
@@ -488,10 +492,13 @@ const styles = StyleSheet.create({
     borderRadius: 999, backgroundColor: 'rgba(139,123,255,0.06)',
   },
 
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingTop: 18, paddingHorizontal: 16, paddingBottom: 6,
-  },
+      // paddingTop was a hardcoded 18, which is less than a status bar. This modal
+      // is statusBarTranslucent — Android draws it behind the status bar on
+      // purpose — so 18px put the close button and the GENZ mark UNDER the clock.
+      header: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+        paddingTop: TOP_INSET + 6, paddingHorizontal: 16, paddingBottom: 6,
+      },
   closeBtn: { width: 40, alignItems: 'center' },
   brand: { alignItems: 'center' },
   brandMark: { color: colors.accent, fontSize: 19, fontWeight: '900', letterSpacing: 4 },

@@ -16,8 +16,11 @@ import {
 import * as Clipboard from 'expo-clipboard';
 import QRCode from 'react-native-qrcode-svg';
 import { supabase } from '../../supabase/client';
+import { markDeliberateSignOut } from '../../utils/sessionGuard';
 import { colors, radius, shadows } from '../../theme';
 import Icon, { IconName } from '../ui/Icon';
+import { TOP_INSET } from '../../utils/useInsets';
+import { friendlyError } from '../../utils/friendlyError';
 
 // ============================================================
 // GEN Z — account security suite (Settings → Security/Account)
@@ -104,7 +107,7 @@ export function TwoFactorScreen({ onClose }: { onClose: () => void }) {
       setQrUri(uri);
       setEnrolling(true);
     } catch (e: any) {
-      setError(e.message);
+      setError(friendlyError(e));
     } finally {
       setBusy(false);
     }
@@ -125,7 +128,7 @@ export function TwoFactorScreen({ onClose }: { onClose: () => void }) {
       setStatus({ mfa_enabled: true });
       setQrUri(null); setFactorId(null); setCode('');
     } catch (e: any) {
-      setError(e.message);
+      setError(friendlyError(e));
     } finally {
       setBusy(false);
     }
@@ -145,7 +148,7 @@ export function TwoFactorScreen({ onClose }: { onClose: () => void }) {
             await rpc('security_log', { p_event: 'two_factor_disabled' }).catch(() => {});
             setStatus({ mfa_enabled: false });
           } catch (e: any) {
-            setError(e.message);
+            setError(friendlyError(e));
           } finally {
             setBusy(false);
           }
@@ -235,6 +238,7 @@ export function SessionsScreen({ onClose }: { onClose: () => void }) {
             setBusy(true);
             try {
               await rpc('auth_invalidate_sessions');
+              markDeliberateSignOut(); // the user asked for this: never auto-restore
               await supabase.auth.signOut();
             } catch {} finally { setBusy(false); }
           },
@@ -400,13 +404,14 @@ export function SecurityPasswordModal({ visible, email, onClose }: { visible: bo
       // revoke every other session; silently re-login on this device
       await rpc('auth_invalidate_sessions').catch(() => {});
       await rpc('security_log', { p_event: 'password_changed', p_meta: { via: 'settings' } }).catch(() => {});
+      markDeliberateSignOut(); // deliberate: the sign-in two lines down re-mirrors
       await supabase.auth.signOut();
       await supabase.auth.signInWithPassword({ email, password: next });
       Alert.alert('Password changed', 'Your password was updated. Other devices were signed out.');
       setCurrent(''); setNext(''); setConfirm('');
       onClose();
     } catch (e: any) {
-      setError(e.message);
+      setError(friendlyError(e));
     } finally {
       setBusy(false);
     }
@@ -449,7 +454,7 @@ export function EmailModal({ visible, onClose }: { visible: boolean; onClose: ()
       if (e) throw e;
       setStage('verify');
     } catch (e: any) {
-      setError(e.message);
+      setError(friendlyError(e));
     } finally { setBusy(false); }
   };
 
@@ -464,7 +469,7 @@ export function EmailModal({ visible, onClose }: { visible: boolean; onClose: ()
       setNewEmail(''); setCode(''); setStage('enter');
       onClose();
     } catch (e: any) {
-      setError(e.message);
+      setError(friendlyError(e));
     } finally { setBusy(false); }
   };
 
@@ -532,7 +537,7 @@ export function PhoneModal({ visible, onClose }: { visible: boolean; onClose: ()
       setPhone(''); setCode(''); setStage('enter');
       onClose();
     } catch (e: any) {
-      setError(e.message);
+      setError(friendlyError(e));
     } finally { setBusy(false); }
   };
 
@@ -576,9 +581,10 @@ export function DeactivateModal({ visible, onClose, onDone }: { visible: boolean
           setBusy(true);
           try {
             await rpc('account_deactivate');
+            markDeliberateSignOut(); // account ended by choice
             await supabase.auth.signOut();
             onDone();
-          } catch (e: any) { Alert.alert('Something went wrong', e.message); } finally { setBusy(false); }
+          } catch (e: any) { Alert.alert('Something went wrong', friendlyError(e)); } finally { setBusy(false); }
         },
       },
     ]);
@@ -609,9 +615,10 @@ export function DeleteModal({ visible, onClose, onDone }: { visible: boolean; on
           setBusy(true);
           try {
             await rpc('account_delete');
+            markDeliberateSignOut(); // account deleted — the only other valid exit
             await supabase.auth.signOut();
             onDone();
-          } catch (e: any) { Alert.alert('Something went wrong', e.message); } finally { setBusy(false); }
+          } catch (e: any) { Alert.alert('Something went wrong', friendlyError(e)); } finally { setBusy(false); }
         },
       },
     ]);
@@ -632,7 +639,10 @@ export function DeleteModal({ visible, onClose, onDone }: { visible: boolean; on
 
 const styles = StyleSheet.create({
   shell: { flex: 1, backgroundColor: colors.bg },
-  shellHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 20, paddingHorizontal: 16, paddingBottom: 10 },
+    // paddingTop was a hardcoded 20 — short of a real status bar, so the
+    // "‹ Back" control and the screen title sat under the clock. This is a
+    // full-screen opaque modal, so it owns its own top inset.
+    shellHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: TOP_INSET + 6, paddingHorizontal: 16, paddingBottom: 10 },
   shellBack: { width: 70 },
   shellBackText: { color: colors.accent, fontSize: 15, fontWeight: '600' },
   shellTitle: { color: colors.text, fontSize: 16, fontWeight: '800' },

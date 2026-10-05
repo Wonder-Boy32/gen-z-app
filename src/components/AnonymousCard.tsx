@@ -41,7 +41,12 @@ const AnonymousCard = forwardRef<
           <Text style={styles.footerHint}>
             {kind === 'link'
               ? 'Open Gen Z to send — or share this anywhere.'
-              : 'Gone soon — like every Drop, 48 hours max.'}
+              // Deliberately NOT "like every Drop, 48 hours": an anonymous
+              // message expires on its OWN setting (24h / 48h) and that never
+              // matched the Drop rule anyway — tying the two together was always
+              // a comparison waiting to go stale, and the 7-day change is what
+              // made it wrong.
+              : 'Gone soon — temporary, like everything here.'}
           </Text>
         </View>
       </View>

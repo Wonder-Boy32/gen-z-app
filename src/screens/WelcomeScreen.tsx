@@ -20,7 +20,7 @@ import { TOP_INSET } from '../utils/useInsets';
 
 const FEATURES: { icon: any; color: string; title: string; sub: string }[] = [
   { icon: 'flame', color: colors.accent, title: 'Drop what’s happening', sub: 'Right now, from people around you' },
-  { icon: 'time', color: colors.cyan, title: 'Gone in 48 hours', sub: 'Every story disappears — no archive' },
+  { icon: 'time', color: colors.cyan, title: 'Gone in 7 days', sub: 'Every story disappears — no archive' },
   { icon: 'eye-off', color: colors.violet, title: 'Anonymous messages', sub: 'See who’s curious 👀' },
 ];
 
@@ -51,7 +51,7 @@ export default function WelcomeScreen({
             <Image source={require('../../assets/icon-navy.png')} style={styles.logoImage} />
           </View>
           <Text style={styles.wordmark}>GEN Z</Text>
-          <Text style={styles.tagline}>Every story. Gone in 48 hours.</Text>
+          <Text style={styles.tagline}>Every story. Gone in 7 days.</Text>
         </View>
 
         <View style={styles.features}>

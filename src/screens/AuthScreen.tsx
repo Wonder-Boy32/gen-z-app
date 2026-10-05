@@ -20,6 +20,7 @@ import Icon from '../components/ui/Icon';
 import Button from '../components/Button';
 import RecoveryFlow from '../components/RecoveryFlow';
 import { TOP_INSET } from '../utils/useInsets';
+import { friendlyError } from '../utils/friendlyError';
 
 type Mode = 'login' | 'signup';
 
@@ -57,6 +58,13 @@ export default function AuthScreen({ initialMode = 'login' }: { initialMode?: Mo
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState(false);
+  // Facebook-style email confirmation: the account exists but is unconfirmed, so
+  // the user is held here to type the 6-digit code instead of being dropped on a
+  // panel that tells them to go and read their inbox.
+  const [awaitingCode, setAwaitingCode] = useState<string | null>(null);
+  const [code, setCode] = useState('');
+  const [verifyBusy, setVerifyBusy] = useState(false);
+  const [resendIn, setResendIn] = useState(0);
   const [showPassword, setShowPassword] = useState(false);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   // login attempt protection UX (real enforcement is Supabase's rate limiter)
@@ -82,6 +90,30 @@ export default function AuthScreen({ initialMode = 'login' }: { initialMode?: Mo
         const s = JSON.parse(raw);
         if (s?.identifier && s?.sentAt && Date.now() - s.sentAt < 10 * 60 * 1000) {
           setRecoveryOpen(true);
+        }
+      } catch {}
+    })();
+  }, []);
+
+  // Same idea, for signup. Android kills the activity the moment the app
+  // leaves the foreground, and the confirmation step is the worst place to lose
+  // your place: the account already EXISTS (provisional, unconfirmed), so going
+  // back to the form and resubmitting hits "email already registered". Restore
+  // the pending email so the user lands back on "Check your email", not login.
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem('genz_signup_confirm');
+        if (!raw) return;
+        const s = JSON.parse(raw);
+        // 24h window — generous on purpose. The OTP itself may have expired
+        // within that time, but that's fine: the restored screen's "Resend
+        // code" button is exactly the recovery for an expired token.
+        if (s?.email && s?.sentAt && Date.now() - s.sentAt < 24 * 60 * 60 * 1000) {
+          setAwaitingCode(s.email);
+          setEmail(s.email);
+        } else {
+          AsyncStorage.removeItem('genz_signup_confirm').catch(() => {});
         }
       } catch {}
     })();
@@ -135,7 +167,9 @@ export default function AuthScreen({ initialMode = 'login' }: { initialMode?: Mo
       if (mode === 'signup') {
         const { data, error: err } = await supabase.auth.signUp({ email: email.trim(), password });
         if (err) {
-          setError(err.message);
+          // friendlyError(), never err.message: a signup failure is either a
+          // network problem or a Supabase verdict, and both have a human form.
+          setError(friendlyError(err, 'Could not create your account. Please try again.'));
         } else if (data.user) {
           // Facebook-style: capture profile details the moment the account exists
           const name = `${firstName.trim()} ${lastName.trim()}`.trim();
@@ -147,7 +181,26 @@ export default function AuthScreen({ initialMode = 'login' }: { initialMode?: Mo
             // DB without the dob/gender columns yet — save at least the name
             await supabase.from('profiles').update({ display_name: name }).eq('id', data.user.id);
           }
-          setCreated(true);
+          // `data.session` is the deciding signal, and it is the ONLY reliable
+          // one: Supabase returns a user in both cases. A session means
+          // confirmation is switched off and the user is already signed in; a
+          // null session means the account is provisional until the emailed
+          // code is entered. Trusting a hardcoded assumption about the project's
+          // email settings is what produced the dead-end panel.
+          if (data.session) {
+            setCreated(true);
+          } else {
+            const pendingEmail = data.user.email ?? email.trim();
+            setAwaitingCode(pendingEmail);
+            setCode('');
+            setError(null);
+            // Persist across an Android kill. This is the moment the account
+            // becomes provisional — losing this screen strands the user.
+            AsyncStorage.setItem(
+              'genz_signup_confirm',
+              JSON.stringify({ email: pendingEmail, sentAt: Date.now() })
+            ).catch(() => {});
+          }
         }
       } else {
         const { error: err } = await supabase.auth.signInWithPassword({
@@ -159,7 +212,13 @@ export default function AuthScreen({ initialMode = 'login' }: { initialMode?: Mo
           if (failures + 1 >= MAX_ATTEMPTS) {
             setError('For your security, we\'ve temporarily limited login attempts. Try again in a few minutes, or reset your password.');
           } else {
-            setError(`${err.message} You have ${MAX_ATTEMPTS - failures - 1} attempt${MAX_ATTEMPTS - failures - 1 === 1 ? '' : 's'} remaining.`);
+            // The attempt counter is ours and worth keeping, but it used to be
+            // bolted onto the RAW error — which is how "java.net.UnknownHostException:
+            // Unable to resolve host ... You have 4 attempts remaining." reached a
+            // user who was simply offline. Only the message half is translated.
+            setError(
+              `${friendlyError(err, 'Could not log you in. Please try again.')} You have ${MAX_ATTEMPTS - failures - 1} attempt${MAX_ATTEMPTS - failures - 1 === 1 ? '' : 's'} remaining.`
+            );
           }
         } else {
           setFailures(0);
@@ -167,6 +226,55 @@ export default function AuthScreen({ initialMode = 'login' }: { initialMode?: Mo
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Resend pacing. Local only — Supabase's own email rate limiter is the real
+  // ceiling; this just stops the button being mashed and the user burning
+  // through their allowance without noticing.
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const id = setTimeout(() => setResendIn((s) => s - 1), 1000);
+    return () => clearTimeout(id);
+  }, [resendIn]);
+
+  const verifyCode = async () => {
+    if (!awaitingCode) return;
+    setError(null);
+    setVerifyBusy(true);
+    try {
+      // type 'signup' is the email-confirmation token. Same primitive the
+      // AccountSecurity email-change flow already uses, so this is a proven
+      // path in this app rather than a new mechanism.
+      const { error: err } = await supabase.auth.verifyOtp({
+        email: awaitingCode,
+        token: code.trim(),
+        type: 'signup',
+      });
+      if (err) throw err;
+      // Done: the account is confirmed, so there is nothing left to resume.
+      AsyncStorage.removeItem('genz_signup_confirm').catch(() => {});
+      // Success mints the session, so the root navigator moves the user on by
+      // itself — there is nothing to navigate manually here.
+    } catch (e: any) {
+      setError(friendlyError(e, 'That code did not work. Check it and try again.'));
+    } finally {
+      setVerifyBusy(false);
+    }
+  };
+
+  const resendCode = async () => {
+    if (!awaitingCode || resendIn > 0) return;
+    setError(null);
+    try {
+      const { error: err } = await supabase.auth.resend({
+        type: 'signup',
+        email: awaitingCode,
+      });
+      if (err) throw err;
+      setResendIn(45);
+    } catch (e: any) {
+      setError(friendlyError(e, 'Could not resend the code. Try again shortly.'));
     }
   };
 
@@ -193,13 +301,82 @@ export default function AuthScreen({ initialMode = 'login' }: { initialMode?: Mo
             <Text style={styles.wordmark}>GEN Z</Text>
           </View>
 
-          {created ? (
-            <View style={styles.createdBox}>
-              <Text style={styles.createdTitle}>Almost there</Text>
-              <Text style={styles.createdText}>
-                If email confirmation is on, check your inbox to activate your account. Otherwise
-                we're taking you to set up your profile...
+          {awaitingCode ? (
+            <>
+              <Text style={styles.heading}>Check your email</Text>
+              <Text style={styles.headingSub}>
+                We sent a 6-digit code to {awaitingCode}. Enter it to finish creating your account.
               </Text>
+
+              <View style={styles.formCard}>
+                <TextInput
+                  style={[
+                    styles.input,
+                    { fontSize: 26, letterSpacing: 10, textAlign: 'center', fontWeight: '700' },
+                  ]}
+                  placeholder="······"
+                  placeholderTextColor={colors.textFaint}
+                  keyboardType="number-pad"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  textContentType="oneTimeCode"
+                  maxLength={6}
+                  value={code}
+                  // Digits only. A paste or a non-latin keyboard must never put
+                  // characters in the field that the server then rejects as a
+                  // malformed token, which reads to the user as "wrong code".
+                  onChangeText={(t) => setCode(t.replace(/[^0-9]/g, ''))}
+                  autoFocus
+                />
+
+                {!!error && <Text style={styles.error}>{error}</Text>}
+
+                <Button
+                  title="Confirm"
+                  onPress={() => void verifyCode()}
+                  loading={verifyBusy}
+                  disabled={code.length < 6}
+                />
+
+                <Pressable
+                  onPress={() => void resendCode()}
+                  disabled={resendIn > 0}
+                  style={{ alignItems: 'center', paddingVertical: 14 }}
+                >
+                  <Text
+                    style={{
+                      color: resendIn > 0 ? colors.textMuted : colors.accent,
+                      fontSize: 14,
+                      fontWeight: '600',
+                    }}
+                  >
+                    {resendIn > 0 ? `Resend code in ${resendIn}s` : "Didn't get it? Resend code"}
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => {
+                    setAwaitingCode(null);
+                    setCode('');
+                    setError(null);
+                    AsyncStorage.removeItem('genz_signup_confirm').catch(() => {});
+                  }}
+                  style={{ alignItems: 'center' }}
+                >
+                  <Text style={{ color: colors.textMuted, fontSize: 13 }}>
+                    Wrong address? Change email
+                  </Text>
+                </Pressable>
+              </View>
+            </>
+          ) : created ? (
+            <View style={styles.createdBox}>
+              {/* Only reached when email confirmation is OFF — in that case the
+                  session is already live and the root navigator is about to
+                  move the user on, so this states the transition instead of
+                  asking them to go and check an inbox. */}
+              <Text style={styles.createdTitle}>Account created</Text>
+              <Text style={styles.createdText}>Taking you to set up your profile…</Text>
             </View>
           ) : mode === 'signup' ? (
             <>

@@ -136,6 +136,22 @@ export default function DropVideoView({
   }, [isActive, preload, url, player]);
 
   // trim loop + progress
+  //
+  // Progress is React state, so every write re-renders this whole subtree —
+  // the video surface AND every overlay on top of it. `timeUpdate` fires far
+  // more often than a progress bar can be seen to move, so the old code spent
+  // much of each second re-rendering over a decoding video. That render work
+  // competes with video decode and shows up as the picture breaking up.
+  //
+  // Only publish a change the bar can actually show (~1%).
+  const progressRef = useRef(0);
+  const pushProgress = (v: number) => {
+    const next = Math.max(0, Math.min(v, 1));
+    if (Math.abs(next - progressRef.current) < 0.01) return;
+    progressRef.current = next;
+    setProgress(next);
+  };
+
   useEffect(() => {
     if (!player) return;
     const sub = player.addListener('timeUpdate', (e: any) => {
@@ -143,10 +159,10 @@ export default function DropVideoView({
       if (trim && t != null) {
         if (t >= trim.end) player.currentTime = trim.start;
         const span = trim.end - trim.start;
-        if (span > 0) setProgress(Math.min((t - trim.start) / span, 1));
+        if (span > 0) pushProgress((t - trim.start) / span);
       } else {
         const dur = player.duration;
-        if (dur && dur > 0 && t != null) setProgress(Math.min(t / dur, 1));
+        if (dur && dur > 0 && t != null) pushProgress(t / dur);
       }
     });
     return () => sub.remove();

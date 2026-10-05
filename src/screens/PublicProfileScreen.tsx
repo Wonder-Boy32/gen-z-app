@@ -13,13 +13,16 @@ import {
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import Icon, { IconName } from '../components/ui/Icon';
+import { FILL, GradientFill } from '../components/ui/Futuristic';
 import { notifyUser } from '../utils/notify';
 import { TOP_INSET } from '../utils/useInsets';
 import Button from '../components/Button';
 import Avatar from '../components/Avatar';
 import VerifiedBadge from '../components/ui/VerifiedBadge';
 import PostViewer from '../components/PostViewer';
-import ChatThread from './ChatThread';
+// MESSAGING v2 — switched to the engine-backed ConversationScreen.
+// TO REVERT INSTANTLY: point this back at './ChatThread'.
+import ConversationScreen from '../components/chat/ConversationScreen';
 import AnonymousSendScreen from './AnonymousSendScreen';
 import { fetchStatuses, shortTimeLeft, type ProfileStatus } from '../services/profileStatus';
 
@@ -29,6 +32,10 @@ type Profile = {
   display_name: string | null;
   bio: string | null;
   avatar_url: string | null;
+  /** Added for the cover banner. The owner's own profile screen renders this;
+   *  this screen never even selected it, which is why the public view looked
+   *  bare. */
+  cover_url: string | null;
   location: string | null;
   pronouns: string | null;
   verified: boolean;
@@ -136,7 +143,7 @@ export default function PublicProfileScreen({
     const [prof, myFollow, fw, fl] = await Promise.all([
       supabase
         .from('profiles')
-        .select('id, username, display_name, bio, avatar_url, location, pronouns, verified, streak_count, is_private, created_at')
+        .select('id, username, display_name, bio, avatar_url, cover_url, location, pronouns, verified, streak_count, is_private, created_at')
         .eq('id', userId)
         .maybeSingle(),
       supabase.from('follows').select('status').eq('follower_id', user?.id ?? '').eq('following_id', userId).maybeSingle(),
@@ -285,7 +292,7 @@ export default function PublicProfileScreen({
 
   const shareProfile = () => {
     Share.share({
-      message: `Check out @${profile?.username ?? username} on Gen Z — every story, gone in 48 hours!`,
+              message: `Check out @${profile?.username ?? username} on Gen Z — every story, gone in 7 days!`,
 
     });
   };
@@ -315,7 +322,7 @@ export default function PublicProfileScreen({
   if (threadId) {
     return (
       <Modal visible animationType="slide" onRequestClose={() => setThreadId(null)} statusBarTranslucent>
-        <ChatThread conversationId={threadId} onBack={() => setThreadId(null)} />
+        <ConversationScreen conversationId={threadId} onBack={() => setThreadId(null)} />
       </Modal>
     );
   }
@@ -361,6 +368,31 @@ export default function PublicProfileScreen({
               <View>
                 {/* hero card */}
                 <View style={styles.heroCard}>
+                  {/* ---- cover ----
+                      This screen never selected or drew profiles.cover_url, so the
+                      view everyone else sees was missing the one thing that makes a
+                      profile feel like a place. Full-bleed here, with a gradient
+                      scrim fading into the card so the avatar, name and chips keep
+                      their contrast over ANY photo, not just a dark one. */}
+                  <View style={styles.coverWrap}>
+                    {profile?.cover_url ? (
+                      <Image source={{ uri: profile.cover_url }} style={styles.coverImg} resizeMode="cover" />
+                    ) : (
+                      <GradientFill from="#2B1B4E" to="#101A33" horizontal steps={12} style={FILL} />
+                    )}
+                    <View style={styles.coverScrim}>
+                      <GradientFill
+                        from={colors.bg}
+                        to={colors.bg}
+                        alphaFrom={0}
+                        alphaTo={0.96}
+                        steps={12}
+                        style={FILL}
+                      />
+                    </View>
+                  </View>
+
+                  <View style={styles.heroBody}>
                   <View style={styles.avatarWrap}>
                     <Avatar
                       url={profile?.avatar_url}
@@ -473,6 +505,7 @@ export default function PublicProfileScreen({
                       <Text style={styles.lockText}>Private account — follow to see their stories</Text>
                     </View>
                   )}
+                  </View>
                 </View>
 
                 {/* filter chips */}
@@ -608,17 +641,46 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   heroCard: {
-    alignItems: 'center',
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.glassBorder,
-    paddingVertical: 20,
-    paddingHorizontal: 14,
     marginBottom: 14,
+    // Full-bleed cover inside a rounded card: clip so the image cannot spill past
+    // the radius, and move the padding onto heroBody so the cover reaches the
+    // card's actual edges. Padding here would letterbox it.
+    overflow: 'hidden',
+  },
+  // Cover banner. 132 is deep enough to read as a real header without pushing the
+  // identity block below the fold on a short phone.
+  coverWrap: {
+    height: 132,
+    width: '100%',
+  },
+  coverImg: {
+    width: '100%',
+    height: '100%',
+  },
+  // Bottom-anchored scrim (the bottom 72% only — the top of the photo is left
+  // untouched so the image still reads). This is what keeps the avatar, name and
+  // chips legible over a BRIGHT cover; without it a light photo swallows them.
+  coverScrim: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: '72%',
+  },
+  heroBody: {
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingBottom: 20,
   },
   avatarWrap: {
     position: 'relative',
+    // Straddle the cover edge. One negative margin is what turns a stack of
+    // centred rows into something that reads as a designed profile.
+    marginTop: -44,
   },
   verifiedBadge: {
     position: 'absolute',
@@ -687,14 +749,22 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 8,
   },
+  // Contained strip rather than four free-floating numbers: the group reads as a
+  // single unit of information, and flex:1 stops the columns drifting apart on
+  // wide screens or colliding on narrow ones.
   statsRow: {
     flexDirection: 'row',
     marginTop: 16,
     width: '100%',
-    justifyContent: 'space-around',
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    paddingVertical: 12,
   },
   stat: {
     alignItems: 'center',
+    flex: 1,
   },
   statIconRow: {
     flexDirection: 'row',

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -15,11 +15,13 @@ import {
   View,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { captureRef } from 'react-native-view-shot';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import { TOP_INSET } from '../utils/useInsets';
+import { screenTextError } from '../utils/contentFilter';
 import Icon, { IconName } from '../components/ui/Icon';
 import Avatar from '../components/Avatar';
 import VerifiedBadge from '../components/ui/VerifiedBadge';
@@ -32,14 +34,16 @@ import StickerPicker from '../components/create/StickerPicker';
 import TextLayerEditor, { TextLayer } from '../components/create/TextLayerEditor';
 import VoiceoverRecorder from '../components/create/VoiceoverRecorder';
 import PhotoEditorModal from '../components/create/PhotoEditorModal';
-import { uploadMedia } from '../utils/upload';
+import { uploadMediaWithProgress } from '../utils/upload';
+import { startUploadJob, type UploadReport } from '../utils/uploadManager';
 import { extractVideoCover, hasNativeFFmpeg, processDropVideo } from '../utils/videoProcessor';
+import { useAndroidBack } from '../utils/useAndroidBack';
 
 // ============================================================
 // GEN Z — ADVANCED UPLOAD / CREATE
 // CREATE → SELECT MEDIA → EDIT → PREVIEW → PUBLISH → DROP IT
-// One posts row. expires_at = created_at + 48h (DB default, immutable).
-// Drafts live in `drafts` and NEVER start the 48h timer.
+// One posts row. expires_at = created_at + 7 days (DB-enforced, immutable).
+// Drafts live in `drafts` and NEVER start the expiry timer.
 // ============================================================
 
 type Sound = {
@@ -55,10 +59,19 @@ type Sound = {
 type Sticker = { id: string; emoji: string; x: number; y: number; size: number };
 type Drop = { id: string; prompt: string; status: string; ends_at: string };
 type Mode = 'media' | 'text';
-type Step = 'hub' | 'create' | 'editor' | 'preview' | 'live';
+type Step = 'hub' | 'create' | 'editor' | 'preview';
 type Visibility = 'everyone' | 'followers' | 'only_me';
 
-const H48 = 48 * 3600 * 1000;
+/**
+ * How long a Drop lives, in ms — used ONLY to render the "Vanishes <day> at
+ * <time>" label, which turns the rule into a concrete date.
+ *
+ * It must stay equal to the server rule in supabase/seven_day_expiry.sql
+ * (`created_at + interval '7 days'`). Renamed from H48: the old name hardcoded
+ * the duration into its own identifier, so changing the rule silently left the
+ * label saying the wrong day.
+ */
+const DROP_LIFETIME_MS = 7 * 24 * 3600 * 1000;
 
 const EFFECTS: { id: string; label: string; tint: string }[] = [
   { id: 'none', label: 'None', tint: 'rgba(0,0,0,0)' },
@@ -571,7 +584,7 @@ const TEXT_STARTERS = [
   'Confession: ',
 ];
 
-/** "Vanishes Sun at 07:00" — the real 48h rule, made concrete. No backend change. */
+  /** "Vanishes Sun at 07:00" — the real 7-day rule, made concrete. No backend change. */
 function vanishLabel(ms: number): string {
   const d = new Date(Date.now() + ms);
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -651,6 +664,30 @@ export default function CreateDropScreen({
   const [step, setStep] = useState<Step>(
     replyToDropId || initialMediaUri || initialSound ? 'create' : 'hub'
   );
+
+  // Android back control for the create wizard.
+  //
+   // A wizard is not one screen: 'hub' | 'create' | 'editor' | 'preview' are four
+   // navigation levels sharing one component, and the arrow buttons move between
+   // them. Without this the hardware back press skipped all of them and dropped
+   // the user out of the whole flow — losing an in-progress post. Walking one step
+   // back mirrors the on-screen back arrow exactly. 'hub' is the entry level, so
+   // it declines and lets the tab host decide.
+   useAndroidBack(() => {
+     if (step === 'preview') {
+      setStep('editor');
+      return true;
+    }
+    if (step === 'editor') {
+      setStep('create');
+      return true;
+    }
+    if (step === 'create') {
+      setStep('hub');
+      return true;
+    }
+    return false;
+  });
   const [mode, setMode] = useState<Mode>('media');
   const [assets, setAssets] = useState<ImagePicker.ImagePickerAsset[]>([]);
   const [caption, setCaption] = useState('');
@@ -703,8 +740,9 @@ export default function CreateDropScreen({
   const [draft, setDraft] = useState<{ id: string; updated_at: string } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [livePulse] = useState(new Animated.Value(1));
   const [hubFilter, setHubFilter] = useState<HubFilter>('For you');
+  /** templates moved off screen 1 into their own sheet */
+  const [templatesOpen, setTemplatesOpen] = useState(false);
   const [tagIdeas, setTagIdeas] = useState<{ tag: string; count: number }[]>([]);
 
   // template cards scale with the device instead of a hardcoded width, so they
@@ -1068,24 +1106,83 @@ export default function CreateDropScreen({
   };
 
   // ---- publish ----
-  const publish = async () => {
+  //
+  // Posting no longer holds the user here. The heavy work — ffmpeg bake, uploads,
+  // the row insert — is handed to uploadManager and this wizard closes straight
+  // away, so the user lands back on the feed instead of watching a spinner. The
+  // job then reports itself: an ambient bar at the bottom of the app with the
+  // percentage still to go, and a notification when the post is live.
+  //
+  // runPublish() deliberately closes over THIS render's state rather than
+  // rebuilding a payload object. It is called after this component unmounts, so
+  // it must never touch component state — everything it needs is already captured.
+  const publish = () => {
     if (uploading) return;
     if (mode === 'media' && !hasMedia) return;
     if (mode === 'text' && !content.trim()) return;
+
+    // Screen BEFORE any work starts. A Drop is public, so this is the highest-
+    // reach place for objectionable text to enter the app — and checking here
+    // means a blocked post never begins uploading, rather than being caught
+    // after the upload and leaving an orphaned file behind.
+    const captionCheck = screenTextError(mode === 'text' ? content : caption);
+    if (captionCheck) {
+      setError(captionCheck);
+      return;
+    }
+
     setUploading(true);
     setError(null);
-    try {
+
+    // Capture the auto cover NOW, while the preview is still mounted.
+    //
+    // captureCoverNow() is a view-shot of the editor's preview view. The job runs
+    // after this screen unmounts, so a capture started later would silently
+    // return nothing — a video would post with no cover and look broken in the
+    // feed. Starting the promise here, but not awaiting it, keeps the hand-off
+    // instant while still reading a view that exists.
+    const eagerCover: Promise<string | null> =
+      mode === 'media' && coverUri ? Promise.resolve(coverUri) : captureCoverNow().catch(() => null);
+
+    startUploadJob({
+      label: mode === 'media' ? 'post' : 'text post',
+      work: (report) => runPublish(report, eagerCover),
+      doneTitle: 'Post successfully uploaded',
+      doneBody: 'Your drop is live — go see it.',
+    });
+
+    onPosted(); // straight back to the feed; nothing to wait for
+  };
+
+  const runPublish = async (report: UploadReport, eagerCover: Promise<string | null>) => {
+    report(0, 'Preparing…');
+    {
+      // getSession(), not getUser(): getUser() is an authoritative network check
+      // and the SDK deletes the stored session if the server says it is not
+      // active. A post upload must never be able to sign the user out.
       const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) throw new Error('Not logged in');
+        data: { session },
+      } = await supabase.auth.getSession();
+      const user = session?.user ?? null;
+      if (!user) throw new Error('Not logged in — sign in again to post.');
 
       const row: any = { user_id: user.id };
       let bakedVideo = false;
 
       if (mode === 'media') {
         const items: { url: string; type: string }[] = [];
+
+        // Progress is measured in steps: one per asset, one for the cover when
+        // the first item is a video, and one for the insert. Within a step the
+        // real byte fraction of the transfer is what moves the bar.
+        const hasVideoFirst = assets.length > 0 && isVideoAsset(assets[0]);
+        const steps = assets.length + (hasVideoFirst ? 1 : 0) + 1;
+        let stepBase = 0;
+        const reportStep = (within: number, detail?: string) =>
+          report((stepBase + Math.min(1, Math.max(0, within))) / steps, detail);
+
         for (let i = 0; i < assets.length; i++) {
+          reportStep(0, `Uploading ${i + 1} of ${assets.length}`);
           const asset = assets[i];
           const isVideo = isVideoAsset(asset);
           let uri = asset.uri;
@@ -1118,12 +1215,18 @@ export default function CreateDropScreen({
           }
 
           const ext = asset.fileName?.split('.').pop() ?? (isVideo ? 'mp4' : 'jpg');
-          const publicUrl = await uploadMedia(
+          const publicUrl = await uploadMediaWithProgress(
             `${user.id}/drop-${Date.now()}-${i}.${ext}`,
             uri,
-            asset.mimeType ?? (isVideo ? 'video/mp4' : 'image/jpeg')
+            asset.mimeType ?? (isVideo ? 'video/mp4' : 'image/jpeg'),
+            (f) => reportStep(f)
           );
           items.push({ url: publicUrl, type: isVideo ? 'video' : 'image' });
+          stepBase += 1;
+          reportStep(
+            0,
+            i + 1 < assets.length ? `Uploading ${i + 2} of ${assets.length}` : 'Finishing up…'
+          );
 
           // cover: user-picked, else auto-capture a frame (view-shot, works
           // everywhere), else ffmpeg frame in native builds. Failures are
@@ -1141,22 +1244,27 @@ export default function CreateDropScreen({
                 }
               }
               if (!coverSrc) {
-                try {
-                  coverSrc = await captureCoverNow();
-                } catch (e: any) {
-                  console.warn('[cover] view-shot failed', e?.message);
-                }
+                // Already captured in publish() while the preview was mounted —
+                // this screen is gone by now, so a fresh view-shot would be empty.
+                coverSrc = await eagerCover;
               }
             }
             if (coverSrc) {
               try {
-                row.cover_url = await uploadMedia(`${user.id}/cover-${Date.now()}.jpg`, coverSrc, 'image/jpeg');
+                row.cover_url = await uploadMediaWithProgress(
+                  `${user.id}/cover-${Date.now()}.jpg`,
+                  coverSrc,
+                  'image/jpeg',
+                  (f) => reportStep(f)
+                );
               } catch (e: any) {
                 console.warn('[cover] cover upload failed', e?.message);
               }
             } else {
               console.warn('[cover] NO cover produced — video tile will use placeholder');
             }
+            stepBase += 1;
+            reportStep(0);
           }
         }
         row.media_url = items[0].url;
@@ -1203,33 +1311,21 @@ export default function CreateDropScreen({
       if (postToDrop && liveDrop) row.drop_id = liveDrop.id;
       if (parentDropId) row.parent_drop_id = parentDropId;
 
-      // expires_at is NOT sent — DB default sets created_at and expires_at (+48h)
+      // expires_at is NOT sent — the DB sets created_at and expires_at (+7 days)
+      report(0.97, 'Publishing…');
       const { error: err } = await supabase.from('posts').insert(row);
       if (err) throw new Error(err.message);
+      report(1);
 
       // clean up the draft (if any) — the drop is live now
       await supabase.from('drafts').delete().eq('user_id', user.id);
 
-      // DROP LIVE animation
-      setStep('live');
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(livePulse, { toValue: 1.25, duration: 500, useNativeDriver: true }),
-          Animated.timing(livePulse, { toValue: 1, duration: 500, useNativeDriver: true }),
-        ])
-      ).start();
-    } catch (e: any) {
-      console.error('[publish] drop failed:', e?.code, e?.message, e?.stack);
-      // Some native errors carry an object (or a stringified native event) as
-      // `.message` — never render that garbage. Only show real strings.
-      const raw = e?.message;
-      const msg =
-        typeof raw === 'string' && raw.trim()
-          ? raw
-          : 'Drop failed — check your connection and try again.';
-      const code = typeof e?.code === 'string' && e.code ? e.code : null;
-      setError(code ? `[${code}] ${msg}` : msg);
-      setUploading(false);
+      // No 'live' step and no animation any more: this screen is already gone and
+      // the user is on the feed. uploadManager reports completion from there.
+      //
+      // Errors are deliberately NOT caught here. This component is unmounted, so
+      // it must not touch state — throwing lets uploadManager surface the failure
+      // in the ambient bar, where the user actually is.
     }
   };
 
@@ -1261,6 +1357,131 @@ export default function CreateDropScreen({
       alive = false;
     };
   }, []);
+
+  // ---- hashtags: live suggestions for the token being typed ----
+  //
+  // The chips further down are the community's TOP tags. These are the ones that
+  // actually match what you're typing, and — critically — the counts come from
+  // hashtag_suggest()/hashtag_count(), which count LIVE posts only (not expired,
+  // not removed). The old chips read hashtags.count, a counter that only ever
+  // went up because the expiry purge deleted posts without recomputing it, so they
+  // were advertising tags from posts that no longer existed.
+  const activeTagToken = useMemo(() => {
+    // The token must be the LAST thing in the caption — that's what "currently
+    // typing" means. Editing mid-text won't pop the list open, deliberately:
+    // a dropdown appearing while you fix a typo three words back is worse than
+    // no dropdown.
+    const m = /(?:^|\s)#([A-Za-z0-9_]{1,40})$/.exec(caption);
+    return m ? m[1].toLowerCase() : null;
+  }, [caption]);
+
+  const [tagSuggestions, setTagSuggestions] = useState<{ tag: string; post_count: number }[]>([]);
+  // undefined = still checking, number = a real count, null = couldn't check.
+  // The three states matter: if the RPC fails (the migration not run yet, say) the
+  // count row hides itself rather than sitting on "Checking…" forever, and rather
+  // than claiming zero — which would be a lie the user might act on.
+  const [tagExactCount, setTagExactCount] = useState<number | null | undefined>(undefined);
+
+  useEffect(() => {
+    if (!activeTagToken) {
+      setTagSuggestions([]);
+      setTagExactCount(undefined);
+      return;
+    }
+    let alive = true;
+    // Debounced. Typing "#a #ab #abc" otherwise fires three overlapping requests
+    // that can land out of order and repaint the list with stale results.
+    const t = setTimeout(async () => {
+      const [sug, cnt] = await Promise.all([
+        supabase.rpc('hashtag_suggest', { p_prefix: activeTagToken, p_limit: 8 }),
+        supabase.rpc('hashtag_count', { p_tag: activeTagToken }),
+      ]);
+      if (!alive) return;
+      setTagSuggestions((sug.data ?? []) as { tag: string; post_count: number }[]);
+      setTagExactCount(cnt.error ? null : typeof cnt.data === 'number' ? cnt.data : 0);
+    }, 220);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [activeTagToken]);
+
+  /** Finish the #token being typed, preserving whatever whitespace preceded it. */
+  const completeTag = (tag: string) => {
+    setCaption((c) => c.replace(/(^|\s)#[A-Za-z0-9_]{1,40}$/, `$1#${tag} `));
+  };
+
+  // ---- location ----
+  //
+  // Two ways in, both genuinely real: your device's GPS, reverse-geocoded to a
+  // place name; or a location the community has actually posted from. There is no
+  // external gazetteer wired into this app, so arbitrary typed text cannot be
+  // validated against a world places database — and these controls don't pretend
+  // to. What they DO give you is availability: whether anything is already posted
+  // there, and how much.
+  //
+  // Matching is case- and whitespace-insensitive server-side, so "Lagos", "lagos"
+  // and " Lagos " are one place rather than three. Picking a suggestion stores the
+  // spelling most posts already use, so using the feature tidies the data.
+  const [locSuggestions, setLocSuggestions] = useState<{ location: string; post_count: number }[]>([]);
+  // Same three states as the tag count, for the same reason.
+  const [locExactCount, setLocExactCount] = useState<number | null | undefined>(undefined);
+  const [locBusy, setLocBusy] = useState(false);
+  const [locNotice, setLocNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    const q = location.trim();
+    if (!q) {
+      setLocSuggestions([]);
+      setLocExactCount(undefined);
+      return;
+    }
+    let alive = true;
+    const t = setTimeout(async () => {
+      const [sug, cnt] = await Promise.all([
+        supabase.rpc('location_suggest', { p_prefix: q, p_limit: 8 }),
+        supabase.rpc('location_count', { p_location: q }),
+      ]);
+      if (!alive) return;
+      setLocSuggestions((sug.data ?? []) as { location: string; post_count: number }[]);
+      setLocExactCount(cnt.error ? null : typeof cnt.data === 'number' ? cnt.data : 0);
+    }, 220);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [location]);
+
+  const useMyLocation = async () => {
+    setLocBusy(true);
+    setLocNotice(null);
+    try {
+      const perm = await Location.requestForegroundPermissionsAsync();
+      if (!perm.granted) {
+        setLocNotice('Location permission is off. You can type a place instead.');
+        return;
+      }
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const places = await Location.reverseGeocodeAsync({
+        latitude: pos.coords.latitude,
+        longitude: pos.coords.longitude,
+      });
+      const p = places[0];
+      // "City, Country" — the shape people type by hand, so a GPS place and a
+      // typed place end up looking the same in the feed instead of one being
+      // "Lagos, Nigeria" and the other a raw coordinate string.
+      const parts = [p?.city ?? p?.subregion ?? p?.region, p?.country].filter(Boolean);
+      if (!p || parts.length === 0) {
+        setLocNotice("Couldn't work out where you are. Try typing it instead.");
+        return;
+      }
+      setLocation(parts.join(', '));
+    } catch {
+      setLocNotice('Could not get your location. Check that GPS is on.');
+    } finally {
+      setLocBusy(false);
+    }
+  };
 
   const startFresh = (m: Mode) => {
     setMode(m);
@@ -1295,6 +1516,7 @@ export default function CreateDropScreen({
   return (
     <View style={styles.container}>
       {step === 'hub' && (
+        <>
         <ScrollView contentContainerStyle={styles.hubContent} showsVerticalScrollIndicator={false}>
           {/* ambient corner light — barely there, just enough to lift the header */}
           <Glow color={colors.accent} size={230} strength={0.05} style={styles.hbAmbient} />
@@ -1326,11 +1548,11 @@ export default function CreateDropScreen({
             <Glow color={colors.accent} size={190} strength={0.2} style={styles.hbHeroGlow} />
             <View style={styles.hbHeroRow}>
               <View style={styles.hbHeroText}>
-                <Text style={styles.hbHeroEyebrow}>NEW DROP</Text>
+                <Text style={styles.hbHeroEyebrow}>CREATE A MOMENT</Text>
                 <Text style={styles.hbHeroTitle}>Capture what's happening right now</Text>
                 <View style={styles.hbHeroMeta}>
                   <Icon name="hourglass-outline" size={12} color={colors.accent} />
-                  <Text style={styles.hbHeroMetaText}>Disappears after 48 hours</Text>
+                  <Text style={styles.hbHeroMetaText}>Live for 7 days</Text>
                 </View>
               </View>
               <View style={styles.hbHeroBtn}>
@@ -1404,39 +1626,74 @@ export default function CreateDropScreen({
             </Press>
           </View>
 
-          {/* ---------- templates ---------- */}
-          <View style={styles.hbTplHead}>
-            <Text style={styles.hbTplHeadTitle}>Templates</Text>
-            <Text style={styles.hbTplHeadSub}>Create faster</Text>
-          </View>
+          {/* ---------- templates: demoted, not deleted ----------
+              This was a full marketplace sitting on screen one: a 4-pill filter
+              row plus a template carousel, competing with the main action.
 
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.hbPills}>
-            {HUB_FILTERS.map((f) => (
-              <FilterPill
-                key={f}
-                label={f}
-                active={hubFilter === f}
-                onPress={() => setHubFilter(f as HubFilter)}
-              />
-            ))}
-          </ScrollView>
-
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.hbTplRow}>
-            {HUB_TEMPLATES.filter((t) => t.group === hubFilter).map((t) => (
-              <Press key={t.id} style={[styles.hbTpl, { width: tplW }]} onPress={() => applyTemplate(t)}>
-                <TemplateArt t={t} width={tplW} />
-                <View style={styles.hbTplBody}>
-                  <Text style={styles.hbTplTitle} numberOfLines={1}>
-                    {t.title}
-                  </Text>
-                  <Text style={styles.hbTplSub} numberOfLines={2}>
-                    {t.sub}
-                  </Text>
-                </View>
-              </Press>
-            ))}
-          </ScrollView>
+              A template is a SHORTCUT, not a first decision. Screen one now
+              answers exactly one question — "What do I want to create?" — whose
+              answer is "a Moment". Templates live one step deeper, behind this
+              link, and every template is still reachable.
+          --------------------------------------------------------------- */}
+          <Press style={styles.hbTplLink} onPress={() => setTemplatesOpen(true)} shrink={0.98}>
+            <Icon name="grid-outline" size={15} color={colors.violet} />
+            <Text style={styles.hbTplLinkText}>Use a template</Text>
+            <Text style={styles.hbTplLinkHint}>Create faster</Text>
+            <Icon name="chevron-forward" size={15} color={colors.textFaint} />
+          </Press>
         </ScrollView>
+
+        {/* ---------- template sheet ---------- */}
+        <Modal
+          visible={templatesOpen}
+          animationType="slide"
+          transparent
+          onRequestClose={() => setTemplatesOpen(false)}
+        >
+          <Pressable style={styles.hbSheetBackdrop} onPress={() => setTemplatesOpen(false)}>
+            {/* inner Pressable swallows taps so the sheet itself does not close */}
+            <Pressable style={styles.hbSheetCard} onPress={() => undefined}>
+              <View style={styles.hbSheetGrab} />
+              <Text style={styles.hbSheetTitle}>Create faster</Text>
+              <Text style={styles.hbSheetSub}>Start from a template, then make it yours.</Text>
+
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.hbPills}>
+                {HUB_FILTERS.map((f) => (
+                  <FilterPill
+                    key={f}
+                    label={f}
+                    active={hubFilter === f}
+                    onPress={() => setHubFilter(f as HubFilter)}
+                  />
+                ))}
+              </ScrollView>
+
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.hbTplRow}>
+                {HUB_TEMPLATES.filter((t) => t.group === hubFilter).map((t) => (
+                  <Press
+                    key={t.id}
+                    style={[styles.hbTpl, { width: tplW }]}
+                    onPress={() => {
+                      setTemplatesOpen(false);
+                      applyTemplate(t);
+                    }}
+                  >
+                    <TemplateArt t={t} width={tplW} />
+                    <View style={styles.hbTplBody}>
+                      <Text style={styles.hbTplTitle} numberOfLines={1}>
+                        {t.title}
+                      </Text>
+                      <Text style={styles.hbTplSub} numberOfLines={2}>
+                        {t.sub}
+                      </Text>
+                    </View>
+                  </Press>
+                ))}
+              </ScrollView>
+            </Pressable>
+          </Pressable>
+        </Modal>
+        </>
       )}
 
       {step === 'create' && (
@@ -1464,13 +1721,13 @@ export default function CreateDropScreen({
             <Text style={styles.cvSub}>
               {mode === 'media'
                 ? 'Photos or one video. It goes live the moment you post.'
-                : 'One thought, no edits. It lives for 48 hours.'}
+                  : 'One thought, no edits. It lives for 7 days.'}
             </Text>
 
             {parentDropId && (
               <View style={styles.replyBanner}>
                 <Text style={styles.replyBannerText}>
-                  Replying to a Drop — this links back to the original and gets its own 48 hours.
+                  Replying to a Drop — this links back to the original and gets its own 7 days.
                 </Text>
               </View>
             )}
@@ -1687,7 +1944,7 @@ export default function CreateDropScreen({
             {!!error && <Text style={styles.error}>{error}</Text>}
             <View style={styles.footer48Row}>
               <Icon name="hourglass-outline" size={12} color={colors.accent} />
-              <Text style={styles.footer48}>{vanishLabel(H48)}</Text>
+              <Text style={styles.footer48}>{vanishLabel(DROP_LIFETIME_MS)}</Text>
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -1942,7 +2199,7 @@ export default function CreateDropScreen({
               <Text style={styles.pvTitle}>Preview</Text>
               <View style={styles.pvBadge}>
                 <Icon name="hourglass-outline" size={11} color={colors.accent} />
-                <Text style={styles.pvBadgeText}>48H</Text>
+                    <Text style={styles.pvBadgeText}>7D</Text>
               </View>
             </View>
             <Text style={styles.pvHint}>This is exactly how it lands in the feed.</Text>
@@ -1968,7 +2225,7 @@ export default function CreateDropScreen({
                     {!!me?.verified && <VerifiedBadge size={12} glow={false} />}
                   </View>
                   <Text style={styles.pvMeta} numberOfLines={1}>
-                    {location.trim() ? location.trim() : 'just now'} · 48h
+                    {location.trim() ? location.trim() : 'just now'} · 7d
                   </Text>
                 </View>
               </View>
@@ -2028,7 +2285,7 @@ export default function CreateDropScreen({
                 </View>
                 <View style={styles.pvExpiry}>
                   <Icon name="hourglass-outline" size={11} color={colors.accent} />
-                  <Text style={styles.pvExpiryText}>Gone in 48h</Text>
+                  <Text style={styles.pvExpiryText}>Gone in 7 days</Text>
                 </View>
               </View>
             </View>
@@ -2043,6 +2300,41 @@ export default function CreateDropScreen({
               value={caption}
               onChangeText={setCaption}
             />
+
+            {/* Live count + suggestions for the hashtag being typed. The count is
+                the honest one — hashtag_count() counts live posts, so "0" really
+                means nobody, which is what makes "you'd be the first" true. */}
+            {!!activeTagToken && tagExactCount !== null && (
+              <View style={styles.acWrap}>
+                <View style={styles.acCountRow}>
+                  <Icon name="pricetag" size={12} color={colors.accent} />
+                  <Text style={styles.acCountText}>
+                    {tagExactCount === undefined
+                      ? `Checking #${activeTagToken}…`
+                      : tagExactCount === 0
+                      ? `No live posts use #${activeTagToken} yet — you'd be the first`
+                      : `${tagExactCount} live post${tagExactCount === 1 ? '' : 's'} use #${activeTagToken}`}
+                  </Text>
+                </View>
+
+                {tagSuggestions.length > 0 && (
+                  <View style={styles.acList}>
+                    {tagSuggestions.map((s) => (
+                      <Pressable
+                        key={s.tag}
+                        style={styles.acRow}
+                        onPress={() => completeTag(s.tag)}
+                      >
+                        <Text style={styles.acMain} numberOfLines={1}>#{s.tag}</Text>
+                        <Text style={styles.acCount}>
+                          {s.post_count} post{s.post_count === 1 ? '' : 's'}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                )}
+              </View>
+            )}
 
             {/* Real suggestions: the live Drop prompt, plus tags the community
                 has actually been posting (auto-indexed by sync_hashtags). */}
@@ -2098,13 +2390,69 @@ export default function CreateDropScreen({
               </View>
             )}
 
-            <TextInput
-              style={styles.input}
-              placeholder="Add location (optional)"
-              placeholderTextColor={colors.textFaint}
-              value={location}
-              onChangeText={setLocation}
-            />
+            {/* ---------- location ---------- */}
+            <View style={styles.locWrap}>
+              <View style={styles.locRow}>
+                <TextInput
+                  style={[styles.input, styles.locInput]}
+                  placeholder="Add location (optional)"
+                  placeholderTextColor={colors.textFaint}
+                  value={location}
+                  onChangeText={(t) => {
+                    setLocation(t);
+                    setLocNotice(null);
+                  }}
+                />
+                <Pressable
+                  style={styles.locGpsBtn}
+                  onPress={useMyLocation}
+                  disabled={locBusy}
+                  hitSlop={6}
+                  accessibilityLabel="Use my current location"
+                >
+                  {locBusy ? (
+                    <ActivityIndicator size="small" color={colors.accent} />
+                  ) : (
+                    <Icon name="navigate-outline" size={17} color={colors.accent} />
+                  )}
+                </Pressable>
+              </View>
+
+              {/* Availability: how many live posts are already here. */}
+              {!!location.trim() && locExactCount !== null && (
+                <Text style={styles.locStatus}>
+                  {locExactCount === undefined
+                    ? 'Checking this location…'
+                    : locExactCount === 0
+                    ? 'Nothing posted from here yet — you would be the first'
+                    : `${locExactCount} live post${locExactCount === 1 ? '' : 's'} from here`}
+                </Text>
+              )}
+
+              {locSuggestions.length > 0 && (
+                <View style={styles.acList}>
+                  {locSuggestions.map((s) => (
+                    <Pressable
+                      key={s.location}
+                      style={styles.acRow}
+                      onPress={() => {
+                        // Store the spelling most posts already use, so picking a
+                        // suggestion normalises the data instead of adding a variant.
+                        setLocation(s.location);
+                        setLocNotice(null);
+                      }}
+                    >
+                      <Text style={styles.acMain} numberOfLines={1}>{s.location}</Text>
+                      <Text style={styles.acCount}>
+                        {s.post_count} post{s.post_count === 1 ? '' : 's'}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              )}
+
+              {!!locNotice && <Text style={styles.locNotice}>{locNotice}</Text>}
+            </View>
 
             {/* mentions */}
             <View style={styles.mentionWrap}>
@@ -2187,13 +2535,13 @@ export default function CreateDropScreen({
             <ToggleRow label="Downloads" value={allowDownloads} onChange={setAllowDownloads} />
             <ToggleRow label="Mentions" value={allowMentions} onChange={setAllowMentions} />
 
-            {/* 48h confirmation */}
+            {/* 7-day confirmation */}
             <View style={styles.fortyEight}>
               <Icon name="hourglass-outline" size={26} color={colors.accent} />
               <View style={styles.fortyEightBody}>
-                <Text style={styles.fortyEightTitle}>This Drop disappears in 48 hours</Text>
+                <Text style={styles.fortyEightTitle}>This Drop disappears in 7 days</Text>
                 <Text style={styles.fortyEightSub}>
-                  It goes live the moment you tap DROP IT. No edits, no resets — after 48h it's gone forever.
+                  It goes live the moment you tap DROP IT. No edits, no resets — after 7 days it's gone forever.
                 </Text>
               </View>
             </View>
@@ -2215,22 +2563,15 @@ export default function CreateDropScreen({
                 </View>
               )}
             </Pressable>
-            <Text style={styles.footer48}>{vanishLabel(H48)} · make it count.</Text>
+            <Text style={styles.footer48}>{vanishLabel(DROP_LIFETIME_MS)} · make it count.</Text>
           </ScrollView>
         </KeyboardAvoidingView>
       )}
 
-      {step === 'live' && (
-        <View style={styles.liveWrap}>
-          <Animated.View style={[styles.liveFlame, { transform: [{ scale: livePulse }] }]}>
-            <Icon name="flame" size={84} color={colors.accent} />
-          </Animated.View>
-          <Text style={styles.liveTitle}>DROP LIVE</Text>
-          <Text style={styles.liveSub}>Your drop is live for 48 hours.</Text>
-          <Text style={styles.liveSub2}>Gone in 48 hours. Make it count.</Text>
-          <Button title="Back to feed" onPress={() => { resetAll(); setStep('create'); onPosted(); }} style={{ marginTop: 28, minWidth: 220 }} />
-        </View>
-      )}
+      {/* The "DROP LIVE" celebration that used to render here is gone with the
+          'live' step. Posting is handed to uploadManager and this wizard closes
+          immediately, so there is no waiting screen left to celebrate on — the
+          user is already back on the feed when the drop goes live. */}
 
       {/* modals & sheets */}
       <MediaPickerSheet
@@ -2294,7 +2635,7 @@ export default function CreateDropScreen({
         <View style={styles.exitOverlay}>
           <View style={styles.exitSheet}>
             <Text style={styles.exitTitle}>Save as draft?</Text>
-            <Text style={styles.exitSub}>Drafts never start the 48-hour timer. Your drop only goes live when you hit DROP IT.</Text>
+            <Text style={styles.exitSub}>Drafts never start the 7-day timer. Your drop only goes live when you hit DROP IT.</Text>
             <Button title="💾 Save draft" onPress={saveDraft} style={{ marginTop: 16 }} />
             <Button variant="secondary" title="🗑 Discard" onPress={discardDraft} style={{ marginTop: 10 }} />
             <Pressable style={styles.exitCancel} onPress={() => setExitAsk(false)}>
@@ -2767,7 +3108,9 @@ const styles = StyleSheet.create({
   hbRow: { flexDirection: 'row', gap: 12, marginTop: 14 },
   hbRowItem: { flex: 1 },
   hbAction: {
-    minHeight: 106,
+    // Slimmed from 106 so the two secondaries read as secondary. The hero must
+    // be the only thing that looks like THE action.
+    minHeight: 78,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
@@ -2792,6 +3135,48 @@ const styles = StyleSheet.create({
     marginTop: 3,
     lineHeight: 16,
   },
+
+  // templates link — the demoted entry point that replaced the marketplace
+  hbTplLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    marginTop: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 15,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  hbTplLinkText: { color: colors.text, fontSize: 13.5, fontWeight: '700' },
+  hbTplLinkHint: { flex: 1, textAlign: 'right', color: colors.textFaint, fontSize: 11.5, fontWeight: '600' },
+
+  // template sheet
+  hbSheetBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(3,7,18,0.62)',
+    justifyContent: 'flex-end',
+  },
+  hbSheetCard: {
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingTop: 10,
+    paddingBottom: 24,
+  },
+  hbSheetGrab: {
+    alignSelf: 'center',
+    width: 38,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.border,
+    marginBottom: 12,
+  },
+  hbSheetTitle: { color: colors.text, fontSize: 16, fontWeight: '800', paddingHorizontal: 18 },
+  hbSheetSub: { color: colors.textMuted, fontSize: 12.5, marginTop: 3, paddingHorizontal: 18 },
 
   // templates
   hbTplHead: { marginTop: 30 },
@@ -2866,6 +3251,45 @@ const styles = StyleSheet.create({
   tagChipText: { color: colors.textMuted, fontSize: 12.5, fontWeight: '700' },
   tagChipTextOn: { color: colors.accent },
   tagChipCount: { color: colors.textFaint, fontSize: 11, fontWeight: '700' },
+  // ---- autocomplete (shared by hashtags and locations) ----
+  acWrap: { marginTop: 10 },
+  acCountRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 7 },
+  acCountText: { color: colors.accent, fontSize: 12, fontWeight: '700', flexShrink: 1 },
+  acList: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: 'hidden',
+  },
+  acRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 13,
+    paddingVertical: 11,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  acMain: { color: colors.text, fontSize: 13.5, fontWeight: '700', flexShrink: 1 },
+  acCount: { color: colors.textFaint, fontSize: 11.5, fontWeight: '700', marginLeft: 10 },
+  // ---- location ----
+  locWrap: { marginTop: 12 },
+  locRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  // styles.input carries its own marginTop; the row owns the spacing instead.
+  locInput: { flex: 1, marginTop: 0 },
+  locGpsBtn: {
+    width: 52,
+    height: 52,
+    borderRadius: radius.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.accentSoft,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  locStatus: { color: colors.textMuted, fontSize: 12, fontWeight: '600', marginTop: 8 },
+  locNotice: { color: colors.danger, fontSize: 12, fontWeight: '600', marginTop: 8 },
   editorTop: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3122,11 +3546,7 @@ const styles = StyleSheet.create({
     marginRight: 6,
   },
   soundActionText: { color: colors.accent, fontSize: 11, fontWeight: '800' },
-  liveWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bgDeep, padding: 24 },
-  liveFlame: { padding: 8 },
-  liveTitle: { color: colors.accent, fontSize: 34, fontWeight: '900', letterSpacing: 2, marginTop: 10, ...shadows.glow },
-  liveSub: { color: colors.text, fontSize: 15, fontWeight: '600', marginTop: 10 },
-  liveSub2: { color: colors.textMuted, fontSize: 13, marginTop: 4 },
+
   collage: { flexDirection: 'row', overflow: 'hidden' },
   collageSingle: { flex: 1, width: '100%', height: '100%' },
   collageHalf: { flex: 1, width: '50%', height: '100%' },

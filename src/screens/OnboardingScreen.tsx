@@ -17,6 +17,8 @@ import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import Button from '../components/Button';
 import { uploadMedia } from '../utils/upload';
+import { TOP_INSET } from '../utils/useInsets';
+import { friendlyError } from '../utils/friendlyError';
 
 const SUGGESTION_WORDS = [
   'nova', 'ace', 'zara', 'bolt', 'moon', 'vibe', 'wolf', 'glitch', 'orbit', 'pixel',
@@ -105,7 +107,7 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
       .eq('id', user.id);
     setSaving(false);
     if (err) {
-      setError(err.message);
+      setError(friendlyError(err));
       return;
     }
     next();
@@ -152,7 +154,7 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
       }
       next();
     } catch (e: any) {
-      setError(e?.message ?? 'Could not save avatar.');
+      setError(friendlyError(e, 'Could not save avatar.'));
     } finally {
       setSaving(false);
     }
@@ -160,7 +162,7 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
 
   const stepTitle = ['Welcome to Gen Z', 'Pick your username', 'Set your profile pic', 'You are in'];
   const stepHint = [
-    'One feed. Every story. Gone in 48 hours.',
+    'One feed. Every story. Gone in 7 days.',
     'This is how the world will know you.',
     'Make it you — or skip it, your call.',
     'Welcome to the family.',
@@ -171,6 +173,17 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
+      {/* The body scrolls. With justifyContent:'center' and no scroll, content
+          taller than the screen (step 2's avatar block, or any step with the
+          keyboard open) overflows in BOTH directions — and the top half was
+          clipped straight under the status bar with no way to reach it.
+          flexGrow:1 + justifyContent:'center' keeps the centred look while it
+          fits and gives a scrollable region when it does not. */}
+      <ScrollView
+        contentContainerStyle={styles.scrollBody}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
       {/* progress dots */}
       <View style={styles.dots}>
         {[0, 1, 2, 3].map((i) => (
@@ -332,6 +345,7 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
 
         {!!error && <Text style={styles.error}>{error}</Text>}
       </Animated.View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -340,8 +354,15 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.bg,
+  },
+  // Centred while it fits, scrollable when it does not. paddingTop carries the
+  // real status-bar inset so the progress dots can never sit under the clock.
+  scrollBody: {
+    flexGrow: 1,
     justifyContent: 'center',
-    padding: 28,
+    paddingHorizontal: 28,
+    paddingBottom: 28,
+    paddingTop: TOP_INSET + 28,
   },
   dots: {
     flexDirection: 'row',

@@ -88,7 +88,7 @@ export default function ChainModal({
             </Pressable>
           </View>
           <Text style={styles.subtitle}>
-            Every response is its own Drop — 48 hours, no extensions.
+            Every response is its own Drop — 7 days, no extensions.
           </Text>
           {loading ? (
             <ActivityIndicator color={colors.accent} style={styles.loader} />

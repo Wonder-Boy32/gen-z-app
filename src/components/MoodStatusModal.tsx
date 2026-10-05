@@ -14,6 +14,7 @@ import { useInsets } from '../utils/useInsets';
 import { useSheetPad } from '../utils/useSheetPad';
 import Icon from './ui/Icon';
 import Button from './Button';
+import { friendlyError } from '../utils/friendlyError';
 import {
   STATUS_PRESETS,
   STATUS_MAX_LABEL,
@@ -79,7 +80,7 @@ export default function MoodStatusModal({
     const res = await setMyStatus(emoji, label, hours);
     setBusy(null);
     if (!res.ok) {
-      setError(res.message);
+      setError(friendlyError(res));
       return;
     }
     onChanged();
@@ -92,7 +93,7 @@ export default function MoodStatusModal({
     const res = await clearMyStatus();
     setBusy(null);
     if (!res.ok) {
-      setError(res.message);
+      setError(friendlyError(res));
       return;
     }
     onChanged();

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, StyleSheet, Text, View } from 'react-native';
 import { colors } from '../theme';
+import { useSharedNow } from '../utils/sharedClock';
 import Icon from './ui/Icon';
 
 type Props = {
@@ -8,16 +9,26 @@ type Props = {
   endsAt: string;
   mode: 'scheduled' | 'live' | 'voting' | 'closed';
   big?: boolean;
+  /**
+   * false = this countdown is offscreen, so stop ticking.
+   *
+   * Defaults to true so existing call sites keep working. Worth passing false
+   * from inside a scrolling list — DiscoverScreen renders one DropCountdown per
+   * drop card, so `active={viewable}` there avoids ticking cards scrolled out
+   * of view.
+   */
+  active?: boolean;
 };
 
-export default function DropCountdown({ endsAt, mode, big }: Props) {
-  const [now, setNow] = useState(Date.now());
+export default function DropCountdown({ endsAt, mode, big, active = true }: Props) {
+  // Shared 1s tick instead of a private interval per instance.
+  //
+  // Scale note, so this is not mistaken for a big fix: DropCountdown is not
+  // rendered per feed post — only in the feed banner, per drop card in Discover,
+  // and once on the drop screen. Previously each of those held its own interval;
+  // now the whole app shares one.
+  const now = useSharedNow(active);
   const pulse = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, []);
 
   useEffect(() => {
     if (mode !== 'live') return;

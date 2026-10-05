@@ -24,7 +24,15 @@ export default function LogoHeader({ compact, transparent, subtitle }: Props) {
             style={[styles.img, compact && styles.imgCompact]}
           />
         </View>
-        <Text style={[styles.wordmark, compact && styles.wordmarkCompact]}>GEN Z</Text>
+        {/* The REAL brand wordmark, lifted from the logo artwork — not typed
+            text. Typing it meant the device font stood in for the brand's
+            actual display face, so the letterforms were only an approximation.
+            This is the genuine artwork, so it is exact at every size. */}
+        <Image
+          source={require('../../assets/brand-wordmark.png')}
+          style={[styles.wordmarkImg, compact && styles.wordmarkImgCompact]}
+          resizeMode="contain"
+        />
       </View>
       {!!subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
     </View>
@@ -72,12 +80,18 @@ const styles = StyleSheet.create({
     width: 26,
     height: 26,
   },
-  wordmark: {
-    color: colors.accent,
-    fontSize: 17,
-    fontWeight: '800',
-    letterSpacing: 2,
+  // The source asset is 554x150, so keeping width = height x 3.693 preserves
+  // the aspect exactly. Heights are set just above the cap height of the 17pt /
+  // 14pt text these replaced, so the header's visual weight is unchanged.
+  wordmarkImg: {
+    height: 16,
+    width: 59,
     marginLeft: 10,
+  },
+  wordmarkImgCompact: {
+    height: 12,
+    width: 44,
+    marginLeft: 8,
   },
   wordmarkCompact: {
     fontSize: 14,

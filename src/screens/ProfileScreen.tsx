@@ -17,6 +17,7 @@ import { TOP_INSET } from '../utils/useInsets';
 import LogoHeader from '../components/LogoHeader';
 import Button from '../components/Button';
 import Icon, { IconName } from '../components/ui/Icon';
+import { FILL, GradientFill } from '../components/ui/Futuristic';
 import Avatar from '../components/Avatar';
 import VerifiedBadge from '../components/ui/VerifiedBadge';
 import AvatarPickerModal from '../components/AvatarPickerModal';
@@ -30,12 +31,18 @@ import { useSheetPad } from '../utils/useSheetPad';
 import AnonymousCardModal from '../components/AnonymousCardModal';
 import MoodStatusModal from '../components/MoodStatusModal';
 import { fetchMyStatus, shortTimeLeft, type ProfileStatus } from '../services/profileStatus';
+import { useAndroidBack } from '../utils/useAndroidBack';
+import * as ImagePicker from 'expo-image-picker';
+import { uploadMedia } from '../utils/upload';
+import { useUploads } from '../utils/uploadManager';
+import { friendlyError } from '../utils/friendlyError';
 
 type Profile = {
   username: string;
   display_name: string | null;
   bio: string | null;
   avatar_url: string | null;
+  cover_url: string | null;
   location: string | null;
   region: string | null;
   pronouns: string | null;
@@ -128,6 +135,25 @@ export default function ProfileScreen({
   const [anonCardOpen, setAnonCardOpen] = useState(false);
   const [peopleMode, setPeopleMode] = useState<'followers' | 'following' | null>(null);
   const [viewersOpen, setViewersOpen] = useState(false);
+
+  // Android back control. Settings, the follower/following list and the viewers
+  // list all replace this screen wholesale (early returns, not <Modal>s), so
+  // each one is a real navigation level and back must peel off exactly one.
+  useAndroidBack(() => {
+    if (settingsOpen) {
+      setSettingsOpen(false);
+      return true;
+    }
+    if (peopleMode) {
+      setPeopleMode(null);
+      return true;
+    }
+    if (viewersOpen) {
+      setViewersOpen(false);
+      return true;
+    }
+    return false;
+  });
   const [unseenViews, setUnseenViews] = useState(0);
 
   const load = useCallback(async () => {
@@ -140,7 +166,7 @@ export default function ProfileScreen({
       await Promise.all([
         supabase
           .from('profiles')
-          .select('username, display_name, bio, avatar_url, location, region, pronouns, verified, streak_count, created_at, is_private')
+          .select('username, display_name, bio, avatar_url, cover_url, location, region, pronouns, verified, streak_count, created_at, is_private')
           .eq('id', user.id)
           .maybeSingle(),
         supabase
@@ -171,7 +197,13 @@ export default function ProfileScreen({
 
     setProfile((prof as Profile | null) ?? null);
     setMyId(user.id);
-    setPosts((myPosts ?? []) as unknown as Post[]);
+    // Hide drops past their expiry. PublicProfileScreen already does exactly this
+    // (its own `active` filter); this screen never did, so YOUR OWN ended drops
+    // kept sitting in your grid — the owner can always read their own rows, so
+    // RLS does not hide them from you even when it hides them from everyone else.
+    // The row itself is removed by the genz_purge_expired() cron job; this only
+    // stops it being DISPLAYED in the meantime (or if that job is not running).
+    setPosts(((myPosts ?? []) as unknown as Post[]).filter((p) => new Date(p.expires_at) > new Date()));
     setReposts(((repostRows ?? []).map((r: any) => r.post).filter(Boolean)) as unknown as RepostRow[]);
     setSaved(((savedRows ?? []).map((s: any) => s.post).filter(Boolean)) as unknown as Post[]);
     setFollowing(fw.count ?? 0);
@@ -198,6 +230,23 @@ export default function ProfileScreen({
   useEffect(() => {
     load();
   }, [load]);
+
+  // Pull in a drop that was made a moment ago.
+  //
+  // Posting no longer completes on the create screen — uploadManager owns it and
+  // inserts the row when the bytes land. This grid was therefore built BEFORE that
+  // row existed, so a fresh post was missing from the user's own profile. Refetch
+  // when a job reports done, the same way HomeScreen refreshes the feed.
+  //
+  // The ref starts at 0 on purpose: if the upload finished while this screen was
+  // still unmounted, the first render must still refetch once.
+  const uploads = useUploads();
+  const uploadsDone = uploads.filter((u) => u.status === 'done').length;
+  const postedRefreshRef = React.useRef(0);
+  useEffect(() => {
+    if (uploadsDone > postedRefreshRef.current) void load();
+    postedRefreshRef.current = uploadsDone;
+  }, [uploadsDone, load]);
 
   // Unseen profile views, for the badge on the eye icon. Best-effort: if
   // supabase/profile_views.sql has not been run the RPC errors and the badge
@@ -248,7 +297,7 @@ export default function ProfileScreen({
 
   const shareProfile = () => {
     Share.share({
-      message: `Check out @${profile?.username ?? 'unknown'} on Gen Z — every story, gone in 48 hours!`,
+              message: `Check out @${profile?.username ?? 'unknown'} on Gen Z — every story, gone in 7 days!`,
     });
   };
 
@@ -309,7 +358,35 @@ export default function ProfileScreen({
                 </Pressable>
               </View>
 
-              <Pressable onPress={() => setAvatarSheet(true)} hitSlop={8}>
+              {/* Profile cover. `profiles.cover_url` has existed since
+                  supabase/profile_cover.sql. Now full-bleed to both screen edges
+                  with a gradient scrim, matching the public profile screen — and
+                  with a gradient fallback, because this previously rendered
+                  NOTHING when no cover was set, which left the page looking
+                  broken rather than simply uncovered. */}
+              <View style={styles.coverWrap}>
+                {profile?.cover_url ? (
+                  <Image
+                    source={{ uri: profile.cover_url }}
+                    style={styles.coverImg}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <GradientFill from="#2B1B4E" to="#101A33" horizontal steps={12} style={FILL} />
+                )}
+                <View style={styles.coverScrim}>
+                  <GradientFill
+                    from={colors.bg}
+                    to={colors.bg}
+                    alphaFrom={0}
+                    alphaTo={0.96}
+                    steps={12}
+                    style={FILL}
+                  />
+                </View>
+              </View>
+
+              <Pressable onPress={() => setAvatarSheet(true)} hitSlop={8} style={styles.avatarOverlap}>
                 <Avatar
                   url={profile?.avatar_url}
                   name={profile?.display_name || profile?.username || 'G'}
@@ -624,6 +701,8 @@ function EditProfileModal({ visible, profile, onClose, onSaved }: any) {
   const [pronouns, setPronouns] = useState('');
   const [localAvatar, setLocalAvatar] = useState<string | null | undefined>(undefined);
   const [avatarPicker, setAvatarPicker] = useState(false);
+  const [coverUrl, setCoverUrl] = useState<string | null>(null);
+  const [coverBusy, setCoverBusy] = useState(false);
 
   const sheetPad = useSheetPad(36);
 
@@ -635,8 +714,40 @@ function EditProfileModal({ visible, profile, onClose, onSaved }: any) {
       setRegion(profile.region ?? '');
       setPronouns(profile.pronouns ?? '');
       setLocalAvatar(undefined);
+      setCoverUrl(profile.cover_url ?? null);
     }
   }, [visible, profile]);
+
+  const pickCover = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Photo library permission is needed');
+      return;
+    }
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.9 });
+    if (res.canceled || !res.assets?.[0]) return;
+    const asset = res.assets[0];
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+    setCoverBusy(true);
+    try {
+      // Deliberately NOT under a post path: genz_purge_expired() sweeps media
+      // belonging to expired posts, and a profile cover must never be swept.
+      // `covers/` mirrors how `avatars/` is left alone.
+      const url = await uploadMedia(
+        `covers/${user.id}/cover-${Date.now()}.jpg`,
+        asset.uri,
+        asset.mimeType ?? 'image/jpeg'
+      );
+      setCoverUrl(url);
+    } catch (e: any) {
+      Alert.alert('Cover upload failed', friendlyError(e, 'Could not upload your cover photo. Please try again.'));
+    } finally {
+      setCoverBusy(false);
+    }
+  };
 
   const save = async () => {
     const {
@@ -651,6 +762,7 @@ function EditProfileModal({ visible, profile, onClose, onSaved }: any) {
         location: location.trim() || null,
         region: region.trim() || null,
         pronouns: pronouns.trim() || null,
+        cover_url: coverUrl,
       })
       .eq('id', user.id);
     onSaved();
@@ -669,6 +781,24 @@ function EditProfileModal({ visible, profile, onClose, onSaved }: any) {
               ring
             />
             <Text style={styles.modalAvatarCta}>Change avatar</Text>
+          </Pressable>
+          <Pressable
+            style={styles.modalCoverRow}
+            onPress={() => void pickCover()}
+            disabled={coverBusy}
+            accessibilityRole="button"
+            accessibilityLabel="Change cover photo"
+          >
+            {coverUrl ? (
+              <Image source={{ uri: coverUrl }} style={styles.modalCoverPreview} resizeMode="cover" />
+            ) : (
+              <View style={[styles.modalCoverPreview, styles.modalCoverEmpty]}>
+                <Icon name="image-outline" size={18} color={colors.textMuted} />
+              </View>
+            )}
+            <Text style={styles.modalAvatarCta}>
+              {coverBusy ? 'Uploading…' : 'Change cover photo'}
+            </Text>
           </Pressable>
           <TextInput style={styles.modalInput} placeholder="Display name" placeholderTextColor={colors.textFaint} value={displayName} onChangeText={setDisplayName} />
           <TextInput style={[styles.modalInput, styles.modalBio]} placeholder="Bio" placeholderTextColor={colors.textFaint} multiline value={bio} onChangeText={setBio} />
@@ -1220,6 +1350,54 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     marginBottom: 16,
     textAlign: 'center',
+  },
+  // Cover banner — matched to the public profile screen so your own page and the
+  // page other people see are the SAME page.
+  //
+  // marginHorizontal negates the FlatList contentContainer's 16px padding, which
+  // is what makes the banner run edge to edge instead of stopping short like a
+  // floating card.
+  coverWrap: {
+    width: '100%',
+    height: 150,
+    marginHorizontal: -16,
+    marginBottom: 0,
+    backgroundColor: colors.surfaceInput,
+    overflow: 'hidden',
+  },
+  coverImg: {
+    width: '100%',
+    height: '100%',
+  },
+  // Bottom-anchored scrim (bottom 72% only). Without it a BRIGHT cover swallows
+  // the white name and chips underneath it.
+  coverScrim: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: '72%',
+  },
+  // Straddle the cover edge — the detail that makes it read as designed.
+  avatarOverlap: {
+    marginTop: -48,
+  },
+  modalCoverRow: {
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalCoverPreview: {
+    width: '100%',
+    height: 96,
+    borderRadius: 12,
+    backgroundColor: colors.surfaceInput,
+  },
+  modalCoverEmpty: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderStyle: 'dashed',
   },
   modalAvatarRow: {
     alignItems: 'center',
