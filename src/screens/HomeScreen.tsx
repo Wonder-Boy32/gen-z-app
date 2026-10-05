@@ -9,17 +9,36 @@ import CreateDropScreen from './CreateDropScreen';
 import ProfileScreen from './ProfileScreen';
 import ChatsScreen from './ChatsScreen';
 import DiscoverScreen from './DiscoverScreen';
+import UploadBar from '../components/ui/UploadBar';
 import { colors } from '../theme';
+import { useAndroidBack } from '../utils/useAndroidBack';
+import { useUploads } from '../utils/uploadManager';
 
 export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySignal?: number }) {
   const [tab, setTab] = useState<Tab>('feed');
   const [feedKey, setFeedKey] = useState(0);
   const [chatUnread, setChatUnread] = useState(0);
 
+  // Android back at the tab level: step back to the Feed tab rather than letting
+  // the press close the app from Discover, Chat or Profile. Returning false on
+  // Feed — the root — is what still allows Android to exit from there.
+  //
+  // Ordering is handled by BackHandler itself: ChatsScreen registers later in
+  // the tree and BackHandler runs the NEWEST listener first, so an open thread
+  // is closed before this handler ever sees the press.
+  useAndroidBack(() => {
+    if (tab !== 'feed') {
+      setTab('feed');
+      return true;
+    }
+    return false;
+  });
+
   // cross-tab navigation targets (Discover -> feed filters)
   const [pendingUser, setPendingUser] = useState<string | null>(null);
   const [pendingAudio, setPendingAudio] = useState<string | null>(null);
   const [pendingTag, setPendingTag] = useState<string | null>(null);
+  const [pendingLocation, setPendingLocation] = useState<string | null>(null);
 
   // create-intent routing: sound page / reply-with-drop / anon card -> create tab
   const [createIntent, setCreateIntent] = useState<{ sound?: string; replyTo?: string; mediaUri?: string } | null>(null);
@@ -33,7 +52,23 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
     setPendingUser(user);
     setPendingAudio(audio);
     setPendingTag(tag);
+    setPendingLocation(null); // the filters are mutually exclusive
     setFeedKey((k) => k + 1); // remount feed with the new filter
+    setTab('feed');
+  };
+
+  /**
+   * A place filter, opened by searching a location in Discover or tapping a
+   * location label. Works exactly like the tag filter: the feed is remounted
+   * with locationMode set and its own query branch does the work, so there is
+   * one implementation of "posts from somewhere" rather than two.
+   */
+  const openLocation = (place: string) => {
+    setPendingUser(null);
+    setPendingAudio(null);
+    setPendingTag(null);
+    setPendingLocation(place);
+    setFeedKey((k) => k + 1);
     setTab('feed');
   };
 
@@ -43,9 +78,33 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
     setTab('feed');
   };
 
+  // Posting is now background work, so the feed was remounted BEFORE the post
+  // existed. Refresh it once the upload actually lands, otherwise the user's own
+  // new drop is missing from the feed they were just sent back to.
+  const uploads = useUploads();
+  const uploadsDone = uploads.filter((u) => u.status === 'done').length;
+  const postedRefreshRef = React.useRef(0);
+  useEffect(() => {
+    if (uploadsDone > postedRefreshRef.current) setFeedKey((k) => k + 1);
+    postedRefreshRef.current = uploadsDone;
+  }, [uploadsDone]);
+
   // ---- deep links: genz://anon/@user and https://genz.app/anon/@user ----
   const [anonDraft, setAnonDraft] = useState<string | null>(null); // username from the link
   const [anonRecipient, setAnonRecipient] = useState<{ id: string; name: string } | null>(null);
+
+  // Android back for the anonymous-send overlay. It sits ABOVE the tab host and
+  // is a plain <View> overlay, not a <Modal>, so RN's onRequestClose never
+  // covered it: the press fell through to the tab handler below (popping to the
+  // Feed tab) while the overlay stayed open on top. Registered after that
+  // handler, and BackHandler runs the newest listener first, so this one takes
+  // the press while the overlay is up and declines otherwise.
+  useAndroidBack(() => {
+    if (!anonRecipient && !anonDraft) return false;
+    setAnonRecipient(null);
+    setAnonDraft(null);
+    return true;
+  });
 
   const resolveAnonLink = async (username: string) => {
     const { data } = await supabase
@@ -86,6 +145,7 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
           initialUserMode={pendingUser}
           initialAudioMode={pendingAudio}
           initialHashtagMode={pendingTag}
+          initialLocationMode={pendingLocation}
           focused={tab === 'feed'}
           onJoinDrop={() => setTab('post')}
           onCreateIntent={handleCreateIntent}
@@ -97,6 +157,7 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
           onOpenUser={(id) => openFiltered(id, null, null)}
           onOpenAudio={(a) => openFiltered(null, a, null)}
           onOpenTag={(t) => openFiltered(null, null, t)}
+          onOpenLocation={openLocation}
           onJoinDrop={() => setTab('post')}
         />
       </View>
@@ -127,6 +188,10 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
           onPostToFeed={(uri) => handleCreateIntent({ mediaUri: uri })}
         />
       </View>
+      {/* ambient upload status — sits just above the tab bar so it can never
+          cover navigation, and hides itself when there is nothing to report */}
+      <UploadBar />
+
       {/* unread badge hidden while you're already in the Chat tab (WhatsApp style) */}
       <TabBar tab={tab} onChange={setTab} badges={{ chat: tab === 'chat' ? 0 : chatUnread }} />
 

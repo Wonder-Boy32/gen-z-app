@@ -68,6 +68,10 @@ const COPY: Record<NotifyType, string> = {
   comment_like: 'liked your comment',
   anon_message: 'sent you an anonymous message',
   call: 'tried to call you',
+  // local-only type (your own upload finishing) — never stored in
+  // `notifications`, so it never renders in this list. Present to keep the
+  // Record exhaustive.
+  upload: 'your post is live',
 };
 
 const CHIP: Record<NotifyType, { icon: IconName; color: string }> = {
@@ -80,6 +84,7 @@ const CHIP: Record<NotifyType, { icon: IconName; color: string }> = {
   comment_like: { icon: 'heart', color: '#FF3B5C' },
   anon_message: { icon: 'eye-off', color: '#A8E6F2' },
   call: { icon: 'call', color: '#FF5C7C' },
+  upload: { icon: 'cloud-upload', color: '#FF9D1F' },
 };
 
 function timeAgo(iso: string): string {

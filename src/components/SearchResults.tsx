@@ -57,13 +57,24 @@ type Props = {
   onOpenUser: (id: string) => void;
   onOpenAudio: (audio: string) => void;
   onOpenTag: (tag: string) => void;
+  /** Show every live drop posted from one place. Parallel to onOpenTag. */
+  onOpenLocation: (place: string) => void;
   onJoinDrop: () => void;
 };
 
-export default function SearchResults({ query, onPickQuery, onOpenUser, onOpenAudio, onOpenTag, onJoinDrop }: Props) {
+export default function SearchResults({
+  query,
+  onPickQuery,
+  onOpenUser,
+  onOpenAudio,
+  onOpenTag,
+  onOpenLocation,
+  onJoinDrop,
+}: Props) {
   const [users, setUsers] = useState<{ id: string; username: string; avatar_url: string | null }[]>([]);
   const [posts, setPosts] = useState<P[]>([]);
   const [tags, setTags] = useState<{ tag: string; count: number }[]>([]);
+  const [places, setPlaces] = useState<{ location: string; count: number }[]>([]);
   const [sounds, setSounds] = useState<{ audio: string; count: number }[]>([]);
   const [drops, setDrops] = useState<Drop[]>([]);
   const [history, setHistory] = useState<{ query: string }[]>([]);
@@ -147,6 +158,7 @@ export default function SearchResults({ query, onPickQuery, onOpenUser, onOpenAu
       setUsers([]);
       setPosts([]);
       setTags([]);
+      setPlaces([]);
       setSounds([]);
       setDrops([]);
     }
@@ -157,7 +169,7 @@ export default function SearchResults({ query, onPickQuery, onOpenUser, onOpenAu
     if (!q) return;
     setSearching(true);
     const t = setTimeout(async () => {
-      const [u, p, tg, s, d] = await Promise.all([
+      const [u, p, tg, loc, s, d] = await Promise.all([
         supabase.from('profiles').select('id, username, avatar_url, verified').ilike('username', `%${q}%`).limit(10),
         supabase
           .from('posts')
@@ -166,13 +178,35 @@ export default function SearchResults({ query, onPickQuery, onOpenUser, onOpenAu
           .is('parent_drop_id', null)
           .order('created_at', { ascending: false })
           .limit(20),
-        supabase.from('hashtags').select('tag, count').ilike('tag', `%${q}%`).order('count', { ascending: false }).limit(10),
+        // hashtag_suggest(), not the hashtags table.
+        //
+        // The table is a denormalised cache and this search used to read it — so
+        // the Hashtags section showed nothing at all while the table was empty,
+        // and when it did have rows their counts only ever grew, because the expiry
+        // purge deleted posts without recomputing. The function counts live posts
+        // directly, so the number on the chip is exactly what tapping it returns.
+        supabase.rpc('hashtag_suggest', { p_prefix: q, p_limit: 10 }),
+        // Locations, newest feature: matches the places people have actually
+        // posted from, case- and whitespace-insensitively server-side, so
+        // "Lagos, Nigeria" and "lagos, nigeria" are one chip and not two.
+        supabase.rpc('location_suggest', { p_prefix: q, p_limit: 10 }),
         supabase.from('posts').select('audio').not('audio', 'is', null).ilike('audio', `%${q}%`).limit(20),
         supabase.from('drops').select('*').ilike('prompt', `%${q}%`).order('starts_at', { ascending: false }).limit(5),
       ]);
       setUsers((u.data ?? []) as { id: string; username: string; avatar_url: string | null }[]);
       setPosts((p.data ?? []) as P[]);
-      setTags((tg.data ?? []) as { tag: string; count: number }[]);
+      setTags(
+        ((tg.data ?? []) as { tag: string; post_count: number }[]).map((t) => ({
+          tag: t.tag,
+          count: t.post_count,
+        }))
+      );
+      setPlaces(
+        ((loc.data ?? []) as { location: string; post_count: number }[]).map((l) => ({
+          location: l.location,
+          count: l.post_count,
+        }))
+      );
       const soundMap = new Map<string, number>();
       (s.data ?? []).forEach((x: any) => {
         if (!x.audio) return;
@@ -362,6 +396,34 @@ export default function SearchResults({ query, onPickQuery, onOpenUser, onOpenAu
               >
                 <Text style={styles.chipText}>#{t.tag}</Text>
                 <Text style={styles.chipCount}>{t.count}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </>
+      )}
+
+      {/* Locations — the parallel of Hashtags. Each chip is a real place people
+          have posted from, and tapping it opens the feed filtered to that place,
+          so a location works as a link to its drops in exactly the way a
+          hashtag does. */}
+      {places.length > 0 && (
+        <>
+          <Text style={styles.title}>Locations</Text>
+          <View style={styles.chipWrap}>
+            {places.map((l) => (
+              <Pressable
+                key={l.location}
+                style={styles.chip}
+                onPress={() => {
+                  record(query);
+                  onOpenLocation(l.location);
+                }}
+              >
+                <View style={styles.statRow}>
+                  <Icon name="location" size={12} color={colors.accent} />
+                  <Text style={styles.chipText}>{l.location}</Text>
+                </View>
+                <Text style={styles.chipCount}>{l.count}</Text>
               </Pressable>
             ))}
           </View>

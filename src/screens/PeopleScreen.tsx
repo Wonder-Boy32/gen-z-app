@@ -13,6 +13,7 @@ import { colors, radius } from '../theme';
 import { TOP_INSET } from '../utils/useInsets';
 import PublicProfileScreen from './PublicProfileScreen';
 import Avatar from '../components/Avatar';
+import { useAndroidBack } from '../utils/useAndroidBack';
 import VerifiedBadge from '../components/ui/VerifiedBadge';
 
 type Row = {
@@ -33,6 +34,17 @@ export default function PeopleScreen({
   const [mutuals, setMutuals] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [publicProfile, setPublicProfile] = useState<{ id: string; username: string } | null>(null);
+
+  // Android back control. PublicProfileScreen is a conditional render here,
+  // not a <Modal>, so back used to escape the list entirely instead of
+  // returning to it. Declining lets the parent close the list itself.
+  useAndroidBack(() => {
+    if (publicProfile) {
+      setPublicProfile(null);
+      return true;
+    }
+    return false;
+  });
   const myIdRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {

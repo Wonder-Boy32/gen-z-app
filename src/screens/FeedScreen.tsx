@@ -32,6 +32,17 @@ import { notifyUser } from '../utils/notify';
 import DropExperienceScreen from './DropExperienceScreen';
 import PublicProfileScreen from './PublicProfileScreen';
 import ProfilePeekModal from '../components/ProfilePeekModal';
+// `peek as cachePeek` — this file already has a local `peek` state at line 202
+// for the profile-peek modal, and the unaliased import shadowed it.
+import { cacheKey, filterLive, peek as cachePeek, put } from '../utils/fastCache';
+import { useAndroidBack } from '../utils/useAndroidBack';
+import {
+  type Pulse,
+  EMPTY_PULSE,
+  engagementOf,
+  loadPulse,
+  velocityOf,
+} from '../utils/ranking';
 
 type Drop = {
   id: string;
@@ -82,13 +93,10 @@ type FeedPostRow = {
   reposted_by?: { username: string; avatar_url: string | null; verified?: boolean } | null;
 };
 
-export type Pulse = {
-  views30: number;
-  likes30: number;
-  comments30: number;
-  rising: boolean;
-  trending: boolean;
-};
+// Pulse, velocityOf() and engagementOf() now live in utils/ranking so that
+// Discover ranks creators with the SAME definition of "hot" this feed uses.
+// Re-exported here so any existing `import { Pulse } from FeedScreen` still works.
+export type { Pulse } from '../utils/ranking';
 
 export type FeedPostFull = FeedPostRow & {
   liked_by_me: boolean;
@@ -139,8 +147,7 @@ const MODES: { key: FeedMode; label: string; icon: IconName }[] = [
 
 const PAGE_SIZE = 50;
 const H = 3600 * 1000;
-const MIN_VIEWS_RISING = 20;
-const MIN_ENGAGEMENT_RISING = 2;
+// rising thresholds moved to utils/ranking (MIN_VIEWS_RISING / MIN_ENGAGEMENT_RISING)
 
 export default function FeedScreen({
   onJoinDrop,
@@ -148,6 +155,7 @@ export default function FeedScreen({
   initialUserMode = null,
   initialAudioMode = null,
   initialHashtagMode = null,
+  initialLocationMode = null,
   focused = true,
   openActivitySignal = 0,
 }: {
@@ -156,6 +164,8 @@ export default function FeedScreen({
   initialUserMode?: string | null;
   initialAudioMode?: string | null;
   initialHashtagMode?: string | null;
+  /** A place name. Mirrors hashtagMode: a filtered view of the live window. */
+  initialLocationMode?: string | null;
   focused?: boolean;
   /** bumped by a system-notification tap to surface the Activity screen */
   openActivitySignal?: number;
@@ -166,8 +176,23 @@ export default function FeedScreen({
   // covers devices that under-report the status-bar height
   const safeTop = Math.max(insets.top, TOP_INSET, 44);
   const [mode, setMode] = useState<FeedMode>('foryou');
-  const [posts, setPosts] = useState<FeedPostFull[]>([]);
-  const [loading, setLoading] = useState(true);
+
+  // Seed the list from the last session's first page.
+  //
+  // This is the single most important line for perceived speed: the FlatList
+  // exists on the very first frame, so post #1's player mounts and starts
+  // buffering immediately. Previously the list could not exist until the
+  // network answered, so the fetch and the video buffer were two waits IN
+  // SERIES — fetch, then buffer. Now they overlap.
+  //
+  // filterLive() matters: a Moment is only live for 7 days, so anything past
+  // its expires_at is dropped rather than shown as stale.
+  const [posts, setPosts] = useState<FeedPostFull[]>(() => {
+    const cached = cachePeek<FeedPostFull[]>(cacheKey.feed('foryou'));
+    return cached ? filterLive(cached) : [];
+  });
+  // No spinner when we already have something real to show.
+  const [loading, setLoading] = useState(posts.length === 0);
   const [refreshing, setRefreshing] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [commentPost, setCommentPost] = useState<FeedPostFull | null>(null);
@@ -181,12 +206,33 @@ export default function FeedScreen({
   const [userMode, setUserMode] = useState<string | null>(initialUserMode);
   const [audioMode, setAudioMode] = useState<string | null>(initialAudioMode);
   const [hashtagMode, setHashtagMode] = useState<string | null>(initialHashtagMode);
+  const [locationMode, setLocationMode] = useState<string | null>(initialLocationMode);
   const [showDrop, setShowDrop] = useState(false);
   const [publicProfile, setPublicProfile] = useState<{ id: string; username: string } | null>(null);
   const [peek, setPeek] = useState<{ id: string; username: string } | null>(null);
   const [myRegion, setMyRegion] = useState<string | null>(null);
   const [storyUsers, setStoryUsers] = useState<StoryUser[]>([]);
   const [notifOpen, setNotifOpen] = useState(false);
+
+  // Android back control for the overlays this screen owns. All three are
+  // conditional renders rather than <Modal>s, so RN's onRequestClose never saw
+  // the press and it fell through to HomeScreen's tab handler instead of
+  // closing the thing actually on screen. Innermost first, then decline.
+  useAndroidBack(() => {
+    if (publicProfile) {
+      setPublicProfile(null);
+      return true;
+    }
+    if (showDrop) {
+      setShowDrop(false);
+      return true;
+    }
+    if (notifOpen) {
+      setNotifOpen(false);
+      return true;
+    }
+    return false;
+  });
   const [unreadCount, setUnreadCount] = useState(0);
   const [liveCount, setLiveCount] = useState(0);
   const [expiringCount, setExpiringCount] = useState(0);
@@ -236,7 +282,7 @@ export default function FeedScreen({
   const openPostFromActivity = useCallback(async (postId: string) => {
     const { data } = await supabase.from('posts').select('id, user_id').eq('id', postId).maybeSingle();
     const row = data as { id: string; user_id: string } | null;
-    // the drop may already be gone (48h expiry) - if so stay on Activity rather
+    // the drop may already be gone (7-day expiry) - if so stay on Activity rather
     // than closing it and opening nothing
     if (!row) return;
     setNotifOpen(false);
@@ -303,23 +349,22 @@ export default function FeedScreen({
       opts: { sort?: 'recommended' | 'fresh'; liveSection?: LiveSection; noCap?: boolean } = {}
     ) => {
       const now = Date.now();
-      const velocityOf = (p: Pulse) => p.views30 * 0.7 + p.likes30 * 2.2 + p.comments30 * 3.2;
-      const engagementOf = (r: FeedPostRow) =>
-        Math.log1p(r.likes_count) * 1.1 + Math.log1p(r.comments_count) * 1.6 + r.views_count * 0.03;
+      // velocityOf() / engagementOf() are imported from utils/ranking — see the
+      // note there on why this app must have exactly one ranking formula.
 
       // Rising Creators: creator-level velocity (sum across their posts on this page)
       let creatorVelocity = new Map<string, number>();
       if (m === 'live' && opts.liveSection === 'creators') {
         const acc = new Map<string, number>();
         rows.forEach((r) => {
-          const p = pulseMap.get(r.id) ?? { views30: 0, likes30: 0, comments30: 0, rising: false, trending: false };
+          const p = pulseMap.get(r.id) ?? EMPTY_PULSE;
           acc.set(r.user_id, (acc.get(r.user_id) ?? 0) + velocityOf(p));
         });
         creatorVelocity = acc;
       }
 
       const scored = rows.map((r) => {
-        const pulse = pulseMap.get(r.id) ?? { views30: 0, likes30: 0, comments30: 0, rising: false, trending: false };
+        const pulse = pulseMap.get(r.id) ?? EMPTY_PULSE;
         const ageH = Math.max(0, (now - new Date(r.created_at).getTime()) / H);
         let score = 0;
         if (m === 'foryou') {
@@ -458,6 +503,13 @@ export default function FeedScreen({
       .from('posts')
       .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url, is_private, region, verified)')
       .is('parent_drop_id', null) // reply-with-drop posts live in comments, not the feed
+      // expiry rule, enforced at the QUERY rather than trusted to the client.
+      // Every mode below that filters by expires_at only ever asks for ACTIVE
+      // drops (expires_at > now), so no mode can want an ended one here — but the
+      // base modes (For You, Following) had no such filter at all, which is how an
+      // ended drop could still be served. The DB purge job removes the row; this
+      // stops it being served in the window before that job runs.
+      .gt('expires_at', new Date().toISOString())
       .order('created_at', { ascending: false })
       .limit(90);
     if (dropMode) query = query.eq('drop_id', dropMode);
@@ -476,6 +528,16 @@ export default function FeedScreen({
         return;
       }
       query = query.in('id', postIds);
+    } else if (locationMode) {
+      // Location mode: every live drop posted from one place.
+      //
+      // ilike with NO wildcards is case-insensitive equality, which is the point
+      // — "Lagos, Nigeria" and "lagos, nigeria" are the same place and must not
+      // be two feeds. Both sides are trimmed (create stores location.trim(), and
+      // location_suggest returns the btrim'd value), so whitespace variants are
+      // already collapsed. The value comes from a suggestion list of real stored
+      // spellings, so it is never user-invented here.
+      query = query.ilike('location', locationMode);
     } else if (mode === 'following') {
       if (!following.size) {
         setPosts([]);
@@ -547,7 +609,8 @@ export default function FeedScreen({
       !dropMode &&
       !userMode &&
       !audioMode &&
-      !hashtagMode;
+      !hashtagMode &&
+      !locationMode;
 
     if (repostEligible) {
       const { data: rpRows } = await supabase
@@ -598,7 +661,7 @@ export default function FeedScreen({
           if (muted.has(r.user_id) || blocked.has(r.user_id)) continue;
           const p = postById[r.post_id];
           // absent = expired, removed, or hidden by its own RLS policy — which is
-          // what enforces the 48h rule for reposts, for free
+          // what enforces the expiry rule for reposts, for free
           if (!p) continue;
           if (hidden.has(p.id) || muted.has(p.user_id) || blocked.has(p.user_id)) continue;
 
@@ -683,45 +746,19 @@ export default function FeedScreen({
     let responsesMap = new Map<string, number>();
     let tagMap = new Map<string, Set<string>>();
     if (ids.length) {
-      const since30 = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-      const [pv, lk, cm, resp, tags] = await Promise.all([
-        supabase.from('post_view_counts').select('post_id').in('post_id', ids).gte('viewed_at', since30).limit(3000),
-        supabase.from('like_counts').select('post_id').in('post_id', ids).gte('created_at', since30).limit(3000),
-        supabase.from('comment_counts').select('post_id').in('post_id', ids).gte('created_at', since30).limit(3000),
+      // The three counter reads now live in loadPulse() so Discover can rank
+      // creators on the same numbers. Still ONE round trip: it runs alongside the
+      // other two reads instead of after them.
+      const [resp, tags, pulses] = await Promise.all([
         supabase.from('posts').select('id, parent_drop_id').in('parent_drop_id', ids).limit(500),
         supabase.from('post_hashtags').select('post_id, tag').in('post_id', ids).limit(2000),
+        loadPulse(ids),
       ]);
-      const count = (arr: { post_id: string }[] | null) => {
-        const m = new Map<string, number>();
-        (arr ?? []).forEach((x) => m.set(x.post_id, (m.get(x.post_id) ?? 0) + 1));
-        return m;
-      };
-      const views30 = count(pv.data);
-      const likes30 = count(lk.data);
-      const comments30 = count(cm.data);
+      pulseMap = pulses;
       (resp.data ?? []).forEach((x: any) => responsesMap.set(x.parent_drop_id, (responsesMap.get(x.parent_drop_id) ?? 0) + 1));
       (tags.data ?? []).forEach((x: any) => {
         if (!tagMap.has(x.post_id)) tagMap.set(x.post_id, new Set());
         tagMap.get(x.post_id)!.add(x.tag);
-      });
-      // trending = top 5 by velocity in this page
-      const velocityScores = [...new Set(ids)].map((id) => ({
-        id,
-        v: (views30.get(id) ?? 0) * 0.7 + (likes30.get(id) ?? 0) * 2.2 + (comments30.get(id) ?? 0) * 3.2,
-      }));
-      velocityScores.sort((a, b) => b.v - a.v);
-      const trendingSet = new Set(velocityScores.slice(0, 5).map((x) => x.id));
-      ids.forEach((id) => {
-        const v30 = views30.get(id) ?? 0;
-        const l30 = likes30.get(id) ?? 0;
-        const c30 = comments30.get(id) ?? 0;
-        pulseMap.set(id, {
-          views30: v30,
-          likes30: l30,
-          comments30: c30,
-          rising: v30 >= MIN_VIEWS_RISING && l30 + c30 >= MIN_ENGAGEMENT_RISING,
-          trending: trendingSet.has(id),
-        });
       });
     }
 
@@ -773,7 +810,7 @@ export default function FeedScreen({
       reposted_by_me: reposted.has(p.id),
       my_reaction: myReaction.get(p.id) ?? null,
       reactions_count: reactionCounts.get(p.id) ?? 0,
-      pulse: pulseMap.get(p.id) ?? { views30: 0, likes30: 0, comments30: 0, rising: false, trending: false },
+      pulse: pulseMap.get(p.id) ?? EMPTY_PULSE,
       responses_count: responsesMap.get(p.id) ?? 0,
       reasons: reasonRows[i] ?? [],
     }));
@@ -783,7 +820,7 @@ export default function FeedScreen({
       liveSection,
       // filtered views (one user / sound / tag / drop) are "show me these" —
       // the creator-diversity cap would wrongly cut them down
-      noCap: !!(userMode || audioMode || hashtagMode || dropMode),
+        noCap: !!(userMode || audioMode || hashtagMode || locationMode || dropMode),
     });
     // For You: never repeat a post you've already watched this session
     // (fall back to repeats only when the fresh pool would be too thin)
@@ -798,7 +835,7 @@ export default function FeedScreen({
     // feed feels instant after login instead of waiting on every query.
     setLoading(false);
 
-    if (!userMode && !dropMode && !audioMode && !hashtagMode && mode === 'foryou') {
+    if (!userMode && !dropMode && !audioMode && !hashtagMode && !locationMode && mode === 'foryou') {
       const { data: storyData } = await supabase
         .from('posts')
         .select('user_id, profile:profiles!posts_user_id_fkey(id, username, avatar_url, verified)')
@@ -858,7 +895,7 @@ export default function FeedScreen({
     setActiveCount(activeC ?? 0);
     setActiveDrop((dropData?.[0] as Drop) ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, dropMode, userMode, audioMode, hashtagMode, feedPrefs, liveSection, expFilter, aroundScope, rankRows, loadSuggestions]);
+  }, [mode, dropMode, userMode, audioMode, hashtagMode, locationMode, feedPrefs, liveSection, expFilter, aroundScope, rankRows, loadSuggestions]);
 
   useEffect(() => {
     load();
@@ -917,7 +954,17 @@ export default function FeedScreen({
   const activeIndexRef = useRef(0);
   activeIndexRef.current = activeIndex;
 
-  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 80 }).current;
+  // 51, not 80. The threshold is a percentage OF THE ITEM, and every item here is
+  // exactly one viewport tall (pagingEnabled + snapToInterval={height} +
+  // getItemLayout length={height}), so 51% of an item ≈ 51% of the screen and at
+  // most ONE item can ever clear it. That guarantees a unique active item.
+  //
+  // At 80 the feed could dead-end: stop scrolling with the current item only 70%
+  // on screen and NOTHING passes the bar, so onViewable never fires, activeIndex
+  // never moves, and the previous video keeps its audio running over a video the
+  // user is now looking at. That is the "I can still hear the last video" report.
+  // 51 also hands over at the halfway point of a swipe instead of at 80% of it.
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 51 }).current;
   const keyExtractor = (p: FeedPostFull) => p.id;
 
   const toggleLike = async (post: FeedPostFull) => {
@@ -1035,6 +1082,16 @@ export default function FeedScreen({
     }
   };
 
+  // Remember the head of the timeline for the next cold start.
+  //
+  // Only 6 posts: enough to fill the first screen and warm the first two
+  // videos. Caching the whole timeline would bloat AsyncStorage and risk
+  // showing stale content; this is a launch accelerator, not an offline mode.
+  useEffect(() => {
+    if (mode !== 'foryou' || !posts.length) return;
+    void put(cacheKey.feed('foryou'), posts.slice(0, 6));
+  }, [posts, mode]);
+
   const removePost = (id: string) => setPosts((prev) => prev.filter((p) => p.id !== id));
 
   // follow straight from the suggestion cards (empty-feed onboarding)
@@ -1097,7 +1154,7 @@ export default function FeedScreen({
     });
   };
 
-  const storiesVisible = storyUsers.length > 0 && !dropMode && !userMode && !audioMode && !hashtagMode && mode === 'foryou';
+  const storiesVisible = storyUsers.length > 0 && !dropMode && !userMode && !audioMode && !hashtagMode && !locationMode && mode === 'foryou';
 
   // real dropper's name for the VIEWING banner — resolve from posts, then fetch profile
   const [userModeProfile, setUserModeProfile] = useState<{ username: string } | null>(null);
@@ -1138,14 +1195,62 @@ export default function FeedScreen({
   const feedBottom = insets.bottom > 0 ? 60 + insets.bottom : 76;
 
   // keep-alive: when the tab is hidden (focused=false) no video stays active,
-  // so playback pauses instead of playing in the background
-  const effectiveIndex = focused ? activeIndex : -1;
+  // so playback pauses instead of playing in the background.
+  //
+  // The overlays folded in below open ON TOP of the feed while the feed is still
+  // the focused tab, so `focused` stays true and the post underneath kept its
+  // audio — open someone's profile and you still heard the video you came from.
+  // `isActive` is what FeedPost uses to pause BOTH its video and its attached
+  // sound player, so routing the overlays through effectiveIndex silences both
+  // using the existing path — the same trick the swipe handling below relies on.
+  const overlayOpen = !!publicProfile || !!peek || showDrop || prefsOpen;
+  const effectiveIndex = focused && !overlayOpen ? activeIndex : -1;
+
+  // Silence the outgoing video the instant a swipe begins.
+  //
+  // Viewability only reports AFTER the incoming item has crossed the threshold, so
+  // on its own the outgoing video keeps its audio for the whole gesture — you hear
+  // the old sound right through the swipe. Every short-video feed cuts the audio on
+  // touch instead.
+  //
+  // This reuses the existing path rather than adding a second pause mechanism:
+  // FeedPost already pauses BOTH its video and its attached sound player whenever
+  // isActive goes false, so dropping isActive during the gesture is enough.
+  const [swiping, setSwiping] = useState(false);
+  const swipeSettleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const holdForSwipe = useCallback(() => {
+    if (swipeSettleRef.current) {
+      clearTimeout(swipeSettleRef.current);
+      swipeSettleRef.current = null;
+    }
+    setSwiping(true);
+  }, []);
+
+  // A fling fires onScrollEndDrag and THEN onMomentumScrollBegin. Releasing on the
+  // drag-end alone would resume the audio mid-fling and pause it again a moment
+  // later — audible as a blip. So the release is deferred briefly and cancelled if
+  // momentum takes over.
+  const releaseAfterSwipe = useCallback(() => {
+    if (swipeSettleRef.current) clearTimeout(swipeSettleRef.current);
+    swipeSettleRef.current = setTimeout(() => {
+      swipeSettleRef.current = null;
+      setSwiping(false);
+    }, 140);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (swipeSettleRef.current) clearTimeout(swipeSettleRef.current);
+    },
+    []
+  );
 
   const renderItem = ({ item, index }: { item: FeedPostFull; index: number }) => (
-    <FeedPost
-      post={item}
-      isActive={index === effectiveIndex}
-      preload={index === effectiveIndex + 1}
+        <FeedPost
+          post={item}
+          isActive={!swiping && index === effectiveIndex}
+          preload={index === effectiveIndex + 1}
       height={height}
       contentTop={feedTop}
       contentBottom={feedBottom}
@@ -1164,6 +1269,15 @@ export default function FeedScreen({
       onOpenChain={() => setChainRoot(item)}
       onExpired={() => setPosts((prev) => prev.filter((p) => p.id !== item.id))}
       onReplyWithDrop={() => onCreateIntent?.({ replyTo: item.id })}
+      // Tapping a #hashtag in a caption filters the feed to it — the same
+      // hashtagMode a tag chip or a tag in search results opens. No remount:
+      // hashtagMode is already in the query effect's deps, so setting it refetches.
+      onPressTag={(tag) => {
+        setLocationMode(null);
+        setUserMode(null);
+        setAudioMode(null);
+        setHashtagMode(tag);
+      }}
     />
   );
 
@@ -1172,11 +1286,11 @@ export default function FeedScreen({
       title: hasFollows ? "✓ You're all caught up" : 'Follow creators to fill your feed',
       text: hasFollows
         ? 'Check back when your people drop something new.'
-        : 'The drops of people you follow appear here for 48 hours.',
+        : 'The drops of people you follow appear here for 7 days.',
     },
     foryou: {
       title: 'Nothing here yet',
-      text: 'Be the first to drop a moment — anything you post lives for 48 hours.',
+      text: 'Be the first to drop a moment — anything you post lives for 7 days.',
     },
     live: {
       title: 'Nothing live right now',
@@ -1191,7 +1305,7 @@ export default function FeedScreen({
         ? 'No Drops from your region yet'
         : 'Set your region to discover nearby Drops',
       text: myRegion
-        ? 'Drops from people in your region appear here for 48 hours.'
+        ? 'Drops from people in your region appear here for 7 days.'
         : 'Edit your profile → Region (e.g. Nigeria) to unlock 📍 Around You. Only the region you choose is shown — never an exact location.',
     },
   }[mode];
@@ -1257,6 +1371,7 @@ export default function FeedScreen({
                   setUserMode(null);
                   setAudioMode(null);
                   setHashtagMode(null);
+                  setLocationMode(null);
                   setDropMode(null);
                 }}
                 hitSlop={4}
@@ -1492,29 +1607,40 @@ export default function FeedScreen({
         </Animated.View>
       )}
 
-      {(userMode || audioMode || hashtagMode) && (
+      {(userMode || audioMode || hashtagMode || locationMode) && (
         <Pressable
           style={[styles.dropBanner, { top: bannerTop }]}
           onPress={() => {
             setUserMode(null);
             setAudioMode(null);
             setHashtagMode(null);
+            setLocationMode(null);
           }}
         >
           <View style={styles.dropBannerInner}>
             <View style={styles.dropBannerTitleRow}>
               <Icon
-                name={userMode ? 'person' : audioMode ? 'musical-note' : 'pricetag'}
+                name={userMode ? 'person' : audioMode ? 'musical-note' : locationMode ? 'location' : 'pricetag'}
                 size={13}
                 color={colors.accent}
               />
               <Text style={styles.dropBannerTitle} numberOfLines={1}>
                 VIEWING{' '}
-                {userMode ? `@${userModeName ?? 'user'}` : audioMode ? audioMode : `#${hashtagMode}`}
+                {userMode
+                  ? `@${userModeName ?? 'user'}`
+                  : audioMode
+                  ? audioMode
+                  : locationMode
+                  ? locationMode
+                  : `#${hashtagMode}`}
               </Text>
             </View>
             <Text style={styles.dropBannerPrompt} numberOfLines={1}>
-              {userMode ? 'Their drops, last 48 hours' : 'Matching drops — last 48 hours'}
+              {userMode
+                ? 'Their drops, last 7 days'
+                : locationMode
+                ? 'Drops from here, last 7 days'
+                : 'Matching drops — last 7 days'}
             </Text>
             <Text style={styles.dropBannerAction}>← Back to general feed</Text>
           </View>
@@ -1535,6 +1661,11 @@ export default function FeedScreen({
           contentContainerStyle={styles.feedContent}
           onViewableItemsChanged={onViewable}
           viewabilityConfig={viewabilityConfig}
+          // cut the audio on touch; see holdForSwipe above
+          onScrollBeginDrag={holdForSwipe}
+          onMomentumScrollBegin={holdForSwipe}
+          onScrollEndDrag={releaseAfterSwipe}
+          onMomentumScrollEnd={releaseAfterSwipe}
           refreshing={refreshing}
           onRefresh={async () => {
             setRefreshing(true);

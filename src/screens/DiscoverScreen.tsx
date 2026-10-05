@@ -25,12 +25,13 @@ import PostViewer from '../components/PostViewer';
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import { TOP_INSET } from '../utils/useInsets';
-import DropCountdown from '../components/DropCountdown';
 import DropExperienceScreen from './DropExperienceScreen';
 import PublicProfileScreen from './PublicProfileScreen';
 import SearchResults from '../components/SearchResults';
 import { fmtCount } from '../components/FeedPost';
 import Avatar from '../components/Avatar';
+import { useAndroidBack } from '../utils/useAndroidBack';
+import { type Pulse, EMPTY_PULSE, loadPulse, velocityOf } from '../utils/ranking';
 
 type Drop = {
   id: string;
@@ -74,24 +75,60 @@ type Props = {
   onOpenUser: (id: string) => void;
   onOpenAudio: (audio: string) => void;
   onOpenTag: (tag: string) => void;
+  /** Show every live drop posted from one place. Parallel to onOpenTag. */
+  onOpenLocation: (place: string) => void;
   onJoinDrop: () => void;
 };
 
 const engagement = (p: P) => p.likes_count + p.comments_count + p.views_count;
 
-type DiscCat = 'foryou' | 'trending' | 'fresh' | 'campus' | 'people' | 'drops';
+/**
+ * A person, as people-discovery needs them.
+ *
+ * Derived from the profile already embedded in each post rather than from a
+ * separate profiles query: the authors of the posts we already hold ARE the
+ * candidate creators, and they already carry username, avatar, verified, region.
+ */
+type Person = {
+  id: string;
+  username: string;
+  avatar_url: string | null;
+  verified?: boolean;
+  region?: string | null;
+};
 
+function personFrom(p: P): Person | null {
+  if (!p.profile || !p.user_id) return null;
+  return {
+    id: p.user_id,
+    username: p.profile.username,
+    avatar_url: p.profile.avatar_url,
+    verified: p.profile.verified,
+    region: p.profile.region ?? null,
+  };
+}
+
+type DiscCat = 'creators' | 'trending' | 'fresh' | 'campus' | 'drops';
+
+// Four chips, on purpose. 'drops' is intentionally absent from the row: Drops are
+// reached through SEARCH now rather than occupying a permanent section. A chip row
+// of four is a journey; six was a menu.
+//
+// The first chip used to be "For You". It rendered NOTHING — show() is exclusive
+// and no show('foryou') block was ever written — and it also duplicated the Home
+// feed's own For You mode, which is the more advanced one: it ranks posts by real
+// 30-minute velocity. Discover therefore does the job Home cannot: it ranks
+// PEOPLE. Same scorer (utils/ranking), different subject, so the two surfaces
+// cannot disagree about who is rising.
 const DISC_CATS: { id: DiscCat; label: string }[] = [
-  { id: 'foryou', label: 'For You' },
+  { id: 'creators', label: '✨ Creators' },
   { id: 'trending', label: '🔥 Trending' },
   { id: 'fresh', label: '⚡ Just Dropped' },
   { id: 'campus', label: '🎓 Campus' },
-  { id: 'people', label: '👥 People' },
-  { id: 'drops', label: '🔥 Drops' },
 ];
 
 /**
- * The 48-hour identity, expressed as time left rather than "48 hours".
+ * The expiring identity, expressed as time left rather than a raw duration.
  * 🔥 under 6h, ⏳ otherwise, ⚡ inside the last hour.
  */
 function timeLeft(expiresAt: string): { text: string; icon: IconName; urgent: boolean } {
@@ -108,8 +145,12 @@ function timeLeft(expiresAt: string): { text: string; icon: IconName; urgent: bo
   return { text: `${Math.round(h)}h left`, icon: 'hourglass-outline', urgent: false };
 }
 
-export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJoinDrop }: Props) {
+export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onOpenLocation, onJoinDrop }: Props) {
   const [posts, setPosts] = useState<P[]>([]);
+  // 30-minute velocity for those posts, from utils/ranking — the same numbers the
+  // Home feed ranks with. Creators are ordered by the SUM of this across their
+  // posts, which is exactly how Home scores its Rising Creators section.
+  const [pulseMap, setPulseMap] = useState<Map<string, Pulse>>(() => new Map());
   const [drops, setDrops] = useState<(Drop & { posts: number })[]>([]);
   const [creators, setCreators] = useState<{
     id: string;
@@ -128,8 +169,25 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
   const [searchQuery, setSearchQuery] = useState('');
   const [publicProfile, setPublicProfile] = useState<{ id: string; username: string } | null>(null);
 
+  // Android back control. This screen owns two full-screen overlays that are
+  // plain conditional renders, NOT <Modal>s, so RN's onRequestClose never saw
+  // the press: it fell through to HomeScreen (which popped to the Feed tab)
+  // and the overlay stayed open behind the tab change. Innermost first, then
+  // decline so the press continues outward.
+  useAndroidBack(() => {
+    if (publicProfile) {
+      setPublicProfile(null);
+      return true;
+    }
+    if (openDrop) {
+      setOpenDrop(null);
+      return true;
+    }
+    return false;
+  });
+
   // ---- discovery controls ----
-  const [cat, setCat] = useState<DiscCat>('foryou');
+  const [cat, setCat] = useState<DiscCat>('creators');
   const [searchFocused, setSearchFocused] = useState(false);
   // session-only. DiscoverScreen stays mounted across tab switches, so this
   // survives normal use; it is deliberately not persisted anywhere.
@@ -180,6 +238,13 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
           .from('posts')
           .select('*, profile:profiles!posts_user_id_fkey(username, avatar_url, verified, region)')
           .is('parent_drop_id', null)
+          // Never surface a drop past its expiry. The DB purge (expiry_v2.sql) should
+          // already have removed these, but the purge runs on a 5-minute cron and
+          // every shelf on this screen is derived from this ONE query — so without
+          // this filter an expired drop keeps appearing in Trending, Just Dropped,
+          // Campus and Creators until the job next fires (or forever, if the job
+          // is not running).
+          .gt('expires_at', new Date().toISOString())
           .order('created_at', { ascending: false })
           .limit(200),
         supabase
@@ -195,10 +260,23 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
           .order('created_at', { ascending: false })
           .limit(8),
         supabase.from('posts').select('audio').not('audio', 'is', null).limit(500),
-        supabase.from('hashtags').select('tag, count').order('count', { ascending: false }).limit(8),
+        // Live tags, biggest first. Reads hashtag_suggest() rather than the
+        // hashtags table: that table is a cache which used to drift upward
+        // permanently, whereas this function counts live posts directly — so the
+        // count on the chip is the number of drops tapping it will actually show.
+        supabase.rpc('hashtag_suggest', { p_prefix: '', p_limit: 8 }),
       ]);
 
     setPosts((postRows ?? []) as P[]);
+
+    // Velocity for the posts we just loaded. Best-effort on purpose: if the
+    // counter tables are unreachable, people discovery still works — it just
+    // falls back to newest-first ordering instead of failing to render.
+    try {
+      setPulseMap(await loadPulse(((postRows ?? []) as P[]).map((p) => p.id)));
+    } catch {
+      setPulseMap(new Map());
+    }
 
     const dropsWithPosts: (Drop & { posts: number })[] = [];
     for (const d of (dropRows ?? []) as Drop[]) {
@@ -224,7 +302,14 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
         .slice(0, 6)
     );
 
-    setTags((tagRows ?? []) as { tag: string; count: number }[]);
+    // hashtag_suggest() names its count `post_count`; the chip list below was
+    // written against `count`, so map rather than touch every consumer.
+    setTags(
+      ((tagRows ?? []) as { tag: string; post_count: number }[]).map((t) => ({
+        tag: t.tag,
+        count: t.post_count,
+      }))
+    );
     setLoading(false);
   }, []);
 
@@ -262,6 +347,41 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
     [creators, myRegion]
   );
 
+  // ---- people discovery (the Creators chip) --------------------------------
+  // Ranked by the SUM of velocityOf() across a creator's posts — the same maths
+  // Home already uses for its Rising Creators, via the same imported scorer. No
+  // new query: this is derived from the posts already in memory.
+  const risingCreators = useMemo(() => {
+    const acc = new Map<string, { person: Person; v: number }>();
+    for (const p of posts) {
+      const person = personFrom(p);
+      if (!person) continue;
+      const v = velocityOf(pulseMap.get(p.id) ?? EMPTY_PULSE);
+      if (v <= 0) continue;
+      const cur = acc.get(person.id);
+      acc.set(person.id, { person, v: (cur?.v ?? 0) + v });
+    }
+    return [...acc.values()]
+      .sort((a, b) => b.v - a.v)
+      .slice(0, 10)
+      .map((x) => x.person);
+  }, [posts, pulseMap]);
+
+  /** Distinct authors who posted from your campus — one card per person. */
+  const campusPeople = useMemo(() => {
+    if (!myRegion) return [] as Person[];
+    const seen = new Set<string>();
+    const out: Person[] = [];
+    for (const p of posts) {
+      const person = personFrom(p);
+      if (!person || seen.has(person.id)) continue;
+      if ((person.region ?? '') !== myRegion) continue;
+      seen.add(person.id);
+      out.push(person);
+    }
+    return out.slice(0, 10);
+  }, [posts, myRegion]);
+
   /** record a term in this session's recent list (dedup, newest first, cap 6) */
   const rememberSearch = (q: string) => {
     const term = q.trim();
@@ -269,8 +389,18 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
     setRecent((r) => [term, ...r.filter((x) => x.toLowerCase() !== term.toLowerCase())].slice(0, 6));
   };
 
-  /** For You shows everything; a specific category shows only its own shelf. */
-  const show = (c: DiscCat) => cat === 'foryou' || cat === c;
+  /**
+   * EXCLUSIVE: one chip, one experience. Each category owns its own shelf.
+   *
+   * The gate must stay exclusive. An earlier version read
+   * `cat === 'foryou' || cat === c`, which returned true for EVERY category while
+   * "For You" was selected, stacking Trending + Drops + Campus + People + Sounds +
+   * Tags on one screen. Removing the `cat === 'foryou' ||` half fixed that but
+   * left the For You chip rendering nothing at all, because no show('foryou')
+   * block existed to replace it. That is why this chip now has real content of
+   * its own (see show('creators') below) instead of relying on a fallthrough.
+   */
+  const show = (c: DiscCat) => cat === c;
 
   const nothingAtAll = !posts.length && !drops.length && !creators.length;
 
@@ -295,7 +425,7 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
       <Press style={styles.videoCard} onPress={() => openViewer(list, idx)} shrink={0.98}>
         <CardMedia post={p} />
 
-        {/* time-left badge — the 48h identity, never the raw number */}
+        {/* time-left badge — the expiring identity, never the raw number */}
         <View style={[styles.tlBadge, left.urgent && styles.tlBadgeUrgent]}>
           <Icon name={left.icon} size={11} color={left.urgent ? colors.danger : colors.accent} />
           <Text style={[styles.tlText, left.urgent && styles.tlTextUrgent]}>{left.text}</Text>
@@ -325,6 +455,36 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
       </Press>
     );
   };
+
+  /**
+   * Person card, shared by all three people shelves.
+   *
+   * Deliberately NOT a navigate-to-Feed action: Discover already owns a public
+   * profile overlay, so tapping a face keeps the user here instead of yanking them
+   * to another tab mid-browse.
+   */
+  const renderPerson = (c: Person, note?: string) => (
+    <Press
+      key={c.id}
+      style={styles.person}
+      onPress={() => setPublicProfile({ id: c.id, username: c.username })}
+      shrink={0.97}
+    >
+      <Avatar url={c.avatar_url} name={c.username} size={54} ring verified={!!c.verified} />
+      <View style={styles.personNameRow}>
+        <Text style={styles.personName} numberOfLines={1}>
+          @{c.username}
+        </Text>
+        {!!c.verified && <VerifiedBadge size={11} glow={false} />}
+      </View>
+      <Text style={styles.personBio} numberOfLines={2}>
+        {note || c.region || 'New on Gen Z'}
+      </Text>
+      <View style={styles.personFollow}>
+        <Text style={styles.personFollowText}>Follow</Text>
+      </View>
+    </Press>
+  );
 
   if (loading) {
     return (
@@ -379,6 +539,7 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
               onOpenUser={onOpenUser}
               onOpenAudio={onOpenAudio}
               onOpenTag={onOpenTag}
+              onOpenLocation={onOpenLocation}
               onJoinDrop={onJoinDrop}
             />
           ) : (
@@ -481,48 +642,10 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
           </>
         )}
 
-        {/* ---------- ACTIVE DROPS ---------- */}
-        {show('drops') && (
-          <>
-            <SectionHead
-              icon="flash"
-              title="Active Drops"
-              sub="Join before they disappear."
-              tint={colors.danger}
-            />
-            {drops.length ? (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dcRow}>
-                {drops.map((d) => (
-                  <Press key={d.id} style={styles.dropCard} onPress={() => setOpenDrop(d)} shrink={0.98}>
-                    <GradientFill from="#1B1430" to="#0C1020" steps={12} style={FILL} />
-                    <CornerBrackets color="rgba(255,92,124,0.35)" size={16} inset={9} />
-                    <View style={styles.dropLive}>
-                      <View style={styles.dropLiveDot} />
-                      <Text style={styles.dropLiveText}>{d.status === 'live' ? 'LIVE' : 'VOTING'}</Text>
-                    </View>
-                    <Text style={styles.dropPrompt} numberOfLines={2}>
-                      {d.prompt}
-                    </Text>
-                    <DropCountdown
-                      endsAt={d.status === 'live' ? d.ends_at : d.voting_ends_at}
-                      mode={d.status as 'live' | 'voting'}
-                    />
-                    <View style={styles.dropFoot}>
-                      <Icon name="people" size={12} color={colors.textMuted} />
-                      <Text style={styles.dropPosts}>{d.posts} joined</Text>
-                    </View>
-                    <View style={styles.dropViewBtn}>
-                      <Text style={styles.dropViewText}>VIEW DROP</Text>
-                      <Icon name="arrow-forward" size={12} color={colors.bg} />
-                    </View>
-                  </Press>
-                ))}
-              </ScrollView>
-            ) : (
-              <Text style={styles.empty}>No drops live right now — the next one is coming.</Text>
-            )}
-          </>
-        )}
+        {/* The "Active Drops" shelf was removed here. It was gated on
+            show('drops'), and `cat` only ever takes the four values in DISC_CATS —
+            so it could never render. Drops are reached through SEARCH now.
+            Recoverable from git history if the shelf is ever wanted back. */}
 
         {/* ---------- AROUND CAMPUS ---------- */}
         {show('campus') && (
@@ -610,42 +733,64 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
           </>
         )}
 
-        {/* ---------- PEOPLE ---------- */}
-        {show('people') && (
+        {/* ---------- CREATORS (the default chip) ----------
+            People, not posts. Home's For You already ranks POSTS with real
+            30-minute velocity, so repeating that here would be a weaker copy. This
+            is the surface Home genuinely lacks: who is worth watching, ranked with
+            the SAME imported scorer so the two screens cannot disagree.
+
+            Capped at three shelves on purpose. This screen previously stacked six
+            sections at once, and that is the problem this composition replaces. */}
+        {show('creators') && (
           <>
-            <SectionHead
-              icon="people"
-              title="People you might like"
-              sub="Fresh faces on Gen Z."
-              tint={colors.cyan}
-            />
-            {creators.length ? (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dcRow}>
-                {creators.map((c) => (
-                  <Press
-                    key={c.id}
-                    style={styles.person}
-                    onPress={() => setPublicProfile({ id: c.id, username: c.username })}
-                    shrink={0.97}
-                  >
-                    <Avatar url={c.avatar_url} name={c.username} size={54} ring verified={!!c.verified} />
-                    <View style={styles.personNameRow}>
-                      <Text style={styles.personName} numberOfLines={1}>
-                        @{c.username}
-                      </Text>
-                      {!!c.verified && <VerifiedBadge size={11} glow={false} />}
-                    </View>
-                    <Text style={styles.personBio} numberOfLines={2}>
-                      {c.bio?.trim() || 'New on Gen Z'}
-                    </Text>
-                    <View style={styles.personFollow}>
-                      <Text style={styles.personFollowText}>Follow</Text>
-                    </View>
-                  </Press>
-                ))}
-              </ScrollView>
-            ) : (
-              <Text style={styles.empty}>No new creators yet.</Text>
+            {risingCreators.length > 0 && (
+              <>
+                <SectionHead
+                  icon="flame"
+                  title="Rising right now"
+                  sub="Moving fastest over the last 30 minutes."
+                  tint={colors.accent}
+                />
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dcRow}>
+                  {risingCreators.map((c) => renderPerson(c, 'Rising now'))}
+                </ScrollView>
+              </>
+            )}
+
+            {campusPeople.length > 0 && (
+              <>
+                <SectionHead
+                  icon="location-outline"
+                  title={`Posting from ${myRegion}`}
+                  sub="Campus level only — never your exact location."
+                  tint={colors.cyan}
+                />
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dcRow}>
+                  {campusPeople.map((c) => renderPerson(c))}
+                </ScrollView>
+              </>
+            )}
+
+            {creators.length > 0 && (
+              <>
+                <SectionHead
+                  icon="people"
+                  title="New on Gen Z"
+                  sub="Fresh faces to follow."
+                  tint={colors.cyan}
+                />
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dcRow}>
+                  {creators.map((c) => renderPerson(c, c.bio?.trim() || undefined))}
+                </ScrollView>
+              </>
+            )}
+
+            {/* Never blank. The old For You chip rendered an empty page whenever it
+                was selected; this one always says something and points somewhere. */}
+            {!risingCreators.length && !campusPeople.length && !creators.length && (
+              <Text style={styles.empty}>
+                No one to suggest yet — try searching for someone by name.
+              </Text>
             )}
           </>
         )}
@@ -742,45 +887,18 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
           </>
         )}
 
-        {/* ---------- SOUNDS + TAGS ---------- */}
-        {cat === 'foryou' && (
-          <>
-            <SectionHead
-              icon="musical-notes"
-              title="Trending Sounds"
-              sub="What people are posting to."
-              tint={colors.cyan}
-            />
-            <View style={styles.chipWrap}>
-              {sounds.map((s) => (
-                <Pressable key={s.audio} style={styles.chip} onPress={() => onOpenAudio(s.audio)}>
-                  <View style={styles.statRow}>
-                    <Icon name="musical-note" size={12} color={colors.cyan} />
-                    <Text style={styles.chipText}>{s.audio}</Text>
-                  </View>
-                  <Text style={styles.chipCount}>{s.count} posts</Text>
-                </Pressable>
-              ))}
-              {!sounds.length && <Text style={styles.empty}>No sounds yet — add one to your post.</Text>}
-            </View>
+        {/* ---------- SOUNDS + TAGS: intentionally NOT on Discover ----------
+            These two sections used to sit permanently under For You as
+            "Trending Sounds" and "Trending Tags".
 
-            <SectionHead
-              icon="pricetags"
-              title="Trending Tags"
-              sub="Topics picking up."
-              tint={colors.cyan}
-            />
-            <View style={styles.chipWrap}>
-              {tags.map((t) => (
-                <Pressable key={t.tag} style={styles.chip} onPress={() => onOpenTag(t.tag)}>
-                  <Text style={styles.chipText}>#{t.tag}</Text>
-                  <Text style={styles.chipCount}>{t.count} posts</Text>
-                </Pressable>
-              ))}
-              {!tags.length && <Text style={styles.empty}>No tags yet — add #tags to your caption.</Text>}
-            </View>
-          </>
-        )}
+            They are now reached through SEARCH, which already renders them —
+            components/SearchResults.tsx has Hashtags (line 350), Sounds (line
+            371) and People (line 256). Nothing is lost; complexity moved one
+            step deeper, which is the whole point of this redesign.
+
+            Discover is: search -> For You | Trending | Just Dropped | Campus
+            -> the chosen experience becomes the focus.
+        ------------------------------------------------------------------- */}
 
         {/* ---------- EMPTY STATE ---------- */}
         {nothingAtAll && (
@@ -788,14 +906,16 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onJ
             <GradientFill from="#141E3A" to="#0A1020" steps={14} style={FILL} />
             <Glow color={colors.accent} size={220} strength={0.14} style={styles.dcEmptyGlow} />
             <CornerBrackets color="rgba(255,157,31,0.4)" size={20} inset={12} />
-            <Text style={styles.dcEmptyTitle}>Nothing to discover yet.</Text>
+            {/* An empty feed should read as "you're early", not "this app is
+                broken". Same pixels, completely different feeling. */}
+            <Text style={styles.dcEmptyTitle}>You&apos;re early. 👀</Text>
             <Text style={styles.dcEmptyText}>
-              Be one of the first people to create a moment.
+              The next Moment could start here.
             </Text>
             <Press style={styles.dcEmptyBtn} onPress={onJoinDrop}>
               <GradientFill from={colors.accent} to={colors.accentStrong} steps={10} horizontal style={FILL} />
               <Icon name="add" size={16} color={colors.bg} />
-              <Text style={styles.dcEmptyBtnText}>CREATE A MOMENT</Text>
+              <Text style={styles.dcEmptyBtnText}>CREATE A MOMENT →</Text>
             </Press>
           </View>
         )}

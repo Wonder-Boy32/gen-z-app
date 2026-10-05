@@ -20,6 +20,7 @@ import { colors, shadows } from '../theme';
 import Avatar from './Avatar';
 import VerifiedBadge from './ui/VerifiedBadge';
 import Icon, { IconName } from './ui/Icon';
+import CaptionText from './ui/CaptionText';
 import DownloadFlowModal from './download/DownloadFlowModal';
 import { postAllowsDownload } from '../utils/downloadMedia';
 
@@ -95,6 +96,8 @@ type Props = {
   onOpenChain: () => void;
   onExpired: () => void;
   onReplyWithDrop: () => void;
+  /** Tapping a #hashtag in the caption. Receives the normalised (lower-case) tag. */
+  onPressTag?: (tag: string) => void;
 };
 
 export function fmtCount(n: number): string {
@@ -102,7 +105,7 @@ export function fmtCount(n: number): string {
   return `${n}`;
 }
 
-export default function FeedPost({
+function FeedPostInner({
   post,
   isActive,
   preload = false,
@@ -122,6 +125,7 @@ export default function FeedPost({
   onOpenChain,
   onExpired,
   onReplyWithDrop,
+  onPressTag,
 }: Props) {
   const lastTap = useRef(0);
   const heartAnim = useRef(new Animated.Value(0)).current;
@@ -166,11 +170,25 @@ export default function FeedPost({
     }
   }, [soundActive, post.sound_start, post.sound_end, post.sound_url, soundPlayer]);
 
-  // auto-stop at the trimmed end, ready to loop from the start
+  // Loop the attached sound in step with the video.
+  //
+  // Two bugs lived here. First, it pause()d at the trimmed end and never
+  // resumed, so an added sound played exactly once and then went silent while
+  // the video (loop = true) kept repeating. Second, there was no guard:
+  // `playing` stays true for a tick or two after pause(), so inside the
+  // [end-0.15, end] window the effect could pause+seek on consecutive status
+  // updates — which is audible as crackle and burns the JS thread that video
+  // decode needs. The ref makes it fire once per pass.
+  const soundLoopedRef = useRef(false);
   useEffect(() => {
-    if (soundStatus.playing && post.sound_end && soundStatus.currentTime >= post.sound_end - 0.15) {
-      soundPlayer.pause();
+    if (!post.sound_end) return;
+    const atEnd = soundStatus.currentTime >= post.sound_end - 0.15;
+    if (soundStatus.playing && atEnd && !soundLoopedRef.current) {
+      soundLoopedRef.current = true;
       soundPlayer.seekTo(post.sound_start ?? 0);
+      soundPlayer.play();
+    } else if (!atEnd) {
+      soundLoopedRef.current = false;
     }
   }, [soundStatus.currentTime, soundStatus.playing, post.sound_end, post.sound_start, soundPlayer]);
 
@@ -383,10 +401,15 @@ export default function FeedPost({
             )}
           </View>
 
+          {/* CaptionText, not a bare <Text>: hashtags in a caption are links, and
+              they open the same filtered feed a tag chip would. */}
           {!!post.caption && (
-            <Text style={styles.caption} numberOfLines={2}>
-              {post.caption}
-            </Text>
+            <CaptionText
+              text={post.caption}
+              style={styles.caption}
+              numberOfLines={2}
+              onPressTag={onPressTag}
+            />
           )}
 
           <View style={styles.timeRow}>
@@ -1130,3 +1153,77 @@ const styles = StyleSheet.create({
     width: 18,
   },
 });
+
+// ============================================================
+// Memoisation — the single biggest fix for "the UI is slow"
+// ============================================================
+// FeedScreen passes THIRTEEN inline arrow functions to every row:
+//
+//   onLike={() => toggleLike(item)}
+//   onFollow={() => toggleFollow(item)}
+//   onSave={() => toggleSave(item)}
+//   ... and ten more
+//
+// Every one is a brand-new function identity on every render. So plain
+// React.memo() would never once hit — it compares props by reference, sees
+// thirteen "changed" functions, and re-renders anyway. Adding memo without a
+// comparator would have looked like a fix and changed nothing.
+//
+// Why this matters: `isActive={index === effectiveIndex}` changes on every
+// scroll tick. FeedScreen re-renders, and with no memoisation every mounted row
+// re-rendered its ENTIRE subtree — video surface, gradients, icon set, animated
+// overlays, action rail. That is the scroll jank and the sluggish taps.
+//
+// So this comparator ignores the function props and asks the only question that
+// actually matters: would this row render anything different?
+//
+// Keeping the previous element (and therefore the previous closures) is safe
+// because those closures call stable useCallback handlers in FeedScreen and are
+// keyed off the post's id. Any change to the post's own data is caught below.
+// ============================================================
+
+function samePost(a: Props['post'], b: Props['post']): boolean {
+  if (a === b) return true;
+
+  // Compare every own field except `profile`, shallowly, with arrays by value.
+  // Deliberately generic rather than a hand-written field list: a list would go
+  // stale the moment a column is added to the query, and a missed field means a
+  // row that silently stops updating.
+  for (const key of Object.keys(a) as (keyof Props['post'])[]) {
+    if (key === 'profile') continue;
+
+    const av = a[key] as unknown;
+    const bv = b[key] as unknown;
+    if (av === bv) continue;
+
+    // media_items / reactions are rebuilt on every fetch, so compare contents.
+    if (Array.isArray(av) || Array.isArray(bv)) {
+      if (JSON.stringify(av) !== JSON.stringify(bv)) return false;
+      continue;
+    }
+
+    return false;
+  }
+
+  // profile is a nested object that is rebuilt often; compare only the fields
+  // the card actually paints.
+  return (
+    a.profile?.username === b.profile?.username &&
+    a.profile?.avatar_url === b.profile?.avatar_url
+  );
+}
+
+function areEqualProps(prev: Props, next: Props): boolean {
+  if (!samePost(prev.post, next.post)) return false;
+
+  // These five drive the video surface and the layout, so they must be exact.
+  return (
+    prev.isActive === next.isActive &&
+    prev.preload === next.preload &&
+    prev.height === next.height &&
+    prev.contentTop === next.contentTop &&
+    prev.contentBottom === next.contentBottom
+  );
+}
+
+export default React.memo(FeedPostInner, areEqualProps);
