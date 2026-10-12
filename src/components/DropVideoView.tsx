@@ -184,6 +184,30 @@ export default function DropVideoView({
     }
   }, [isActive, paused, preload, forceMute, player]);
 
+  // Playback always restarts when this item becomes the active one.
+  //
+  // The source is deliberately replace()d only ONCE per url (see loadedUrlRef
+  // above) so scrolling back doesn't trigger a fresh network load. The side
+  // effect is that the native player keeps its position: scroll away mid-clip,
+  // come back, and it resumes where it stopped. Reported as "it continues from
+  // where it stops — I want any video played to always start again".
+  //
+  // Seeking back to the clip's own start (trim.start, not 0 — a trimmed drop
+  // begins at its trim point) resets playback without re-fetching the source.
+  // A ref, not state, tracks the transition: re-running on every render would
+  // yank the video back to the start mid-play.
+  const wasActiveRef = useRef(false);
+  useEffect(() => {
+    const justActivated = isActive && !wasActiveRef.current;
+    wasActiveRef.current = isActive;
+    if (!justActivated || paused) return;
+    try {
+      player.currentTime = trim ? trim.start : 0;
+    } catch {
+      // Source not loaded yet — the replace() effect above starts it at 0 anyway.
+    }
+  }, [isActive, paused, player, trim?.start, trim?.end, trim != null, url]);
+
   // speed changes after mount
   useEffect(() => {
     if (player && Math.abs(player.playbackRate - speed) > 0.001) {

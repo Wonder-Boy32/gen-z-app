@@ -1282,7 +1282,31 @@ export default function CreateDropScreen({
       row.sound_artist = sound?.artist ?? null;
       row.sound_url = sound?.url ?? null;
       row.sound_start = sound?.start ?? 0;
-      row.sound_end = sound?.end ?? null;
+      // Cap the sound to the length of the video.
+      //
+      // The feed loops the sound inside [sound_start, sound_end] with its own
+      // effect, independently of the video's native loop=true. Two independent
+      // loops that cover different spans restart at different moments, so the
+      // sound and the picture drift apart and the seam between passes lands
+      // somewhere different each time. Trimming the sound to the video's own
+      // length keeps the two spans equal, which is what makes them stay in step.
+      //
+      // expo-image-picker reports video duration in MILLISECONDS; sound_end is
+      // stored in seconds. assets[0] is the video (assets[0] is the only asset
+      // that reaches processDropVideo, and video posts are single-asset).
+      if (sound) {
+        const rawDur = assets[0]?.duration;
+        const videoSec = typeof rawDur === 'number' && rawDur > 0 ? rawDur / 1000 : null;
+        const wantedEnd = sound.end ?? null;
+        row.sound_end =
+          videoSec == null
+            ? wantedEnd
+            : wantedEnd == null
+              ? videoSec
+              : Math.min(wantedEnd, videoSec);
+      } else {
+        row.sound_end = null;
+      }
       row.visibility = visibility;
       row.allow_likes = allowLikes;
       row.allow_comments = allowComments;
@@ -2068,7 +2092,19 @@ export default function CreateDropScreen({
                         </Text>
                       )}
                     </View>
-                    <Pressable style={styles.soundAction} onPress={() => setTrimSound(sound)}>
+                    <Pressable
+                      style={styles.soundAction}
+                      onPress={() => {
+                        // Opening the sheet is the whole point: setTrimSound only
+                        // seeds SoundPickerModal's `initial`, and that modal is
+                        // gated on soundOpen. Without this line the button set a
+                        // value nothing rendered and the sheet stayed shut, so
+                        // Trim was silently a no-op — the reported "I can't trim
+                        // the sound from the place I want it to play".
+                        setTrimSound(sound);
+                        setSoundOpen(true);
+                      }}
+                    >
                       <Icon name="cut-outline" size={13} color={colors.accent} />
                       <Text style={styles.soundActionText}>Trim</Text>
                     </Pressable>

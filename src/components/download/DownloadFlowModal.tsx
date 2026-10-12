@@ -138,6 +138,10 @@ export default function DownloadFlowModal({ post, onClose }: Props) {
   const [label, setLabel] = useState('Preparing…');
   const [index, setIndex] = useState(0);
   const [saved, setSaved] = useState(0);
+  // True when a video was saved WITHOUT the GEN Z mark: either every ffmpeg
+  // plan failed, or the plan that worked cannot draw the mark. Surfaced rather
+  // than hidden - the user should know what they actually got.
+  const [unbranded, setUnbranded] = useState(false);
   const [previewUri, setPreviewUri] = useState<string | null>(null); // cached photo ready for capture
   const shotRef = useRef<View>(null);
   const capturedOnce = useRef(false);
@@ -180,10 +184,26 @@ export default function DownloadFlowModal({ post, onClose }: Props) {
             // for an exact -t cap when the picked track is looped to fit
             const durSec = await localVideoDurationSec(local);
             const wmShot = await waitPillShot();
-            const out = await bakeDownloadVideo(local, music, durSec, wmShot);
+            // The bake already walks a ladder of ffmpeg plans and ends with a
+            // plain remux, so a throw here means even THAT failed. Save the
+            // video the user asked for anyway and say what is missing, instead
+            // of saving nothing.
+            let out = local;
+            let branded = false;
+            let renameAs: string | undefined = genzDownloadStamp();
+            try {
+              const baked = await bakeDownloadVideo(local, music, durSec, wmShot);
+              out = baked.uri;
+              branded = baked.watermarked;
+              // the bake already names its output GenZ_<date>_<hhmm>.mp4
+              renameAs = undefined;
+            } catch (e: any) {
+              console.warn('[download] video bake failed - saving the original:', e?.message);
+            }
+            if (!branded) setUnbranded(true);
             setPhase('saving');
             setLabel('Saving to your phone…');
-            await saveToGallery(out);
+            await saveToGallery(out, renameAs);
             setSaved((s) => s + 1);
           } else {
             const local = await fetchMediaToCache(item.url, `photo-${post.id}`);
@@ -317,6 +337,11 @@ export default function DownloadFlowModal({ post, onClose }: Props) {
                     : 'Saved to your phone'
                   : label}
               </Text>
+              {phase === 'done' && unbranded && (
+                <Text style={styles.cardNote}>
+                  Saved without the GEN Z mark - this video couldn't be watermarked.
+                </Text>
+              )}
               {phase === 'done' && (
                 <Pressable style={styles.doneBtn} onPress={onClose}>
                   <Text style={styles.doneBtnText}>Done</Text>
@@ -445,6 +470,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
     marginTop: 14,
+  },
+  cardNote: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 17,
   },
   doneBtn: {
     marginTop: 18,

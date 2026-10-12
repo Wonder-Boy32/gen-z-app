@@ -14,7 +14,15 @@ import {
 } from 'react-native';
 import { supabase } from '../supabase/client';
 import { markDeliberateSignOut } from '../utils/sessionGuard';
-import { colors, radius, shadows } from '../theme';
+import {
+  colors,
+  radius,
+  shadows,
+  applyThemeMode,
+  cacheThemeMode,
+  getThemeMode,
+  ThemeMode,
+} from '../theme';
 import { TOP_INSET } from '../utils/useInsets';
 import { copyToClipboard } from '../utils/clipboard';
 import { unregisterPush } from '../utils/push';
@@ -47,6 +55,18 @@ import { fetchVerificationState, type VerificationStatus } from '../services/ver
 import { useAndroidBack } from '../utils/useAndroidBack';
 
 const APP_VERSION = '0.1.0';
+
+/**
+ * The two themes offered in Settings.
+ *
+ * Labels are the names the looks go by, not "dark"/"light": "Midnight" is what
+ * the dark palette actually is, and "White" reads warmer and more deliberate
+ * than a literal "Light".
+ */
+const THEME_OPTIONS: { id: ThemeMode; label: string }[] = [
+  { id: 'dark', label: 'Midnight' },
+  { id: 'light', label: 'White' },
+];
 
 // GenZ+ (premium) and verification (authenticity) are separate systems, so they
 // get separate labels rather than one shared "badge" concept.
@@ -214,6 +234,31 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
     if (!user) return;
     setSettings((s: any) => ({ ...s, ...patch }));
     await supabase.from('settings').upsert({ user_id: user.id, ...patch }, { onConflict: 'user_id' });
+  };
+
+  // ---------- appearance ----------
+  //
+  // Three things have to happen, in this order, and the order is deliberate:
+  //
+  //   1. cacheThemeMode  — a SYNCHRONOUS file write. This is what the app reads
+  //      on next launch, before the app graph loads, so the theme is already
+  //      correct on the first frame. Async storage could not do that job: it
+  //      would resolve after the 81 style sheets had captured their colours.
+  //   2. applyThemeMode  — swaps the palette in place, rewrites every registered
+  //      style container, and notifies the root to re-render. Synchronous, so
+  //      the change is visible immediately.
+  //   3. updateProfile   — the cross-device copy. Fired last and never awaited
+  //      for correctness: if it fails (offline), the local choice already stands
+  //      and the DB will simply catch up on the next successful save. A theme
+  //      that silently reverts because a request failed would be worse.
+  const [themeMode, setThemeMode] = useState<ThemeMode>(getThemeMode());
+
+  const chooseTheme = (next: ThemeMode) => {
+    if (next === themeMode) return;
+    cacheThemeMode(next);
+    applyThemeMode(next);
+    setThemeMode(next);
+    void updateProfile({ theme: next });
   };
 
   const logout = async () => {
@@ -464,7 +509,40 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
 
         {/* ---------------- about ---------------- */}
         <Section title="About">
-          <StaticRow icon="color-palette-outline" label="Appearance" detail="Midnight dark — light theme is still in the works" />
+                    {/* Appearance — a real control, replacing the row that used to read
+              "light theme is still in the works". Both options are shown rather
+              than a single switch: the choice is between two named looks, and a
+              toggle gives no clue which way round it currently is. */}
+          <View style={styles.themeRow}>
+            <View style={styles.themeHead}>
+              <Icon name="color-palette-outline" size={18} color={colors.accent} />
+              <View style={styles.themeHeadText}>
+                <Text style={styles.rowLabel}>Appearance</Text>
+                <Text style={styles.rowDetail}>
+                  {themeMode === 'light' ? 'White' : 'Midnight dark'}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.themeSeg}>
+              {THEME_OPTIONS.map((o) => {
+                const on = themeMode === o.id;
+                return (
+                  <Pressable
+                    key={o.id}
+                    onPress={() => chooseTheme(o.id)}
+                    style={[styles.themeOpt, on && styles.themeOptOn]}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: on }}
+                    accessibilityLabel={`${o.label} theme`}
+                  >
+                    <Text style={[styles.themeOptText, on && styles.themeOptTextOn]}>
+                      {o.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
           <StaticRow icon="pricetag-outline" label="App version" detail={APP_VERSION} />
         </Section>
 
@@ -941,6 +1019,30 @@ const styles = StyleSheet.create({
   rowLabel: { color: colors.text, fontSize: 14, fontWeight: '500', flexShrink: 1 },
   rowDetail: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
   rowAction: { color: colors.accent, fontSize: 12.5, fontWeight: '700' },
+
+  // ---------- appearance / theme picker ----------
+  themeRow: { paddingHorizontal: 16, paddingVertical: 14 },
+  themeHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  themeHeadText: { flex: 1 },
+  themeSeg: {
+    flexDirection: 'row',
+    marginTop: 12,
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 3,
+    gap: 3,
+  },
+  themeOpt: { flex: 1, paddingVertical: 9, borderRadius: radius.sm, alignItems: 'center' },
+  themeOptOn: { backgroundColor: colors.accent },
+  themeOptText: { color: colors.textMuted, fontSize: 13, fontWeight: '700' },
+  // Deliberately a literal, not colors.text: this is text sitting ON the orange
+  // accent, so it must stay near-black in BOTH themes. In white mode colors.text
+  // is near-black anyway, and in dark mode it is near-white — which on orange
+  // would be low-contrast. Theme-independent by nature, so it is hardcoded on
+  // purpose and must NOT be "fixed" later.
+  themeOptTextOn: { color: '#0B1120' },
 
   segment: {
     flexDirection: 'row',

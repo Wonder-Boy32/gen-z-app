@@ -8,7 +8,7 @@ import WelcomeScreen from './src/screens/WelcomeScreen';
 import AuthScreen from './src/screens/AuthScreen';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import HomeScreen from './src/screens/HomeScreen';
-import { colors } from './src/theme';
+import { colors, subscribeTheme } from './src/theme';
 import { initPush, onNotificationTap, clearBadge } from './src/utils/push';
 import { primeCache, peek, put, drop, cacheKey } from './src/utils/fastCache';
 import {
@@ -56,6 +56,23 @@ export default function App() {
 
 function AppInner() {
   const [session, setSession] = useState<Session | null>(null);
+
+  // Re-render the whole app when the theme palette changes.
+  //
+  // A counter rather than the mode itself: the value is never READ, only
+  // changed, so the state slot is destructured as a hole. That keeps the
+  // unused-variable rule satisfied while still forcing React to re-render this
+  // component — and with it the entire non-memoised subtree, which re-reads
+  // `colors.*` and the rewritten style containers as it re-renders.
+  //
+  // Deliberately NOT a remount via key={mode}: remounting AppInner would restart
+  // its session bootstrap, and a null session renders the welcome screen on that
+  // first pass — the exact "it keeps taking me back to that screen" flash this
+  // app has already been fixed for once. A re-render refreshes colours and
+  // leaves the session untouched.
+  const [, forceThemeRender] = useState(0);
+  useEffect(() => subscribeTheme(() => forceThemeRender((n) => n + 1)), []);
+
   const [profile, setProfile] = useState<{ username: string; avatar_url: string | null } | null>(null);
   const [loading, setLoading] = useState(true);
   // logged-out entry: Instagram-style welcome first → Explore goes to signup
