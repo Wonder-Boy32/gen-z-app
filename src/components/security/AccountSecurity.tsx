@@ -261,6 +261,17 @@ export function SessionsScreen({ onClose }: { onClose: () => void }) {
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.sessionDevice}>{s.device ?? 'Device'}</Text>
+              {/* Where and from which IP, so a session the user does not
+                  recognise is identifiable at a glance rather than by guessing
+                  at a device nickname. Falls back to the IP, then to nothing —
+                  never to a made-up place. */}
+              {(s.city || s.country || s.ip) && (
+                <Text style={styles.sessionMeta}>
+                  <Icon name="location-outline" size={11} color={colors.textMuted} />{' '}
+                  {[s.city, s.country].filter(Boolean).join(', ') || 'Unknown location'}
+                  {s.ip ? ` · ${s.ip}` : ''}
+                </Text>
+              )}
               <Text style={styles.sessionMeta}>
                 {s.app ?? 'Gen Z app'} · last active{' '}
                 {s.last_active

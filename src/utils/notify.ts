@@ -10,6 +10,11 @@ export type NotifyType =
   | 'comment_like'
   | 'anon_message'
   | 'call'
+  // Security: the account was signed in on another device. Written by the
+  // register_signin() RPC, never by notifyUser() — there is no actor to notify
+  // on behalf of, the alert is addressed to the account owner about their own
+  // account, so the row is self-authored by design.
+  | 'new_login'
   // local-only: "your post finished uploading". Never stored, never sent to
   // another user — it is shown by the app to the person who posted.
   | 'upload';

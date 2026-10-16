@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -35,11 +36,27 @@ type NotifRow = {
   actor: { username: string; display_name: string | null; avatar_url: string | null; verified: boolean } | null;
   post: PostThumb;
   comment: { content: string } | null;
+  // only populated for `new_login`, which has no actor to name — the useful
+  // facts about a sign-in are the device and the place it came from
+  meta?: SigninMeta | null;
+};
+
+type SigninMeta = {
+  device?: string | null;
+  platform?: string | null;
+  ip?: string | null;
+  city?: string | null;
+  region?: string | null;
+  country?: string | null;
+  country_code?: string | null;
+  isp?: string | null;
+  new_device?: boolean;
+  new_location?: boolean;
 };
 
 type Section = { title: string; data: NotifRow[] };
 
-type FilterKey = 'all' | 'comments' | 'likes' | 'follows' | 'messages';
+type FilterKey = 'all' | 'comments' | 'likes' | 'follows' | 'messages' | 'security';
 
 const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'all', label: 'All' },
@@ -47,6 +64,7 @@ const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'likes', label: 'Likes' },
   { key: 'follows', label: 'Follows' },
   { key: 'messages', label: 'Messages' },
+  { key: 'security', label: 'Security' },
 ];
 
 const FILTER_TYPES: Record<FilterKey, NotifyType[] | null> = {
@@ -55,6 +73,7 @@ const FILTER_TYPES: Record<FilterKey, NotifyType[] | null> = {
   likes: ['like', 'comment_like', 'reaction'],
   follows: ['follow', 'repost'],
   messages: ['anon_message', 'call'],
+  security: ['new_login'],
 };
 
 // words that follow the bold username
@@ -68,6 +87,7 @@ const COPY: Record<NotifyType, string> = {
   comment_like: 'liked your comment',
   anon_message: 'sent you an anonymous message',
   call: 'tried to call you',
+  new_login: 'signed in on another device',
   // local-only type (your own upload finishing) — never stored in
   // `notifications`, so it never renders in this list. Present to keep the
   // Record exhaustive.
@@ -84,6 +104,7 @@ const CHIP: Record<NotifyType, { icon: IconName; color: string }> = {
   comment_like: { icon: 'heart', color: '#FF3B5C' },
   anon_message: { icon: 'eye-off', color: '#A8E6F2' },
   call: { icon: 'call', color: '#FF5C7C' },
+  new_login: { icon: 'shield-checkmark', color: '#FF9D1F' },
   upload: { icon: 'cloud-upload', color: '#FF9D1F' },
 };
 
@@ -130,6 +151,8 @@ export default function ActivityScreen({
   const [replyTo, setReplyTo] = useState<{ commentId: string; username: string; postId: string | null } | null>(null);
   const [replyText, setReplyText] = useState('');
   const [sending, setSending] = useState(false);
+  // id of the sign-in row currently being revoked, so only that button spins
+  const [securing, setSecuring] = useState<string | null>(null);
   const myIdRef = useRef<string | null>(null);
   const replyInput = useRef<TextInput>(null);
 
@@ -150,7 +173,7 @@ export default function ActivityScreen({
     const { data } = await supabase
       .from('notifications')
       .select(
-        'id, type, read, created_at, post_id, comment_id, actor_id, ' +
+        'id, type, read, created_at, post_id, comment_id, actor_id, meta, ' +
           'actor:profiles!notifications_actor_id_fkey(username, display_name, avatar_url, verified), ' +
           'post:posts!notifications_post_id_fkey(cover_url, media_url, media_type), ' +
           'comment:comments!notifications_comment_id_fkey(content)'
@@ -221,6 +244,7 @@ export default function ActivityScreen({
               post_id: string | null;
               comment_id: string | null;
               actor_id: string;
+              meta: SigninMeta | null;
             };
 
             const [actorRes, postRes, commentRes] = await Promise.all([
@@ -252,6 +276,7 @@ export default function ActivityScreen({
               actor: (actorRes.data ?? null) as NotifRow['actor'],
               post: (postRes.data ?? null) as PostThumb,
               comment: (commentRes.data ?? null) as { content: string } | null,
+              meta: row.meta ?? null,
             };
 
             setItems((prev) => [enriched, ...prev]);
@@ -347,6 +372,43 @@ export default function ActivityScreen({
     }
   };
 
+  /**
+   * "This wasn't me" — revoke every other session and sign the intruder out.
+   *
+   * Uses the same auth_invalidate_sessions() RPC as Settings > Security, so
+   * there is one revocation path with one set of guarantees rather than a
+   * second implementation that could drift. Confirmed first: this signs the
+   * user out of their other devices too, so it must not fire on a stray tap.
+   */
+  const secureAccount = (row: NotifRow) => {
+    Alert.alert(
+      'Wasn’t you?',
+      'This signs out every device on your account, including the one that just signed in. You’ll stay logged in here, but you should change your password afterwards.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Sign out all devices',
+          style: 'destructive',
+          onPress: async () => {
+            setSecuring(row.id);
+            try {
+              const { error } = await supabase.rpc('auth_invalidate_sessions');
+              if (error) throw error;
+              Alert.alert(
+                'Signed out',
+                'Other devices have been signed out. Change your password to keep them out.'
+              );
+            } catch {
+              Alert.alert('Could not sign out devices', 'Please try again, or use Settings > Security.');
+            } finally {
+              setSecuring(null);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const followBack = async (row: NotifRow) => {
     const me = myIdRef.current;
     if (!me || row.actor_id === me) return;
@@ -396,9 +458,15 @@ export default function ActivityScreen({
     const chip = CHIP[row.type];
     const isCommentish = (row.type === 'comment' || row.type === 'reply') && !!row.comment_id;
     const isFollow = row.type === 'follow';
+    const isSignin = row.type === 'new_login';
     const preview = row.comment?.content?.trim();
     const thumb =
       row.post && (row.post.cover_url || (row.post.media_type !== 'text' ? row.post.media_url : null));
+
+    // A sign-in alert names no other person: the "actor" is the account owner,
+    // so the two facts that matter are the device and where it came from.
+    const meta = row.meta ?? null;
+    const place = [meta?.city, meta?.country].filter(Boolean).join(', ') || null;
 
     return (
       <Pressable
@@ -408,7 +476,11 @@ export default function ActivityScreen({
         {unread && <View style={styles.unreadBar} />}
 
         <View style={styles.avatarWrap}>
-          {row.type === 'anon_message' ? (
+          {isSignin ? (
+            <View style={styles.signinAvatar}>
+              <Icon name="shield-checkmark" size={20} color={colors.accent} />
+            </View>
+          ) : row.type === 'anon_message' ? (
             <View style={styles.anonAvatar}>
               <Icon name="eye-off-outline" size={18} color={colors.cyan} />
             </View>
@@ -428,7 +500,21 @@ export default function ActivityScreen({
 
         <View style={styles.body}>
           <View style={styles.line}>
-            {row.type === 'anon_message' ? (
+            {isSignin ? (
+              <>
+                <Text style={styles.username} numberOfLines={1}>
+                  New sign-in
+                </Text>
+                <Text style={styles.action} numberOfLines={2}>
+                  {' '}
+                  {meta?.new_device && meta?.new_location
+                    ? 'on a new device, from a new location'
+                    : meta?.new_location
+                      ? 'from a new location'
+                      : 'on a new device'}
+                </Text>
+              </>
+            ) : row.type === 'anon_message' ? (
               <Text style={styles.action}>{COPY[row.type]}</Text>
             ) : (
               <>
@@ -448,6 +534,31 @@ export default function ActivityScreen({
             <Text style={styles.preview} numberOfLines={2}>
               {preview}
             </Text>
+          )}
+
+          {isSignin && (
+            <View style={styles.detailBox}>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Device</Text>
+                <Text style={styles.detailValue} numberOfLines={1}>
+                  {meta?.device || meta?.platform || 'Unknown device'}
+                </Text>
+              </View>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Location</Text>
+                <Text style={styles.detailValue} numberOfLines={1}>
+                  {/* falls back to the IP rather than lying with a blank or a
+                      guessed city when the geo lookup found nothing */}
+                  {place || meta?.ip || 'Unknown location'}
+                </Text>
+              </View>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>IP</Text>
+                <Text style={styles.detailValue} numberOfLines={1}>
+                  {meta?.ip || '—'}
+                </Text>
+              </View>
+            </View>
           )}
 
           <View style={styles.metaRow}>
@@ -474,6 +585,19 @@ export default function ActivityScreen({
                   <Text style={styles.metaActionText}>Reply</Text>
                 </Pressable>
               </>
+            )}
+            {isSignin && (
+              <Pressable
+                onPress={() => secureAccount(row)}
+                hitSlop={8}
+                style={[styles.metaAction, securing === row.id && { opacity: 0.5 }]}
+                disabled={securing === row.id}
+              >
+                <Icon name="log-out-outline" size={14} color={colors.accent} />
+                <Text style={[styles.metaActionText, styles.metaActionTextActive]}>
+                  {securing === row.id ? 'Signing out…' : 'This wasn’t me'}
+                </Text>
+              </Pressable>
             )}
             {isFollow && row.actor_id !== myIdRef.current && (
               <Pressable
@@ -748,6 +872,47 @@ const styles = StyleSheet.create({
     borderColor: colors.cyan,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  // security avatar: deliberately not the user's own picture — this alert is
+  // about the account, not about a person who did something to you
+  signinAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1.5,
+    borderColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // fact sheet under a sign-in alert: label left, value right, one line each
+  detailBox: {
+    marginTop: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: 5,
+  },
+  detailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  detailLabel: {
+    width: 62,
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  detailValue: {
+    flex: 1,
+    fontSize: 13,
+    color: colors.text,
   },
   chipDot: {
     position: 'absolute',

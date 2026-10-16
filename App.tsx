@@ -9,7 +9,8 @@ import AuthScreen from './src/screens/AuthScreen';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import HomeScreen from './src/screens/HomeScreen';
 import { colors, subscribeTheme } from './src/theme';
-import { initPush, onNotificationTap, clearBadge } from './src/utils/push';
+import { initPush, onNotificationTap, clearBadge, deviceLabel } from './src/utils/push';
+import { reportSignin } from './src/utils/signinAlert';
 import { primeCache, peek, put, drop, cacheKey } from './src/utils/fastCache';
 import {
   mirrorSession,
@@ -249,6 +250,13 @@ function AppInner() {
       if (_event === 'SIGNED_IN' && isNewIdentity) {
         shownUidRef.current = s.user.id;
         setLoading(true);
+        // Tell the account's other devices that this sign-in happened, with the
+        // device name and where it came from. Fired here and nowhere else: this
+        // branch already excludes recovery, TOKEN_REFRESHED, USER_UPDATED and
+        // cold starts, which are exactly the events that must never produce a
+        // "new sign-in" warning. Deliberately not awaited — a security notice
+        // must not delay the user getting into their own app.
+        void reportSignin();
         void fetchProfile(s.user.id).finally(() => setLoading(false));
         return;
       }
@@ -359,7 +367,9 @@ function AppInner() {
 
     const note = async () => {
       try {
-        const dev = `${Platform.OS === 'ios' ? 'iPhone' : 'Android'} · ${Platform.OS}`;
+        // Real device name rather than the old "Android · android", which told
+        // the user nothing when they were checking "Where you're logged in".
+        const dev = deviceLabel();
         const key = await AsyncStorage.getItem('genz_session_key').catch(() => null);
         const sk = key ?? `k${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
         if (!key) AsyncStorage.setItem('genz_session_key', sk).catch(() => {});

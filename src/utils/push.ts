@@ -47,6 +47,32 @@ export type PushStatus = {
 let cached: NotifModule | null = null;
 let probed = false;
 
+// The token this install last registered, kept in memory only. The sign-in
+// alert uses it to tell the server which device to SKIP: the phone that just
+// signed in must never be told that "another device" signed in.
+let lastToken: string | null = null;
+
+/** This install's push token, or null when it has not been obtained yet. */
+export function getPushToken(): string | null {
+  return lastToken;
+}
+
+/**
+ * Resolves with this install's push token, waiting briefly for initPush() when
+ * it is still in flight. Resolves null when push cannot work here at all
+ * (permission denied, Expo Go, a binary that predates expo-notifications) --
+ * the caller must still report the sign-in, just without the exclusion token.
+ */
+export async function waitForPushToken(timeoutMs = 8000): Promise<string | null> {
+  if (lastToken) return lastToken;
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    await new Promise((r) => setTimeout(r, 250));
+    if (lastToken) return lastToken;
+  }
+  return null;
+}
+
 /**
  * Load expo-notifications once, safely. Returns null when notifications simply
  * cannot work here: web, Expo Go, or a native build that predates the package.
@@ -151,6 +177,10 @@ const CHANNEL_FOR: Record<NotifyType, string> = {
   comment_like: 'likes',
   anon_message: 'messages',
   call: 'messages',
+  // a sign-in warning is security-critical and must be impossible to miss, but
+  // it is rare, so it rides the general channel rather than inventing a sixth
+  // one the user would have to go and configure.
+  new_login: 'default',
   // "post uploaded" is the user's own housekeeping, not someone else's action,
   // so it belongs on the general channel rather than in likes/comments.
   upload: 'default',
@@ -201,7 +231,7 @@ function projectId(): string | null {
   }
 }
 
-function deviceLabel(): string {
+export function deviceLabel(): string {
   try {
     const name = (Constants as { deviceName?: string } | null)?.deviceName;
     return name && name.length ? name : Platform.OS === 'ios' ? 'iPhone' : 'Android device';
@@ -211,6 +241,9 @@ function deviceLabel(): string {
 }
 
 async function saveToken(token: string) {
+  // remember it before the round trip: a sign-in report that runs while this is
+  // in flight still needs to know which device to exclude
+  lastToken = token;
   try {
     await supabase.rpc('register_push_token', {
       p_token: token,
