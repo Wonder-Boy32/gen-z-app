@@ -1400,17 +1400,22 @@ export default function FeedScreen({
         </ScrollView>
 
         {/* filter / preferences entry */}
-        <Pressable style={[styles.railFilterBtn, { top: railTop }]} onPress={() => setPrefsOpen(true)} hitSlop={6}>
+        {/* NOTE: no `top` here. This button is a child of railWrap, which is itself
+            absolutely positioned at `railTop` — passing railTop again measured from
+            railWrap's own top edge and pushed the button a second railTop down the
+            screen, so it floated over the video instead of sitting in the rail. */}
+        <Pressable style={styles.railFilterBtn} onPress={() => setPrefsOpen(true)} hitSlop={6}>
           <Icon name="options-outline" size={16} color={colors.logoWhite} style={styles.railFilterIcon} />
         </Pressable>
 
         {/* edge fades so it's obvious more tabs exist */}
-        <View style={[styles.fadeEdge, styles.fadeLeft, { top: railTop }]} pointerEvents="none">
+        {/* Same double-offset bug as the filter button: child of railWrap, so top:0. */}
+        <View style={[styles.fadeEdge, styles.fadeLeft]} pointerEvents="none">
           {[0.75, 0.5, 0.3, 0.15, 0.06].map((o, i) => (
             <View key={i} style={[styles.fadeStrip, { backgroundColor: `rgba(6,10,22,${o})` }]} />
           ))}
         </View>
-        <View style={[styles.fadeEdge, styles.fadeRight, { top: railTop }]} pointerEvents="none">
+        <View style={[styles.fadeEdge, styles.fadeRight]} pointerEvents="none">
           {[0.06, 0.15, 0.3, 0.5, 0.75].map((o, i) => (
             <View key={i} style={[styles.fadeStrip, { backgroundColor: `rgba(6,10,22,${o})` }]} />
           ))}
@@ -2127,6 +2132,9 @@ const styles = StyleSheet.create({
   railFilterBtn: {
     position: 'absolute',
     right: 10,
+    // 30px button centred in the 40px rail. `top` is deliberately relative to
+    // railWrap — do NOT pass railTop here, that offset is already on the parent.
+    top: 5,
     zIndex: 14,
     backgroundColor: 'rgba(13,20,38,0.85)',
     borderWidth: 1,
