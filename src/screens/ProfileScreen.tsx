@@ -372,7 +372,9 @@ export default function ProfileScreen({
                     resizeMode="cover"
                   />
                 ) : (
-                  <GradientFill from="#2B1B4E" to="#101A33" horizontal steps={12} style={FILL} />
+                  /* cover fallback — the name and handle are painted over this,
+                     so it has to invert with the text tokens on top of it */
+                  <GradientFill from={colors.coverFrom} to={colors.coverTo} horizontal steps={12} style={FILL} />
                 )}
                 <View style={styles.coverScrim}>
                   <GradientFill
@@ -1118,7 +1120,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#0A1220',
   },
   dropVideoPhText: {
-    color: colors.textMuted,
+    // sits on dropVideoPh / tileVideoPh, which stay dark in both themes
+    color: colors.onMediaMuted,
     fontSize: 22,
     fontWeight: '800',
   },

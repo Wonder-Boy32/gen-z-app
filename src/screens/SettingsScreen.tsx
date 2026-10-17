@@ -1042,7 +1042,7 @@ const styles = StyleSheet.create({
   // is near-black anyway, and in dark mode it is near-white — which on orange
   // would be low-contrast. Theme-independent by nature, so it is hardcoded on
   // purpose and must NOT be "fixed" later.
-  themeOptTextOn: { color: '#0B1120' },
+  themeOptTextOn: { color: colors.onAccent },
 
   segment: {
     flexDirection: 'row',

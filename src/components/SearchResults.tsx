@@ -726,7 +726,9 @@ const styles = StyleSheet.create({
     padding: 8,
   },
   videoPh: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#0A1220' },
-  videoPhText: { color: colors.textMuted, fontSize: 18, fontWeight: '800' },
+  // sits on videoPh, which stays dark in both themes — colors.textMuted would
+  // go near-black in White mode and disappear into the well
+  videoPhText: { color: colors.onMediaMuted, fontSize: 18, fontWeight: '800' },
   tileText: {
     color: colors.text,
     fontSize: 10,

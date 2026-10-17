@@ -842,7 +842,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#0A1220',
   },
   textPostBg: {
-    backgroundColor: '#101A33',
+    // Only the FALLBACK for a text drop that carries no text_bg of its own
+    // (see post.text_bg in the render). It used to be a hardcoded dark navy,
+    // but textPostContent reads colors.text — so in White mode a text post
+    // rendered near-black text on navy and disappeared. A surface token keeps
+    // the tile and its text on the same side of the theme.
+    backgroundColor: colors.surfaceAlt,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 40,

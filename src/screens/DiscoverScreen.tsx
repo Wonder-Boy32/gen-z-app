@@ -609,7 +609,9 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onO
 
         {/* ---------- search entry point ---------- */}
         <Press style={styles.dcSearch} onPress={() => setSearchFocused(true)} shrink={0.99}>
-          <GradientFill from="#141E3A" to="#0B1224" steps={10} horizontal style={FILL} />
+          {/* tokens, not literals — dcSearchText reads colors.textMuted and
+              goes dark in White mode, so this panel must lighten with it */}
+          <GradientFill from={colors.gradFrom} to={colors.gradTo} steps={10} horizontal style={FILL} />
           <Glow color={colors.accent} size={140} strength={0.1} style={styles.dcSearchGlow} />
           <Icon name="search" size={17} color={colors.accent} />
           <Text style={styles.dcSearchText}>Search people, moments, Drops...</Text>
@@ -721,7 +723,7 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onO
               )
             ) : (
               <View style={styles.dcPrompt}>
-                <GradientFill from="#141E3A" to="#0B1224" steps={12} style={FILL} />
+                <GradientFill from={colors.gradFrom} to={colors.gradTo} steps={12} style={FILL} />
                 <CornerBrackets color="rgba(139,123,255,0.35)" size={16} inset={10} />
                 <Text style={styles.dcPromptTitle}>Choose your campus</Text>
                 <Text style={styles.dcPromptText}>
@@ -903,7 +905,7 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onO
         {/* ---------- EMPTY STATE ---------- */}
         {nothingAtAll && (
           <View style={styles.dcEmpty}>
-            <GradientFill from="#141E3A" to="#0A1020" steps={14} style={FILL} />
+            <GradientFill from={colors.gradFrom} to={colors.gradTo} steps={14} style={FILL} />
             <Glow color={colors.accent} size={220} strength={0.14} style={styles.dcEmptyGlow} />
             <CornerBrackets color="rgba(255,157,31,0.4)" size={20} inset={12} />
             {/* An empty feed should read as "you're early", not "this app is
@@ -1367,7 +1369,9 @@ const styles = StyleSheet.create({
   },
   videoPh: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#0A1220' },
   videoPhRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  videoPhText: { color: colors.textMuted, fontSize: 20, fontWeight: '800' },
+  // this label sits on videoPh, which stays dark in both themes, so it must not
+  // read colors.textMuted — that goes near-black in White mode and vanishes
+  videoPhText: { color: colors.onMediaMuted, fontSize: 20, fontWeight: '800' },
   cardTextBg: {
     backgroundColor: colors.surfaceAlt,
     padding: 8,

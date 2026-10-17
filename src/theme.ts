@@ -88,6 +88,44 @@ const DARK = {
   // misc
   overlay: 'rgba(3,6,14,0.55)',
   shadow: '#000000',
+
+  // ---- gradient + on-colour tokens ------------------------------------
+  //
+  // These exist because of a whole class of bug: a panel's BACKGROUND was a
+  // bare literal (so it stayed navy in White mode) while the TEXT inside it
+  // read a token like colors.text (so it became near-black). Black on navy is
+  // invisible, and that is exactly what the Create hero and the Discover
+  // search bar looked like.
+  //
+  // Anything painted behind text must come from here — never a literal.
+
+  /** Standard raised-panel gradient (search fields, studio zones, cards). */
+  gradFrom: '#141E3A',
+  gradTo: '#0B1224',
+  /** The Create hero: the deepest panel in the app. */
+  heroFrom: '#16203C',
+  heroTo: '#0C1322',
+  /** Profile cover fallback when the user has no cover image. */
+  coverFrom: '#2B1B4E',
+  coverTo: '#101A33',
+
+  /**
+   * Text drawn ON the orange accent (buttons, the selected settings chip).
+   *
+   * Deliberately dark in BOTH palettes: the accent does not change between
+   * themes, so the text on it must not either. Named so a future palette edit
+   * cannot turn the label on an orange button white-on-orange by accident.
+   */
+  onAccent: '#0B1120',
+
+  /**
+   * Muted text drawn over media (video placeholders, thumbnails).
+   *
+   * Media wells stay dark in both themes — a video slot is content, not
+   * chrome — so the label on one cannot use colors.textMuted, which goes dark
+   * in White mode and would vanish against the well.
+   */
+  onMediaMuted: '#9AA5C0',
 };
 
 export type Palette = typeof DARK;
@@ -145,6 +183,30 @@ const LIGHT: Palette = {
   // misc — a light scrim, so overlays on photos still read as overlays
   overlay: 'rgba(255,255,255,0.62)',
   shadow: '#000000',
+
+  // ---- gradient + on-colour tokens (see the notes on the dark palette) ----
+  //
+  // The gradient stops invert: a panel that was deep navy becomes a white or
+  // faintly warm surface, so the text inside it (colors.text / textMuted, which
+  // also invert) lands dark-on-light instead of dark-on-dark.
+  //
+  // Values are chosen to be DISTINCT from every other light value on purpose:
+  // the literal-remap table in this file is keyed by colour, so two tokens
+  // sharing a value would make a stale literal ambiguous.
+  gradFrom: '#FBFBFD',
+  gradTo: '#F1F2F6',
+  // the hero keeps a hint of warmth — a flat white card would lose the orange
+  // bloom entirely and read as an empty box. Not pure #FFFFFF on purpose: that
+  // value is already bg/surface/logoWhite, and a duplicate would make the
+  // literal-remap table ambiguous.
+  heroFrom: '#FDFDFF',
+  heroTo: '#FFF6E9',
+  coverFrom: '#EFE9FF',
+  coverTo: '#F4F4F7',
+
+  // dark in both palettes — see the dark palette for why
+  onAccent: '#0B1120',
+  onMediaMuted: '#9AA5C0',
 };
 
 /**

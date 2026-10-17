@@ -161,7 +161,7 @@ export default function InviteSheet({ visible, onClose, onRedeemed }: Props) {
                   </Text>
                 </Pressable>
                 <Pressable style={[styles.btn, styles.btnPrimary]} onPress={onShare}>
-                  <Ionicons name="share-outline" size={17} color="#0B1120" />
+                  <Ionicons name="share-outline" size={17} color={colors.onAccent} />
                   <Text style={styles.btnTextDark}>Share</Text>
                 </Pressable>
               </View>
@@ -279,7 +279,9 @@ const styles = StyleSheet.create({
   btnDisabled: { opacity: 0.45 },
   btnText: { color: colors.text, fontSize: 14, fontWeight: '800' },
   btnTextAccent: { color: colors.accent },
-  btnTextDark: { color: '#0B1120', fontSize: 14, fontWeight: '800' },
+  // onAccent, not a literal: this label sits on the orange button, which is the
+  // same orange in both themes, so the text on it must stay dark in both
+  btnTextDark: { color: colors.onAccent, fontSize: 14, fontWeight: '800' },
   divider: { height: 1, backgroundColor: colors.border, marginTop: 22, marginBottom: 16 },
   entryLabel: { color: colors.textMuted, fontSize: 13, fontWeight: '700', marginBottom: 9 },
   entryRow: { flexDirection: 'row', gap: 10 },

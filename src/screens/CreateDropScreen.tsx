@@ -444,7 +444,7 @@ function TemplateArt({ t, width }: { t: HubTemplate; width: number }) {
 
   return (
     <View style={[styles.hbTplArt, { height }]}>
-      <GradientFill from="#131C36" to="#0B1120" steps={12} style={FILL} />
+      <GradientFill from={colors.gradFrom} to={colors.gradTo} steps={12} style={FILL} />
       <GradientFill
         from={accent}
         to={accent}
@@ -1559,7 +1559,10 @@ export default function CreateDropScreen({
 
           {/* ---------- hero: new drop ---------- */}
           <Press containerStyle={styles.hbHeroWrap} style={styles.hbHero} onPress={() => startFresh('media')} shrink={0.985}>
-            <GradientFill from="#16203C" to="#0C1322" steps={16} style={FILL} />
+            {/* theme tokens, not literals: the copy inside this card reads
+                colors.text, so the panel behind it has to invert with the same
+                palette or White mode gets near-black text on navy */}
+            <GradientFill from={colors.heroFrom} to={colors.heroTo} steps={16} style={FILL} />
             <GradientFill
               from={colors.accent}
               to={colors.accentStrong}
@@ -1772,7 +1775,7 @@ export default function CreateDropScreen({
               <>
                 {/* ---------- studio drop zone ---------- */}
                 <Press style={styles.cvZone} onPress={() => setPickerOpen(true)} shrink={0.99}>
-                  <GradientFill from="#141E3A" to="#0A1020" steps={16} style={FILL} />
+                  <GradientFill from={colors.gradFrom} to={colors.gradTo} steps={16} style={FILL} />
                   <Glow color={colors.accent} size={300} strength={0.12} style={styles.cvZoneGlow} />
                   <CornerBrackets color="rgba(255,157,31,0.5)" size={22} inset={12} />
 
@@ -2242,7 +2245,7 @@ export default function CreateDropScreen({
 
             {/* ---------- live post preview ---------- */}
             <View style={styles.pvCard}>
-              <GradientFill from="#141E3A" to="#0A1020" steps={14} style={FILL} />
+              <GradientFill from={colors.gradFrom} to={colors.gradTo} steps={14} style={FILL} />
               <CornerBrackets color="rgba(255,157,31,0.35)" size={18} inset={10} />
 
               <View style={styles.pvHead}>
@@ -3453,7 +3456,9 @@ const styles = StyleSheet.create({
     marginTop: 12,
     borderRadius: radius.lg,
     overflow: 'hidden',
-    backgroundColor: '#0A1020',
+    // a surface, not a media well: while empty it holds pvMediaEmptyText, which
+    // reads colors.textFaint and would be grey-on-navy if this stayed dark
+    backgroundColor: colors.surfaceAlt,
     height: 250,
   },
   pvMedia: { width: '100%', height: '100%' },
