@@ -142,6 +142,9 @@ export default function DownloadFlowModal({ post, onClose }: Props) {
   // plan failed, or the plan that worked cannot draw the mark. Surfaced rather
   // than hidden - the user should know what they actually got.
   const [unbranded, setUnbranded] = useState(false);
+  // Why branding is missing, in the bake's own words. Shown instead of the old
+  // fixed sentence, so a screenshot of this dialog is now a usable bug report.
+  const [unbrandedNote, setUnbrandedNote] = useState('');
   const [previewUri, setPreviewUri] = useState<string | null>(null); // cached photo ready for capture
   const shotRef = useRef<View>(null);
   const capturedOnce = useRef(false);
@@ -197,8 +200,18 @@ export default function DownloadFlowModal({ post, onClose }: Props) {
               branded = baked.watermarked;
               // the bake already names its output GenZ_<date>_<hhmm>.mp4
               renameAs = undefined;
+              // A watermarked save with no jingle is still a branded save, but
+              // the user asked for both — say which half is missing rather than
+              // staying quiet about it.
+              if (!baked.watermarked || !baked.jingled) {
+                setUnbrandedNote(baked.reason ?? '');
+                if (!baked.watermarked) setUnbranded(true);
+              }
             } catch (e: any) {
               console.warn('[download] video bake failed - saving the original:', e?.message);
+              setUnbrandedNote(
+                `the video encoder failed on this phone (${e?.message ?? 'no reason given'})`
+              );
             }
             if (!branded) setUnbranded(true);
             setPhase('saving');
@@ -339,7 +352,9 @@ export default function DownloadFlowModal({ post, onClose }: Props) {
               </Text>
               {phase === 'done' && unbranded && (
                 <Text style={styles.cardNote}>
-                  Saved without the GEN Z mark - this video couldn't be watermarked.
+                  {unbrandedNote
+                    ? `Saved without the full GEN Z branding - ${unbrandedNote}`
+                    : "Saved without the GEN Z mark - this video couldn't be watermarked."}
                 </Text>
               )}
               {phase === 'done' && (

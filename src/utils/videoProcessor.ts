@@ -526,7 +526,25 @@ async function resolveWatermark(watermarkUri?: string | null): Promise<string | 
   return null;
 }
 
-export type BakeOutcome = { uri: string; watermarked: boolean };
+export type BakeOutcome = {
+  uri: string;
+  /** the corner GEN Z mark actually made it into the pixels */
+  watermarked: boolean;
+  /** the GEN Z jingle made it onto the audio track */
+  jingled: boolean;
+  /**
+   * Which plan produced the file, and — when branding is missing — why the
+   * better plans failed.
+   *
+   * This exists because "Saved without the GEN Z mark" was the only thing the
+   * user was ever told. The bake walks a ladder and the interesting information
+   * (which step failed, and ffmpeg's own reason) was only ever written to
+   * logcat, which is unreachable on a release build. Surfacing it is the only
+   * way a device report can be diagnosed without a debug session.
+   */
+  plan: string;
+  reason?: string;
+};
 
 /**
  * Bakes watermark (+ music + jingle outro) into a NEW video file.
@@ -592,20 +610,48 @@ export async function bakeDownloadVideo(
   // audio filters at all. Every fallback preserves SOME audio: a video that had
   // sound never comes back silent, and a missing filter never kills the
   // download.
-  type AudioMode = 'mix-music' | 'mix-orig' | 'music' | 'orig' | 'jingle';
+  type AudioMode = 'mix-music' | 'mix-orig' | 'music' | 'orig' | 'jingle' | 'jingle-concat';
 
   const hasOrigAudio = meta?.hasAudio !== false;
   const mixMode: AudioMode | null = musicUri ? 'mix-music' : hasOrigAudio ? 'mix-orig' : null;
   const plainMode: AudioMode | null = musicUri ? 'music' : hasOrigAudio ? 'orig' : null;
+  // ORDER MATTERS, AND IT IS NOT JUST "BEST FIRST".
+  //
+  // The on-device ffmpeg is a deliberate whitelist. Verified by reading the
+  // filter names out of the shipped libavfilter: it HAS overlay, scale, format,
+  // aformat, atrim, concat, volume and aresample, and it does NOT have amix,
+  // adelay, asetpts, anullsrc, pad, movie or drawtext.
+  //
+  // That single fact explains the reported bug. amix was the only way the jingle
+  // was ever added, so every plan that carried a mix mode died on a filter that
+  // does not exist here — and because the degraded plans reused the same mix
+  // mode (bestAudio below), THEY died too, all the way down to the filter-free
+  // remux. The result was a saved file with no watermark AND no jingle, which is
+  // exactly what the user saw. The watermark never failed on its own merits.
+  //
+  // So the ladder now offers a jingle path built only from filters this build
+  // actually has ('jingle-concat': original audio, then the jingle as an outro,
+  // joined with concat), and the degraded plans pick a mode that needs no
+  // mixing at all.
   const audioLadder: AudioMode[] = [];
   if (jingle) {
+    // true mixing: keeps the creator's sound running under the jingle. Only
+    // works on a build with amix, but it is the nicest result when it does.
     if (mixMode) audioLadder.push(mixMode);
+    // original sound, then the jingle as an outro — no mixer required
+    if (hasOrigAudio) audioLadder.push('jingle-concat');
+    // last resorts that still carry SOME audio
     if (plainMode) audioLadder.push(plainMode);
     audioLadder.push('jingle');
   } else if (plainMode) {
     audioLadder.push(plainMode);
   }
   const bestAudio: AudioMode[] = audioLadder.length ? [audioLadder[0]] : [];
+  // What the DEGRADED plans should use. Deliberately the best mode that needs no
+  // mixer: these plans exist to rescue a download, so giving them a mode that
+  // cannot work on this build would defeat their entire purpose.
+  const noMix = audioLadder.filter((m) => m !== 'mix-music' && m !== 'mix-orig');
+  const bestNoMix: AudioMode[] = noMix.length ? [noMix[0]] : [];
 
   // ---- plans -----------------------------------------------------------
   //
@@ -633,6 +679,20 @@ export async function bakeDownloadVideo(
     overlay: boolean;
     /** false = stream copy: no filters, no encoder, no overlay */
     reencode: boolean;
+    /**
+     * Use the smallest possible filtergraph: one overlay, no scale, no
+     * pix_fmt conversion, no audio filters at all (the original audio is
+     * stream-copied).
+     *
+     * The reported failure is that EVERY re-encoding plan failed on a real
+     * device while the filter-free remux succeeded - i.e. the problem is the
+     * filtergraph machinery, not the codecs. This plan is the cheapest thing
+     * that can still burn in the mark, so if the phone's ffmpeg can run any
+     * filtergraph at all, this one has the best chance. It gives up the jingle
+     * (mixing audio needs amix), which is a fair trade: the mark is the part
+     * that identifies where the video came from.
+     */
+    minimal?: boolean;
   };
 
   const full: Plan = {
@@ -648,15 +708,29 @@ export async function bakeDownloadVideo(
   const plans: Plan[] = [];
   if (jingle) {
     plans.push(full);
+    // The safety net for the watermark. Ordered straight after the full plan:
+    // if the rich graph cannot run on this device, we would rather save a
+    // marked video with its own sound than a pristine unbranded one.
+    if (wm) {
+      plans.push({
+        ...full,
+        label: 'minimal-overlay',
+        audio: [],
+        genpts: false,
+        jingleOffset: false,
+        faststart: false,
+        minimal: true,
+      });
+    }
     // The jingle is the one input whose timestamps start late, and an mp4 muxer
     // can reject that as non-monotonic - so retry with the jingle at t=0.
-    plans.push({ ...full, label: 'no-jingle-delay', audio: bestAudio, jingleOffset: false });
+    plans.push({ ...full, label: 'no-jingle-delay', audio: bestNoMix, jingleOffset: false });
     // Timestamps exactly as the demuxer produced them, and no header rewrite
     // (+faststart) at the end.
     plans.push({
       ...full,
       label: 'plain-timestamps',
-      audio: bestAudio,
+      audio: bestNoMix,
       jingleOffset: false,
       genpts: false,
       faststart: false,
@@ -669,7 +743,7 @@ export async function bakeDownloadVideo(
     plans.push({
       ...full,
       label: 'no-watermark',
-      audio: bestAudio,
+      audio: bestNoMix,
       jingleOffset: false,
       genpts: false,
       faststart: false,
@@ -696,7 +770,11 @@ export async function bakeDownloadVideo(
   const attempt = (plan: Plan, mode: AudioMode | null): string[] => {
     const useWm = plan.overlay && !!wm;
     const wantsJingle =
-      !!jingle && (mode === 'mix-music' || mode === 'mix-orig' || mode === 'jingle');
+      !!jingle &&
+      (mode === 'mix-music' ||
+        mode === 'mix-orig' ||
+        mode === 'jingle' ||
+        mode === 'jingle-concat');
     const wantsMusic = !!musicUri && mode === 'mix-music';
 
     const args: string[] = ['-y'];
@@ -727,6 +805,29 @@ export async function bakeDownloadVideo(
       return args;
     }
 
+    // ---- minimal graph: one overlay, nothing else -------------------------
+    //
+    // No scale on the watermark (the PNG is already sized for this), no
+    // format=pix_fmts conversion, no audio filters, and the audio is copied
+    // rather than re-encoded. Every failure mode the full graph has that is not
+    // literally "overlay two video streams" is designed out.
+    if (plan.minimal && useWm) {
+      return [
+        '-y',
+        '-i', cleanPath(inputUri),
+        '-i', cleanPath(wm as string),
+        '-filter_complex', `[0:v][1:v]overlay=x=W-w-14:y=H-h-14[vout]`,
+        '-map', '[vout]',
+        '-map', '0:a?',
+        '-c:v', 'mpeg4', '-q:v', '4',
+        // stream copy: the creator's own audio survives untouched, and no audio
+        // filter or encoder is invoked at all
+        '-c:a', 'copy',
+        '-t', durSec.toFixed(3),
+        cleanPath(out),
+      ];
+    }
+
     const fc: string[] = [];
     const baseLabel = evenFix ? '[base]' : '[0:v]';
     if (evenFix) fc.push('[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2[base]');
@@ -742,8 +843,24 @@ export async function bakeDownloadVideo(
     // mismatched sample rates and layouts, and phone videos are usually 48 kHz
     // stereo while the jingle is 44.1 kHz mono.
     const A = 'aformat=sample_rates=44100:sample_fmts=fltp:channel_layouts=mono';
+    // The jingle as an OUTRO, joined with concat — the only way to get a jingle
+    // onto a build with no amix.
+    //
+    // Trade-off, stated plainly: concat plays the segments one after the other,
+    // so the creator's own audio stops for the final JINGLE_SEC instead of
+    // running underneath the jingle. The alternative on this build is no jingle
+    // at all.
+    //
+    // Only atrim + aformat + concat are used, all three verified present on the
+    // device build.
+    const jingleTail = Math.max(0.5, durSec - JINGLE_SEC);
     let audioMap: string | null = null;
-    if (mode === 'mix-music' || mode === 'mix-orig') {
+    if (mode === 'jingle-concat') {
+      fc.push(`[0:a]${A},atrim=0:${jingleTail.toFixed(3)}[orig]`);
+      fc.push(`[${jingleIdx}:a]${A}[jing]`);
+      fc.push('[orig][jing]concat=n=2:v=0:a=1[aout]');
+      audioMap = '[aout]';
+    } else if (mode === 'mix-music' || mode === 'mix-orig') {
       fc.push(`${mode === 'mix-music' ? `[${musicIdx}:a]` : '[0:a]'}${A}[mix0]`);
       fc.push(`[${jingleIdx}:a]${A}[jing]`);
       fc.push('[mix0][jing]amix=inputs=2:duration=first[aout]');
@@ -774,6 +891,11 @@ export async function bakeDownloadVideo(
 
   let lastErr: Error | null = null;
   let watermarked = false;
+  let jingled = false;
+  let wonPlan = '';
+  // One line per failed plan, kept so the user (and I) can see exactly which
+  // part of the pipeline this device refuses.
+  const attempts: string[] = [];
   let done = false;
   // A time budget, not an open-ended ladder: once it is spent the remaining
   // re-encode plans are skipped and the remux at the end still runs, so nobody
@@ -796,10 +918,19 @@ export async function bakeDownloadVideo(
         // for a full re-encode on a cold device.
         await exec(args, plan.reencode ? (lastErr ? 90000 : 150000) : 60000);
         watermarked = plan.overlay && !!wm;
+        // the jingle is in the output only when this plan actually asked for it
+        jingled =
+          !!jingle &&
+          (mode === 'mix-music' ||
+            mode === 'mix-orig' ||
+            mode === 'jingle' ||
+            mode === 'jingle-concat');
+        wonPlan = plan.label;
         done = true;
         break;
       } catch (e: any) {
         lastErr = e instanceof Error ? e : new Error(String(e));
+        attempts.push(`${plan.label}: ${lastErr.message}`);
         console.warn(`[bakeVideo] plan=${plan.label} audio=${mode ?? '-'} failed: ${lastErr.message}`);
         // A half-written file from a failed plan must never be mistaken for the
         // next attempt's output.
@@ -839,5 +970,22 @@ export async function bakeDownloadVideo(
     }
     throw new Error('The encoder produced a file without video — please report this (code 2)');
   }
-  return { uri: out, watermarked };
+  return {
+    uri: out,
+    watermarked,
+    jingled,
+    plan: wonPlan,
+    // Only populated when something is missing, and kept short enough to read
+    // in an alert: the whole point is that the next report names the culprit.
+    reason: watermarked && jingled
+      ? undefined
+      : [
+          watermarked ? null : 'the corner mark',
+          jingled ? null : 'the jingle',
+        ]
+          .filter(Boolean)
+          .join(' and ') +
+        ' could not be added on this phone — ' +
+        (attempts.length ? attempts.slice(0, 3).join(' | ') : 'no encoder available'),
+  };
 }
