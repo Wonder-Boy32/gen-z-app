@@ -81,9 +81,13 @@ begin
     raise exception 'anon_bad_request';
   end if;
 
-  if p_sender = '00000000-0000-0000-0000-000000000000'::uuid then
-    v_sender := null;
-  end if;
+  -- Sender identity comes from the session only, never from an argument.
+  -- The function this replaces set
+  --   v_sender := nullif(auth.uid(), '00000000-...-000000000000')
+  -- and then immediately overwrote it with auth.uid() when the session was
+  -- present, so the sentinel never had an effect. It is not reinstated here:
+  -- the nil-UUID case would mean storing a message with no accountable
+  -- sender, and execute is granted to `authenticated` alone.
 
   -- ---- recipient preferences -------------------------------------
   select * into v_set
@@ -190,8 +194,16 @@ begin
   return v_id;
 end $$;
 
+-- authenticated only. The function this replaces was granted to `anon` as
+-- well, which is how an unauthenticated caller with the public anon key got
+-- an accountable-sender-less insert past every check: the block clauses are
+-- written as `v_sender is not null and exists (...)`, so a null session
+-- satisfies them vacuously. Revoking anon closes that door at the grant
+-- layer rather than relying on the body to notice.
+revoke all on function public.send_anonymous_message(uuid, text, text, text, text, interval)
+  from public, anon;
 grant execute on function public.send_anonymous_message(uuid, text, text, text, text, interval)
-  to anon, authenticated;
+  to authenticated;
 
 
 -- ------------------------------------------------------------

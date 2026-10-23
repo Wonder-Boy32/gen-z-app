@@ -432,7 +432,30 @@ Test 1 currently **succeeds** for an attacker (returns the folder list). It must
 | U3 | Signed-URL rendering on device | No runtime available |
 | U4 | `expo-doctor`, `eas build`, production APK | Blocked as described in §6 |
 | U5 | Authenticated-role policies across all 60 tables | Only the anon role was probed |
-| U6 | Storage policy behaviour after migration | Migrations are written and reviewed but **not executed** — I have no authorized SQL session |
+| U6 | Storage policy behaviour **on the live project** after migration | Narrowed from 'never executed': `scripts/sql-verify/verify.py` runs all six migrations on a real throwaway PostgreSQL and asserts 49 properties (§11a). Still unproven against the deployed schema and data, which needs the runbook |
+| U7 | `cannot_disable_last_super_admin` actually firing | Unreachable through `admin_admin_remove`: it needs a super_admin caller, a super_admin target and no other active super_admin, which the self-removal and non-super guards already preclude. The invariant is upheld by the self-removal guard (R9) |
+
+### 11a. What local execution established
+
+`scripts/sql-verify/verify.py` applies the six migrations to a throwaway PostgreSQL (via
+`pgserver`) over `scripts/sql-verify/stub_schema.sql` — a minimal Supabase-shaped schema —
+then asserts 49 properties as the `authenticated` and `anon` roles. 49/49 hold.
+
+Two defects were found this way and fixed; neither was visible by reading the SQL:
+
+1. **`send_anonymous_message` raised on every call.** The rewrite kept a half-converted
+   identity check referencing `p_sender`, a parameter the signature does not have, so the
+   function was dead on arrival. The original resolved identity from `auth.uid()` only.
+2. **`execute` was still granted to `anon`.** The guards read `v_sender is not null and
+   exists (...)`, so a null session satisfied them vacuously — a logged-out caller could
+   send. Revoked from `public, anon`; granted to `authenticated` only.
+
+Every refusal was checked for its *reason*, not just for failing: storage denials surface as
+`new row violates row-level security policy`, admin self-promotion as `permission_denied`,
+anonymous blocking as `anon_blocked` (the code the UI maps), and an unauthenticated send as
+`permission denied for function`. Assertions on visibility count rows rather than expecting
+an error, because RLS filters a `SELECT` silently; the same applies to a client `UPDATE` of a
+hashtag counter, which is recorded as succeeding while changing nothing.
 
 ---
 
@@ -477,3 +500,4 @@ Test 1 currently **succeeds** for an attacker (returns the folder list). It must
 | R6 | `media_cleanup_queue` retries are unbounded | Needs a max-attempts + dead-letter policy |
 | R7 | 11 policy names defined in multiple migration files | Replaying an old file can revert a newer policy |
 | R8 | Notifications and audit logs never expire | Deliberate for audit; needs a decision for notifications |
+| R9 | `cannot_disable_last_super_admin` is unreachable through the admin RPC | Defence in depth only. One active super_admin is guaranteed by the self-removal guard, not by this counter. Any future path that disables admins directly (SQL, service role) must re-check it |

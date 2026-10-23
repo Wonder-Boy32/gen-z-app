@@ -1,6 +1,22 @@
 # Migration runbook — 20261023
 
-Companion to `SECURITY_AUDIT_2026-10-23.md`. Everything here was written but **not executed** — I have no authorized SQL session and no service-role key. Treat each step as something you run and confirm.
+Companion to `SECURITY_AUDIT_2026-10-23.md`. The six migrations have been executed against a throwaway PostgreSQL and their policies asserted (Step 0). They have **not** been executed against the live project — I have no authorized SQL session and no service-role key. Treat every step below as something you run and confirm.
+
+---
+
+## Step 0 — verify the migrations locally (already done, re-runnable)
+
+```bash
+python -m pip install pgserver "psycopg[binary]"
+python scripts/sql-verify/verify.py
+```
+
+Exit 0 means 49 assertions held. This caught two defects that reading the SQL did not:
+
+- **`send_anonymous_message` crashed on every call.** The rewrite left a half-converted identity check referring to `p_sender`, a parameter that no longer exists, so any anonymous send raised `column "p_sender" does not exist`. The original resolved identity from `auth.uid()` alone; the function now does the same and the dead branch is gone.
+- **The function was still granted to `anon`.** The guards are written `v_sender is not null and exists (...)`, so a null session satisfied the block clauses vacuously — a logged-out caller with the public anon key could send. `execute` is now revoked from `public, anon` and granted to `authenticated` only.
+
+It also showed that `cannot_disable_last_super_admin` in `20261023_03` is unreachable through the RPC: it needs a super_admin caller and a super_admin target with no other active super, which the other two guards already prevent. The invariant still holds — a super_admin cannot disable themselves, so one always survives — but the counter is defence in depth, not the mechanism. Recorded as R9 in the audit.
 
 ---
 
@@ -25,7 +41,7 @@ All are idempotent. None drops a table, drops a bucket, or deletes a row of user
 | `20261023_01_storage_privacy_lockdown.sql` | `anon-media` bucket; participant/recipient-scoped storage policies; ownership on `media`; enumeration closed | no |
 | `20261023_02_hashtag_sync_repair.sql` | recompute counts over old ∪ new tags; repair existing drift | no |
 | `20261023_03_admin_role_escalation.sql` | blocks super_admin self-promotion, protects the last super_admin | no |
-| `20261023_04_anonymous_send_authorization.sql` | the nine missing anon guards; real byte deletion on expiry | no |
+| `20261023_04_anonymous_send_authorization.sql` | the nine missing anon guards; `execute` revoked from `anon`; real byte deletion on expiry | no |
 | `20261023_05_view_once_consumption.sql` | `consume_view_once`; 5-minute post-consumption sweep | no |
 | `20261023_06_message_expiry_clamp.sql` | chat `expires_at` clamped to 24h server-side | no |
 
