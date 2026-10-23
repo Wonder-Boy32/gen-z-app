@@ -1,3 +1,5 @@
+begin;
+
 -- ============================================================
 -- GEN Z — 20261023_06 — CHAT EXPIRY IS CLIENT-CONTROLLED
 --
@@ -104,3 +106,5 @@ where c.relname = 'messages' and t.tgname = 'messages_clamp_expiry';
 --   where id = '<mid>';
 --   -- expect expires_at unchanged at the 24h ceiling
 -- ============================================================
+
+commit;

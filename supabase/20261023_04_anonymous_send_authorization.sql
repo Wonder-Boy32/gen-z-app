@@ -1,3 +1,5 @@
+begin;
+
 -- ============================================================
 -- GEN Z — 20261023_04 — ANONYMOUS MESSAGING AUTHORIZATION
 --
@@ -358,3 +360,5 @@ select 'anon_cleanup_uses_storage_api' as check_name,
        (prosrc like '%genz_storage_delete%')::text as real_delete
 from pg_proc
 where proname = 'genz_purge_expired_anon';
+
+commit;

@@ -1,3 +1,5 @@
+begin;
+
 -- ============================================================
 -- GEN Z — 20261023_01 — STORAGE PRIVACY LOCKDOWN
 --
@@ -463,3 +465,5 @@ where schemaname = 'storage'
 -- Rolling back restores the publicly-listable bucket. Only do it if
 -- the client rollback is also happening.
 -- ============================================================
+
+commit;

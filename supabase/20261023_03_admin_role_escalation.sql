@@ -1,3 +1,5 @@
+begin;
+
 -- ============================================================
 -- GEN Z — 20261023_03 — ADMIN ROLE ESCALATION
 --
@@ -173,3 +175,5 @@ where proname = 'admin_admin_set_role';
 -- from public.admin_users au
 -- left join auth.users u on u.id = au.user_id
 -- order by au.role, au.status;
+
+commit;

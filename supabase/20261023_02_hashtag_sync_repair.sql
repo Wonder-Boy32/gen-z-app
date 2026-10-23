@@ -1,3 +1,5 @@
+begin;
+
 -- ============================================================
 -- GEN Z — 20261023_02 — HASHTAG SYNC: CORRECT A COUNT ON EDIT
 --
@@ -223,3 +225,5 @@ where c.relname = 'posts'
 --   -- expect count 2, not 1 or 3. Both triggers take the same row
 --   -- lock on hashtags(tag), so the second waits and recomputes.
 -- ============================================================
+
+commit;

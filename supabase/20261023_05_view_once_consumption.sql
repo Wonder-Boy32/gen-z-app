@@ -1,3 +1,5 @@
+begin;
+
 -- ============================================================
 -- GEN Z — 20261023_05 — SERVER-ENFORCED VIEW-ONCE
 --
@@ -218,3 +220,5 @@ from pg_proc where proname = 'consume_view_once';
 --   6. after 5 minutes, genz_sweep_consumed_view_once()
 --      -> media_url null, object gone from storage
 -- ============================================================
+
+commit;
