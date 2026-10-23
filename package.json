@@ -9,6 +9,9 @@
     "ios": "expo start --ios",
     "postinstall": "node scripts/ensure-rn-android.js && node scripts/patch-ffmpeg-expo.js",
     "check:env": "node scripts/preflight-env.js",
+    "check:types": "tsc --noEmit",
+    "check": "node scripts/preflight-env.js && tsc --noEmit",
+    "migrate:media": "node scripts/migrate-private-media.mjs",
     "build:preview": "node scripts/preflight-env.js && eas build --platform android --profile preview",
     "build:prod": "node scripts/preflight-env.js && eas build --platform android --profile production"
   },

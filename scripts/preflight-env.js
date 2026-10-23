@@ -59,10 +59,54 @@ if (!fs.existsSync(envPath)) {
   problems.push('.env does not exist at the project root.');
 }
 
+// Values that are present, non-empty, and still wrong.
+//
+// The check above only proves a KEY EXISTS. Copying .env.example into
+// .env — which is the documented first step — produces a file where
+// every required key is defined and every value is a placeholder. That
+// passed this script and produced a build that launched to a dead
+// screen, which is the exact failure the script was written to prevent.
+//
+// Matching is deliberately conservative: these are the tokens that
+// appear in the example file and in the usual "paste it later" shapes.
+const PLACEHOLDER_PATTERNS = [
+  /your[-_]?project/i,
+  /your[-_]?anon[-_]?key/i,
+  /your[-_]?giphy/i,
+  /^your/i,
+  /^YOUR/,
+  /changeme/i,
+  /change[-_]me/i,
+  /placeholder/i,
+  /^x{6,}$/i,
+  /^<.*>$/,
+  /^insert[-_]/i,
+  /^todo/i,
+];
+
+function looksLikePlaceholder(value) {
+  return PLACEHOLDER_PATTERNS.some((re) => re.test(value));
+}
+
+// A Supabase project URL has one unambiguous shape; anything else means
+// the value was never filled in, whatever it says.
+function isValidSupabaseUrl(value) {
+  return /^https:\/\/[a-z0-9]{15,}\.supabase\.(co|in)$/i.test(value);
+}
+
 for (const key of REQUIRED) {
   const v = env[key];
-  if (v === undefined) problems.push(`${key} is not defined in .env`);
-  else if (!v.trim()) problems.push(`${key} is present but empty`);
+  if (v === undefined) {
+    problems.push(`${key} is not defined in .env`);
+  } else if (!v.trim()) {
+    problems.push(`${key} is present but empty`);
+  } else if (looksLikePlaceholder(v.trim())) {
+    problems.push(`${key} still holds a placeholder value ("${v.trim().slice(0, 32)}")`);
+  } else if (key === 'EXPO_PUBLIC_SUPABASE_URL' && !isValidSupabaseUrl(v.trim())) {
+    problems.push(
+      `${key} is not a Supabase project URL — expected https://<ref>.supabase.co, got "${v.trim().slice(0, 40)}"`
+    );
+  }
 }
 
 // The failure mode that caused the outage: the file exists on disk (so a naive

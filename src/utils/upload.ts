@@ -1,4 +1,5 @@
 import { supabase } from '../supabase/client';
+import { storageRef } from './privateMedia';
 
 // Needed by the progress-capable uploader below, which talks to the Storage
 // endpoint directly because supabase-js reports no progress.
@@ -152,7 +153,8 @@ async function putWithProgress(
   body: Blob | ArrayBuffer,
   type: string,
   upsert: boolean,
-  onProgress?: (fraction: number) => void
+  onProgress?: (fraction: number) => void,
+  bucket = 'media'
 ): Promise<boolean> {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return false;
 
@@ -164,7 +166,7 @@ async function putWithProgress(
 
   // Encode each segment, not the whole path — the separators must survive.
   const encoded = path.split('/').map(encodeURIComponent).join('/');
-  const url = `${SUPABASE_URL}/storage/v1/object/media/${encoded}`;
+  const url = `${SUPABASE_URL}/storage/v1/object/${bucket}/${encoded}`;
 
   return new Promise<boolean>((resolve) => {
     const xhr = new XMLHttpRequest();
@@ -238,4 +240,54 @@ export async function uploadMediaWithProgress(
   // Fallback: the proven path. Progress will jump rather than glide, which is
   // better than failing.
   return uploadMedia(path, uri, type, upsert);
+}
+
+// ------------------------------------------------------------------
+// Private upload.
+//
+// Chat attachments and anonymous-message media go to a PRIVATE bucket
+// and come back as an `sb://` reference, not a URL. The reference is
+// what gets written to the database; the renderer exchanges it for a
+// short-lived signed URL (src/utils/privateMedia.ts).
+//
+// A private object must never be represented by a permanent URL, so
+// this function deliberately has no getPublicUrl() branch.
+// ------------------------------------------------------------------
+export async function uploadPrivateMedia(
+  bucket: string,
+  path: string,
+  uri: string,
+  mimeType: string | undefined | null,
+  onProgress?: (fraction: number) => void,
+  upsert = false
+): Promise<string> {
+  const type = mimeType ?? 'application/octet-stream';
+  const body = await readFileBody(uri);
+
+  // XHR path first: it can report real progress and can be aborted.
+  const uploaded = await putWithProgress(path, body, type, upsert, onProgress, bucket);
+  if (uploaded) {
+    onProgress?.(1);
+    return storageRef(bucket, path);
+  }
+
+  // Fallback: supabase-js. No progress, but the bytes still land.
+  const upload = supabase.storage.from(bucket).upload(path, body as any, {
+    upsert,
+    contentType: type,
+  });
+
+  let result: { error: any };
+  try {
+    result = await withTimeout(
+      Promise.resolve(upload),
+      120000,
+      'Upload timed out — check your connection and try again.'
+    );
+  } catch (e: any) {
+    throw new Error(e?.message ?? 'Upload failed — check your connection and try again.');
+  }
+
+  if (result.error) throw new Error(result.error.message);
+  return storageRef(bucket, path);
 }

@@ -144,7 +144,13 @@ export default function ChatSettingsSheet({
     if (res.canceled || !res.assets[0]) return;
     setUploadingWall(true);
     try {
-      const path = `chat/${convId}/wall-${Date.now()}.jpg`;
+      // Owner-scoped, not conversation-scoped: the storage policy
+      // authorizes writes on the uploader's id, and a chat/<convId>/
+      // path has no owner in it. See 20261023_01 §4.
+      const { data: authData } = await supabase.auth.getUser();
+      const uid = authData.user?.id;
+      if (!uid) throw new Error('Not signed in');
+      const path = `chat-wallpapers/${uid}/wall-${Date.now()}.jpg`;
       const publicUrl = await uploadMedia(path, res.assets[0].uri, res.assets[0].mimeType ?? 'image/jpeg');
       await saveParticipant({ wallpaper: `custom:${publicUrl}` }, { wallpaper: `custom:${publicUrl}` });
       setSub(null);

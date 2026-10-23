@@ -462,8 +462,13 @@ export default function GroupInfoScreen({ conversationId, onBack }: GroupInfoScr
       setError(null);
 
       // uploadMedia(path, uri, mimeType, upsert = false) → public URL
+      // Owner-scoped: a chat/<convId>/ path carries no owner, so the
+      // storage policy would refuse it. See 20261023_01 §4.
+      const { data: authData } = await supabase.auth.getUser();
+      const uploaderId = authData.user?.id;
+      if (!uploaderId) throw new Error('Not signed in');
       const publicUrl = await uploadMedia(
-        `chat/${conversationId}/group-${Date.now()}.jpg`,
+        `group-avatars/${uploaderId}/group-${Date.now()}.jpg`,
         asset.uri,
         asset.mimeType ?? 'image/jpeg'
       );

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -27,7 +27,8 @@ import Icon from '../components/ui/Icon';
 import { TOP_INSET } from '../utils/useInsets';
 import LogoHeader from '../components/LogoHeader';
 import GifPicker from '../components/GifPicker';
-import { uploadMedia } from '../utils/upload';
+import { uploadPrivateMedia } from '../utils/upload';
+import { resolveMediaRefs } from '../utils/privateMedia';
 import Avatar from '../components/Avatar';
 import VerifiedBadge from '../components/ui/VerifiedBadge';
 import ChatSettingsSheet, { ChatSettingsData } from '../components/chat/ChatSettingsSheet';
@@ -270,6 +271,18 @@ const oldestRef = useRef<string | null>(null);
     participantsRef.current = partList;
     setParticipants(partList);
     const rows = ((msgRows ?? []) as any[]).map((raw) => enrich(raw));
+    // Private media arrives as an sb:// reference; sign it before render.
+    {
+      const refs = rows.map((r: any) => r.media_url).filter((v: any) => typeof v === 'string' && v.startsWith('sb://'));
+      if (refs.length) {
+        const signed = await resolveMediaRefs(refs);
+        for (const r of rows) {
+          if (typeof r.media_url === 'string' && r.media_url.startsWith('sb://')) {
+            r.media_url = signed.get(r.media_url) ?? null;
+          }
+        }
+      }
+    }
     messagesRef.current = rows;
     setMessages(rows);
     // pagination bookkeeping: oldest loaded message + whether more exist
@@ -567,8 +580,11 @@ const oldestRef = useRef<string | null>(null);
     try {
       const isVideo = asset.mimeType?.startsWith('video') ?? false;
       const ext = asset.fileName?.split('.').pop() ?? (isVideo ? 'mp4' : 'jpg');
-      const path = `chat/${conversationId}/${Date.now()}.${ext}`;
-      const publicUrl = await uploadMedia(
+      // Private bucket: the storage policy authorizes on both the
+      // conversation and the sender, so both belong in the path.
+      const path = `${conversationId}/${uid}/${Date.now()}.${ext}`;
+      const publicUrl = await uploadPrivateMedia(
+        'chat-media',
         path,
         asset.uri,
         asset.mimeType ?? (isVideo ? 'video/mp4' : 'image/jpeg')
@@ -604,8 +620,9 @@ const oldestRef = useRef<string | null>(null);
     try {
       const isVideo = asset.mimeType?.startsWith('video') ?? false;
       const ext = asset.fileName?.split('.').pop() ?? (isVideo ? 'mp4' : 'jpg');
-      const path = `chat/${conversationId}/cam-${Date.now()}.${ext}`;
-      const publicUrl = await uploadMedia(
+      const path = `${conversationId}/${uid}/cam-${Date.now()}.${ext}`;
+      const publicUrl = await uploadPrivateMedia(
+        'chat-media',
         path,
         asset.uri,
         asset.mimeType ?? (isVideo ? 'video/mp4' : 'image/jpeg')
@@ -660,8 +677,8 @@ const oldestRef = useRef<string | null>(null);
     if (!uid) return;
     setUploading(true);
     try {
-      const path = `chat/${conversationId}/voice-${Date.now()}.m4a`;
-      const publicUrl = await uploadMedia(path, uri, 'audio/mp4');
+      const path = `${conversationId}/${uid}/voice-${Date.now()}.m4a`;
+      const publicUrl = await uploadPrivateMedia('chat-media', path, uri, 'audio/mp4');
       const { error: msgErr } = await supabase.from('messages').insert({
         conversation_id: conversationId,
         sender_id: uid,
@@ -751,9 +768,18 @@ const oldestRef = useRef<string | null>(null);
       .from('messages')
       .update({ viewed_by: next, media_url: null, content: null })
       .eq('id', m.id);
+    // Bytes are now removed server-side by consume_view_once()'s sweep.
+    // Kept as a best-effort immediate delete for a private reference;
+    // a legacy public URL is left to the migration script, because a
+    // public object is not ours to delete from here any more.
     try {
-      const path = m.media_url.split('/object/public/')[1];
-      if (path) await supabase.storage.from('media').remove([path]);
+      const ref = m.media_url;
+      if (ref.startsWith('sb://')) {
+        const [bucket, ...rest] = ref.slice(5).split('/');
+        if (bucket && rest.length) {
+          await supabase.storage.from(bucket).remove([rest.join('/')]);
+        }
+      }
     } catch {}
   };
 

@@ -35,7 +35,14 @@ export type {
   TimelineState,
 } from './types';
 
-export { PAGE_SIZE, currentUserId, signedMediaUrl, recordView, fetchMyViews } from './api';
+export {
+  PAGE_SIZE,
+  currentUserId,
+  signedMediaUrl,
+  consumeViewOnce,
+  recordView,
+  fetchMyViews,
+} from './api';
 
 export { ConversationEngine, createEngine } from './engine';
 export { outbox } from './outbox';

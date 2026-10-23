@@ -1,4 +1,4 @@
-// src/messaging/api.ts
+﻿// src/messaging/api.ts
 // ------------------------------------------------------------------
 // The only place in the engine that talks to Supabase.
 //
@@ -18,6 +18,7 @@
 // ------------------------------------------------------------------
 
 import { supabase } from '../supabase/client';
+import { isStorageRef, resolveMediaRef, resolveMediaRefs } from '../utils/privateMedia';
 import {
   MESSAGE_SELECT,
   SQLSTATE_INSUFFICIENT_PRIVILEGE,
@@ -33,6 +34,39 @@ import {
 } from './types';
 
 export const PAGE_SIZE = 50;
+
+/**
+ * Swap `sb://` references for short-lived signed URLs.
+ *
+ * Private buckets cannot be addressed by a permanent URL, so the
+ * database stores a reference and the read path signs it. Doing this
+ * here — on every function that can hand Message objects to the UI —
+ * means no renderer has to know the difference, and legacy rows that
+ * still hold a plain https URL pass through untouched.
+ *
+ * One batch call per bucket, so a thread of twenty photos costs one
+ * round trip rather than twenty.
+ */
+async function hydratePrivateMedia(messages: Message[]): Promise<void> {
+  const refs = messages
+    .map((m) => m.legacyMediaUrl)
+    .filter((v): v is string => !!v && isStorageRef(v));
+
+  if (refs.length === 0) return;
+
+  try {
+    const resolved = await resolveMediaRefs(refs);
+    for (const m of messages) {
+      if (m.legacyMediaUrl && isStorageRef(m.legacyMediaUrl)) {
+        const signed = resolved.get(m.legacyMediaUrl);
+        if (signed) m.legacyMediaUrl = signed;
+      }
+    }
+  } catch {
+    // A missing image must never fail the timeline. Unsigned refs stay
+    // refs, which render as a broken image rather than the wrong thing.
+  }
+}
 
 interface PostgrestLikeError {
   code?: string;
@@ -92,6 +126,7 @@ export async function fetchTimeline(
   const page = hasMore ? rows.slice(0, limit) : rows;
 
   const messages = page.map((r) => mapRow(r));
+  await hydratePrivateMedia(messages);
   const ordered = messages.slice().reverse();
 
   const reactions = await fetchReactions(ordered.map((m) => m.id));
@@ -187,10 +222,10 @@ export async function sendMessage(userId: string, draft: OutgoingDraft): Promise
     throw mapped;
   }
 
-  return {
-    message: mapRow(data as unknown as MessageRow),
-    duplicate: false,
-  };
+  const message = mapRow(data as unknown as MessageRow);
+  await hydratePrivateMedia([message]);
+
+  return { message, duplicate: false };
 }
 
 /** Reconcile an optimistic bubble against the row the server actually holds. */
@@ -206,7 +241,9 @@ export async function findByClientMessageId(
     .maybeSingle();
 
   if (error || !data) return null;
-  return mapRow(data as unknown as MessageRow);
+  const msg = mapRow(data as unknown as MessageRow);
+  await hydratePrivateMedia([msg]);
+  return msg;
 }
 
 // ------------------------------------------------------------------
@@ -379,6 +416,27 @@ export async function currentUserId(): Promise<string | null> {
   return data.user?.id ?? null;
 }
 
+/**
+ * Open a view-once moment.
+ *
+ * The server decides whether this is the first and only viewing: it
+ * checks conversation membership, refuses the sender, refuses a second
+ * call, and stamps consumption before returning the media reference.
+ * Ending up here twice means the media is genuinely gone, not merely
+ * hidden by a local flag.
+ *
+ * Returns a signed URL ready to display, or null if the bytes are
+ * already removed.
+ */
+export async function consumeViewOnce(messageId: string): Promise<string | null> {
+  const { data, error } = await supabase.rpc('consume_view_once', { p_message: messageId });
+  if (error) throw new Error(error.message);
+
+  const ref = (data as { media_ref?: string | null } | null)?.media_ref ?? null;
+  if (!ref) return null;
+  return resolveMediaRef(ref);
+}
+
 export async function signedMediaUrl(storagePath: string, ttlSeconds = 600): Promise<string | null> {
   const { data, error } = await supabase.storage
     .from('chat-media')
@@ -459,7 +517,9 @@ export async function fetchPinned(conversationId: string): Promise<Message[]> {
     .limit(3);
 
   if (error) return [];
-  return ((data ?? []) as unknown as MessageRow[]).map((r) => mapRow(r));
+  const pinned = ((data ?? []) as unknown as MessageRow[]).map((r) => mapRow(r));
+  await hydratePrivateMedia(pinned);
+  return pinned;
 }
 
 /**

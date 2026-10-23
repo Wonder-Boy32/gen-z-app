@@ -33,6 +33,7 @@ import {
   unreact as apiUnreact,
   type PollDraft,
 } from './api';
+import { isStorageRef, resolveMediaRef } from '../utils/privateMedia';
 import { outbox } from './outbox';
 import {
   subscribeConversation,
@@ -187,6 +188,31 @@ export class ConversationEngine {
     for (const listener of this.listeners) listener(snapshot);
   }
 
+  /**
+   * Exchange an `sb://` media reference for a signed URL, then re-emit.
+   *
+   * Both messages that reach the UI through a path other than
+   * fetchTimeline need this: the optimistic bubble created at send
+   * time (which carries the raw reference) and a row arriving over
+   * realtime (mapped directly, never through api.ts). Without it those
+   * two would render a broken image while the rest of the thread
+   * worked — the kind of bug that looks intermittent.
+   */
+  private hydrateMedia(message: Message): void {
+    const ref = message.legacyMediaUrl;
+    if (!ref || !isStorageRef(ref)) return;
+
+    void resolveMediaRef(ref).then((signed) => {
+      if (!signed) return;
+      const live =
+        this.confirmed.find((m) => m.id === message.id) ??
+        (message.clientMessageId ? this.pending.get(message.clientMessageId) : undefined);
+      if (!live || live.legacyMediaUrl === signed) return;
+      live.legacyMediaUrl = signed;
+      this.emit();
+    });
+  }
+
   // ----------------------------------------------------------------
   // Merge: the dedupe that makes optimistic UI safe
   // ----------------------------------------------------------------
@@ -283,8 +309,10 @@ export class ConversationEngine {
       }
     }
 
-    this.upsertConfirmed(mapRow(row));
+    const incoming = mapRow(row);
+    this.upsertConfirmed(incoming);
     this.emit();
+    this.hydrateMedia(incoming);
 
     if (row.sender_id !== this.userId) {
       void this.markReadUpToLatest();
@@ -414,8 +442,11 @@ export class ConversationEngine {
     };
 
     outbox.append(draft);
-    this.pending.set(draft.clientMessageId, this.toOptimistic(draft, 'queued'));
+
+    const optimisticMessage = this.toOptimistic(draft, 'queued');
+    this.pending.set(draft.clientMessageId, optimisticMessage);
     this.emit();
+    this.hydrateMedia(optimisticMessage);
 
     await this.flush();
   }

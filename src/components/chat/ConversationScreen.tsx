@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // ConversationScreen — the conversation surface.
 //
 // Wired to the Conversation Engine. Additive: a drop-in for
@@ -59,7 +59,7 @@ import ChatSettingsSheet, {
   type SearchableMessage,
 } from './ChatSettingsSheet';
 import { TOP_INSET } from '../../utils/useInsets';
-import { uploadMedia } from '../../utils/upload';
+import { uploadPrivateMedia } from '../../utils/upload';
 import {
   WALLPAPERS,
   customWallpaperUri,
@@ -68,6 +68,7 @@ import {
   type WallpaperDef,
 } from '../../utils/chatTheme';
 import {
+  consumeViewOnce,
   recordView,
   fetchMyViews,
   useConversation,
@@ -558,24 +559,50 @@ export default function ConversationScreen({ conversationId, onBack }: Conversat
 
   // Opening a moment consumes it. Your OWN moment is not consumed by you —
   // otherwise the sender would lose their own media on first look.
+  const markViewedLocally = useCallback((id: string) => {
+    setViewedOnce((prev) => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  }, []);
+
   const openMedia = useCallback(
     (m: Message) => {
-      if (m.viewOnce && meId && m.senderId !== meId) {
-        // Fire-and-forget, but never unhandled: if the write is refused the
-        // local marker below still hides the media for this session, and the
-        // server copy simply catches up on the next successful open. A
-        // rejection escaping here would be an unhandled promise rejection.
-        void recordView(meId, m.id).catch(() => undefined);
-        setViewedOnce((prev) => {
-          if (prev.has(m.id)) return prev;
-          const next = new Set(prev);
-          next.add(m.id);
-          return next;
-        });
+      // Your own moment is never consumed by you, otherwise the sender
+      // would lose their media on the first look.
+      if (!m.viewOnce || !meId || m.senderId === meId) {
+        setViewer(m);
+        return;
       }
-      setViewer(m);
+
+      // A view-once moment is opened THROUGH the server. It authorizes,
+      // refuses a second viewing, records the view and hands back a
+      // signed URL in one call. Hiding the bubble locally was never
+      // consumption — the file stayed in a public bucket and could be
+      // fetched again by anyone holding the URL.
+      void (async () => {
+        try {
+          const url = await consumeViewOnce(m.id);
+          markViewedLocally(m.id);
+          if (!url) {
+            setError('That moment has expired.');
+            return;
+          }
+          setViewer({ ...m, legacyMediaUrl: url });
+        } catch (e: any) {
+          const msg = String(e?.message ?? '').toLowerCase();
+          markViewedLocally(m.id);
+          setError(
+            msg.includes('already_viewed')
+              ? 'You have already opened this once.'
+              : 'That moment is no longer available.'
+          );
+        }
+      })();
     },
-    [meId]
+    [meId, markViewedLocally]
   );
 
   // Fold a recorded view into the row's legacy `viewedBy`, which is the field
@@ -632,8 +659,11 @@ export default function ConversationScreen({ conversationId, onBack }: Conversat
       emitPresence('uploading', true);
       setError(null);
       try {
-        const url = await uploadMedia(
-          `chat/${conversationId}/voice-${Date.now()}.m4a`,
+        if (!meId) throw new Error('Not signed in');
+        // Private bucket: participants only. Reference, not URL.
+        const url = await uploadPrivateMedia(
+          'chat-media',
+          `${conversationId}/${meId}/voice-${Date.now()}.m4a`,
           uri,
           'audio/mp4'
         );
@@ -686,10 +716,12 @@ export default function ConversationScreen({ conversationId, onBack }: Conversat
       try {
         const isVideo = kind === 'video';
         const ext = isVideo ? 'mp4' : 'jpg';
-        const bucket = isVideo ? 'chat-media' : 'chat-media';
-        void bucket;
-        const url = await uploadMedia(
-          `chat/${conversationId}/${Date.now()}.${ext}`,
+        if (!meId) throw new Error('Not signed in');
+        // chat-media, not media. The path carries the conversation and
+        // the sender so the storage policy can authorize on both.
+        const url = await uploadPrivateMedia(
+          'chat-media',
+          `${conversationId}/${meId}/${Date.now()}.${ext}`,
           uri,
           isVideo ? 'video/mp4' : 'image/jpeg'
         );
@@ -784,8 +816,10 @@ export default function ConversationScreen({ conversationId, onBack }: Conversat
       try {
         const name = file.name ?? 'file';
         const ext = name.includes('.') ? name.split('.').pop() : 'bin';
-        const url = await uploadMedia(
-          `chat/${conversationId}/${Date.now()}.${ext}`,
+        if (!meId) throw new Error('Not signed in');
+        const url = await uploadPrivateMedia(
+          'chat-media',
+          `${conversationId}/${meId}/${Date.now()}.${ext}`,
           file.uri,
           file.mimeType ?? 'application/octet-stream'
         );

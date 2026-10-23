@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { supabase } from '../supabase/client';
+import { resolveMediaRefs } from '../utils/privateMedia';
 import { colors, radius } from '../theme';
 import Icon from '../components/ui/Icon';
 import { TOP_INSET } from '../utils/useInsets';
@@ -86,7 +87,23 @@ export default function AnonymousInboxScreen({
       .order('created_at', { ascending: false })
       .limit(100);
     const now = Date.now();
-    setMsgs(((data ?? []) as AnonMsg[]).filter((m) => !m.expires_at || new Date(m.expires_at).getTime() > now));
+    const live = ((data ?? []) as AnonMsg[]).filter(
+      (m) => !m.expires_at || new Date(m.expires_at).getTime() > now
+    );
+
+    // Anonymous media now lives in the private `anon-media` bucket, so
+    // the stored value is an `sb://` reference rather than a URL. Sign
+    // them in one batch before the first render; legacy rows that still
+    // hold an https URL are returned unchanged by the resolver.
+    const resolved = await resolveMediaRefs(
+      live.flatMap((m) => [m.media_url, m.voice_url])
+    );
+    for (const m of live) {
+      if (m.media_url) m.media_url = resolved.get(m.media_url) ?? null;
+      if (m.voice_url) m.voice_url = resolved.get(m.voice_url) ?? null;
+    }
+
+    setMsgs(live);
     setLoading(false);
   }, []);
 

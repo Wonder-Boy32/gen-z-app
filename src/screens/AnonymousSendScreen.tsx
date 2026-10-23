@@ -7,7 +7,7 @@ import Icon from '../components/ui/Icon';
 import { TOP_INSET } from '../utils/useInsets';
 import { friendlyError } from '../utils/friendlyError';
 import { screenTextError } from '../utils/contentFilter';
-import { uploadMedia } from '../utils/upload';
+import { uploadPrivateMedia } from '../utils/upload';
 
 const MAX_LEN = 500;
 const TEMP_OPTIONS: { key: 'none' | '24h' | '48h'; label: string }[] = [
@@ -71,7 +71,15 @@ export default function AnonymousSendScreen({
     try {
       let mediaUrl: string | null = null;
       if (photo) {
-        mediaUrl = await uploadMedia(`anon/${recipientId}/${Date.now()}.jpg`, photo, 'image/jpeg');
+        // Private bucket, and the path deliberately omits the sender:
+        // the recipient can list their own folder, so a sender id here
+        // would hand them the identity the product promises to hide.
+        mediaUrl = await uploadPrivateMedia(
+          'anon-media',
+          `${recipientId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`,
+          photo,
+          'image/jpeg'
+        );
       }
       const { error: rpcErr } = await supabase.rpc('send_anonymous_message', {
         p_recipient: recipientId,
