@@ -457,6 +457,29 @@ anonymous blocking as `anon_blocked` (the code the UI maps), and an unauthentica
 an error, because RLS filters a `SELECT` silently; the same applies to a client `UPDATE` of a
 hashtag counter, which is recorded as succeeding while changing nothing.
 
+### 11b. Admin control centre — every entry point is gated server-side
+
+The admin web app calls 18 `admin_*` RPCs. Each was traced to its definition and
+checked for a guard inside the function body, not in the UI:
+
+- all 18 call `public.admin_require(...)` as their first statement;
+- `admin_require` is the single chokepoint: null session -> `unauthorized`,
+  no active row in `admin_users` -> `not_an_admin`, and a non-`super_admin`
+  without the named permission in `admin_permissions` -> `permission_denied`;
+- 72 `grant execute` statements cover the `admin_*` surface, and **none** grants
+  to `anon` or `public` — all 72 are `to authenticated`.
+
+So the client-side role gate in the admin app is cosmetic. Removing it would not
+widen access, which is the property that matters.
+
+The one hole this surface had was `admin_admin_set_role`, which accepted
+`'super_admin'` while requiring only the `admins.manage` permission, letting a
+plain `admin` promote itself past every later check. That is F1, closed by
+`20261023_03`.
+
+Caveat: this is a static trace of the repo's SQL. Whether the deployed function
+bodies match the repo is U2.
+
 ---
 
 ## 12. Files changed
