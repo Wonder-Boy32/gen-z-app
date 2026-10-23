@@ -34,6 +34,9 @@ scripts/api-spec.json
 # misc
 .DS_Store
 *.log
+
+# expo tooling telemetry — dropped in the project root as a hash-named dir
+expo-telemetry.json
 npm-debug.*
 
 # build cache (Node compile cache)
