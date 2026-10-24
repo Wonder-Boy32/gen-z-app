@@ -3,7 +3,8 @@ import { ActivityIndicator, Linking, StyleSheet, Text, View } from 'react-native
 import { supabase } from '../supabase/client';
 import { parseAnonLink } from '../utils/deeplink';
 import AnonymousSendScreen from './AnonymousSendScreen';
-import TabBar, { Tab } from '../components/TabBar';
+import NeonDock from '../components/ui/NeonDock';
+import type { Tab } from '../components/TabBar';
 import FeedScreen from './FeedScreen';
 import CreateDropScreen from './CreateDropScreen';
 import ProfileScreen from './ProfileScreen';
@@ -193,7 +194,7 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
       <UploadBar />
 
       {/* unread badge hidden while you're already in the Chat tab (WhatsApp style) */}
-      <TabBar tab={tab} onChange={setTab} badges={{ chat: tab === 'chat' ? 0 : chatUnread }} />
+      <NeonDock tab={tab} onChange={setTab} badges={{ chat: tab === 'chat' ? 0 : chatUnread }} />
 
       {/* deep-link anonymous send overlay (opens from a link, any tab, cold start) */}
       {(anonDraft || anonRecipient) && (
