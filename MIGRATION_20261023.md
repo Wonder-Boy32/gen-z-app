@@ -20,6 +20,62 @@ It also showed that `cannot_disable_last_super_admin` in `20261023_03` is unreac
 
 ---
 
+## Execution log — 2026-10-24 (production)
+
+Run through the Supabase SQL editor on project `fwouxamnmfdzwxpefoyb`. Every file was
+wrapped in `begin; … commit;` first, so each committed whole or not at all.
+
+**Decisions taken by the owner:** 7-day retention (already live, unchanged);
+`profiles.location` stays public (option c).
+
+**Schema.** `01`–`06` applied. Post-run verification, read from the database:
+
+| Check | Result |
+|---|---|
+| `expiry_is_7d` | `true` |
+| `new_fns` | 3 |
+| `expected_triggers` | 3 |
+| `hashtag_drift` | 0 |
+| `anon_can_send` | `false` |
+| `auth_can_send` | `true` |
+| `cron_jobs` | 4 |
+
+**Data.** `media` held 70 objects; 15 were private chat media.
+
+- 13 referenced objects copied to `chat-media/<conv>/<sender>/`, and all 13 message
+  references rewritten to `sb://`. `--verify`: 13 refs, 13 present, 0 missing, 0 still
+  on a public URL. `--cleanup` then removed the 13 public originals.
+- 2 voice rows initially blocked the rewrite with `23514`. Cause: `message_body_valid`
+  requires `body ? 'durationMs'` for `msg_type='voice'`, and both legacy rows had
+  `body = {}`. The constraint is `NOT VALID`, so they had been un-updatable since it was
+  added — unrelated to this migration. Fixed without inventing data: the m4a durations
+  were measured (5062 ms, 5271 ms) and written alongside the new reference.
+- 1 unreferenced private image moved to `chat-media/<conv>/<owner>/` using the uploader
+  recorded in `storage.objects.owner`, then the public original was deleted.
+- 1 wallpaper (`chat/<conv>/wall-*.jpg`) deliberately **not** moved. It is public chrome
+  by design, `conversation_participants.wallpaper` may reference it, and moving it would
+  risk a reference whose stored format is unverified. Recorded as R11.
+
+**Leak probes, re-run with the public anon key after the move:**
+
+| Probe | Before | After |
+|---|---|---|
+| list `media` root | 6 entries | `[]` |
+| list `chat/<conv>/` | 4 folders, then 2 filenames | `[]` |
+| GET the chat photo that leaked | 200, 869,533 bytes | `404 Object not found` |
+| GET another former chat photo | 200 | `404 Object not found` |
+| GET a public avatar | 200 | 200 (unchanged) |
+| GET a `chat-media` object unsigned | — | `404 Bucket not found` |
+
+Result: `media` now holds 56 objects, none of them private message content. `chat-media`
+holds 14.
+
+**Still open:** no client build has been produced or run, so the signed-URL rendering path
+(`privateMedia.ts`) is verified only by type-check and by the reference rewrite above, not
+on a device. `eas build` remains blocked.
+
+---
+
 ## Before you start
 
 1. **Snapshot.** Supabase → Database → Backups → confirm a recent backup exists. The migrations are additive and delete nothing, but a snapshot costs nothing and removes the argument.
