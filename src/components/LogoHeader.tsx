@@ -6,16 +6,21 @@ type Props = {
   compact?: boolean;
   transparent?: boolean;
   subtitle?: string;
+  /** 'start' pins the lockup to the left edge instead of centring it. The feed
+   *  header needs this: the reference puts the wordmark top-left with the
+   *  search and message controls opposite it. */
+  align?: 'center' | 'start';
 };
 
-export default function LogoHeader({ compact, transparent, subtitle }: Props) {
+export default function LogoHeader({ compact, transparent, subtitle, align = 'center' }: Props) {
   return (
-    <View style={styles.wrapper}>
+    <View style={[styles.wrapper, align === 'start' && styles.wrapperStart]}>
       <View
         style={[
           styles.wrap,
           transparent && styles.wrapTransparent,
           compact && styles.wrapCompact,
+          align === 'start' && styles.wrapStart,
         ]}
       >
         <View style={[styles.badge, compact && styles.badgeCompact]}>
@@ -43,6 +48,9 @@ const styles = StyleSheet.create({
   wrapper: {
     alignItems: 'center',
   },
+  wrapperStart: {
+    alignItems: 'flex-start',
+  },
   wrap: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -59,6 +67,9 @@ const styles = StyleSheet.create({
   wrapCompact: {
     paddingHorizontal: 12,
     paddingVertical: 6,
+  },
+  wrapStart: {
+    alignSelf: 'flex-start',
   },
   badge: {
     width: 40,

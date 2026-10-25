@@ -33,6 +33,7 @@ import DropExperienceScreen from './DropExperienceScreen';
 import PublicProfileScreen from './PublicProfileScreen';
 import ProfilePeekModal from '../components/ProfilePeekModal';
 import InviteSheet from '../components/InviteSheet';
+import StoryViewer from '../components/StoryViewer';
 // `peek as cachePeek` — this file already has a local `peek` state at line 202
 // for the profile-peek modal, and the unaliased import shadowed it.
 import { cacheKey, filterLive, peek as cachePeek, put } from '../utils/fastCache';
@@ -159,7 +160,11 @@ export default function FeedScreen({
   initialLocationMode = null,
   focused = true,
   openActivitySignal = 0,
+  onOpenSearch,
+  onOpenChat,
 }: {
+  onOpenSearch?: () => void;
+  onOpenChat?: () => void;
   onJoinDrop?: () => void;
   onCreateIntent?: (intent: { sound?: string; replyTo?: string }) => void;
   initialUserMode?: string | null;
@@ -214,6 +219,7 @@ export default function FeedScreen({
   const [peek, setPeek] = useState<{ id: string; username: string } | null>(null);
   const [myRegion, setMyRegion] = useState<string | null>(null);
   const [storyUsers, setStoryUsers] = useState<StoryUser[]>([]);
+  const [storyAt, setStoryAt] = useState<number | null>(null);
   const [notifOpen, setNotifOpen] = useState(false);
 
   // Android back control for the overlays this screen owns. All three are
@@ -1205,7 +1211,7 @@ export default function FeedScreen({
   // `isActive` is what FeedPost uses to pause BOTH its video and its attached
   // sound player, so routing the overlays through effectiveIndex silences both
   // using the existing path — the same trick the swipe handling below relies on.
-  const overlayOpen = !!publicProfile || !!peek || showDrop || prefsOpen;
+  const overlayOpen = !!publicProfile || !!peek || showDrop || prefsOpen || storyAt !== null;
   const effectiveIndex = focused && !overlayOpen ? activeIndex : -1;
 
   // Silence the outgoing video the instant a swipe begins.
@@ -1335,22 +1341,59 @@ export default function FeedScreen({
           <View key={i} style={{ flex: 1, backgroundColor: `rgba(6,10,22,${o})` }} />
         ))}
       </View>
-      <View style={[styles.topBrand, { paddingTop: safeTop + 8 }]} pointerEvents="none">
-        <LogoHeader compact transparent />
+      {/* Brand lockup, pinned top-LEFT as in the reference. It used to be
+          centred, which left the whole left half of the header empty and made
+          the search/message controls look detached. */}
+      <View style={[styles.topBrand, { paddingTop: safeTop + 6 }]} pointerEvents="none">
+        <LogoHeader compact transparent align="start" />
       </View>
 
-      {/* notifications bell */}
-      <Pressable style={[styles.bellBtn, { top: safeTop + 10 }]} onPress={() => setNotifOpen(true)} hitSlop={8}>
-        <Icon name="notifications-outline" size={22} color={colors.logoWhite} />
-        {unreadCount > 0 && (
-          <View style={styles.bellBadge}>
-            <Text style={styles.bellBadgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
-          </View>
+      {/* One right-aligned cluster instead of free-floating circles: search,
+          messages, then the bell. Each is a real destination — search opens
+          Discover, messages opens Chats, the bell opens Activity — so the row
+          matches the reference without becoming decoration. */}
+      <View style={[styles.topActions, { top: safeTop + 6 }]}>
+        {onOpenSearch && (
+          <Pressable
+            style={styles.iconBtn}
+            onPress={onOpenSearch}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Search"
+          >
+            <Icon name="search-outline" size={21} color={colors.logoWhite} />
+          </Pressable>
         )}
-      </Pressable>
+        {onOpenChat && (
+          <Pressable
+            style={styles.iconBtn}
+            onPress={onOpenChat}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Messages"
+          >
+            <Icon name="paper-plane-outline" size={20} color={colors.logoWhite} />
+          </Pressable>
+        )}
+        <Pressable
+          style={styles.iconBtn}
+          onPress={() => setNotifOpen(true)}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel="Activity"
+        >
+          <Icon name="notifications-outline" size={21} color={colors.logoWhite} />
+          {unreadCount > 0 && (
+            <View style={styles.bellBadge}>
+              <Text style={styles.bellBadgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
+            </View>
+          )}
+        </Pressable>
+      </View>
 
-      {/* subtitle — "what's happening right now?" */}
-      <View style={[styles.subtitle, { top: safeTop + 44 }]} pointerEvents="none">
+      {/* subtitle — "what's happening right now?", tucked under the wordmark so
+          it never runs beneath the control cluster */}
+      <View style={[styles.subtitle, { top: safeTop + 46 }]} pointerEvents="none">
         <Text style={styles.subtitleText}>What's happening right now?</Text>
       </View>
 
@@ -1527,8 +1570,8 @@ export default function FeedScreen({
             keyExtractor={(u) => u.id}
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.storiesContent}
-            renderItem={({ item }) => (
-              <Pressable style={styles.storyItem} onPress={() => setUserMode(item.id)}>
+            renderItem={({ item, index }) => (
+              <Pressable style={styles.storyItem} onPress={() => setStoryAt(index)}>
                 <View style={[styles.storyRing, item.following && styles.storyRingFollowed]}>
                   <Avatar url={item.avatar_url} name={item.username} size={48} verified={!!item.verified} />
                 </View>
@@ -1793,6 +1836,29 @@ export default function FeedScreen({
         }}
       />
 
+      {/* Full-screen story viewer. Tapping an avatar in the rail opens that
+          person's live drops full-bleed, with the rail's own order preserved so
+          you can keep tapping through the people you were just looking at. */}
+      <Modal
+        visible={storyAt !== null}
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setStoryAt(null)}
+      >
+        {storyAt !== null && (
+          <StoryViewer
+            users={storyUsers}
+            startIndex={storyAt}
+            onClose={() => setStoryAt(null)}
+            onOpenProfile={(id) => {
+              setStoryAt(null);
+              const u = storyUsers.find((s) => s.id === id);
+              if (u) setPeek({ id: u.id, username: u.username });
+            }}
+          />
+        )}
+      </Modal>
+
       {chainRoot && (
         <ChainModal
           root={chainRoot}
@@ -2049,17 +2115,24 @@ const styles = StyleSheet.create({
   topBrand: {
     position: 'absolute',
     top: 0,
-    left: 0,
-    right: 0,
+    left: 16,
     zIndex: 12,
+    alignItems: 'flex-start',
+  },
+  topActions: {
+    position: 'absolute',
+    right: 12,
+    zIndex: 13,
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
   },
   subtitle: {
     position: 'absolute',
-    left: 0,
-    right: 0,
+    left: 18,
+    right: 150,
     zIndex: 12,
-    alignItems: 'center',
+    alignItems: 'flex-start',
   },
   subtitleText: {
     color: colors.textMuted,
@@ -2304,6 +2377,14 @@ const styles = StyleSheet.create({
     backgroundColor: colors.overlay,
     borderRadius: 999,
     padding: 9,
+  },
+  iconBtn: {
+    width: 38,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.overlay,
+    borderRadius: 999,
   },
   bellBadge: {
     position: 'absolute',

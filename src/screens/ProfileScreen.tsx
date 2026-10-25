@@ -16,6 +16,7 @@ import { colors, radius, shadows } from '../theme';
 import { TOP_INSET } from '../utils/useInsets';
 import LogoHeader from '../components/LogoHeader';
 import Button from '../components/Button';
+import NeonButton from '../components/ui/NeonButton';
 import Icon, { IconName } from '../components/ui/Icon';
 import { FILL, GradientFill } from '../components/ui/Futuristic';
 import Avatar from '../components/Avatar';
@@ -389,13 +390,16 @@ export default function ProfileScreen({
               </View>
 
               <Pressable onPress={() => setAvatarSheet(true)} hitSlop={8} style={styles.avatarOverlap}>
-                <Avatar
-                  url={profile?.avatar_url}
-                  name={profile?.display_name || profile?.username || 'G'}
-                  size={94}
-                  ring
-                  verified={!!profile?.verified}
-                />
+                {/* the glowing outline the reference puts around the portrait */}
+                <View style={styles.avatarGlow}>
+                  <Avatar
+                    url={profile?.avatar_url}
+                    name={profile?.display_name || profile?.username || 'G'}
+                    size={94}
+                    ring
+                    verified={!!profile?.verified}
+                  />
+                </View>
               </Pressable>
 
               <View style={styles.nameRow}>
@@ -456,9 +460,24 @@ export default function ProfileScreen({
                 </View>
               </View>
 
+              {/* Wide neon primary + a square secondary, as in the reference:
+                  one obvious action, with sharing still one tap away. */}
               <View style={styles.btnRow}>
-                <Button variant="secondary" title="Edit profile" onPress={() => setEditing(true)} style={styles.halfBtn} />
-                <Button variant="secondary" title="Share profile" onPress={() => setShareOpen(true)} style={styles.halfBtn} />
+                <NeonButton
+                  title="Edit Profile"
+                  icon="create-outline"
+                  onPress={() => setEditing(true)}
+                  style={styles.editBtn}
+                />
+                <Pressable
+                  style={styles.shareSquare}
+                  onPress={() => setShareOpen(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Share profile"
+                  hitSlop={6}
+                >
+                  <Icon name="share-social-outline" size={19} color={colors.text} />
+                </Pressable>
               </View>
 
               <View style={styles.anonRow}>
@@ -1028,12 +1047,26 @@ const styles = StyleSheet.create({
   },
   btnRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     marginTop: 16,
     width: '100%',
+    gap: 10,
+    paddingHorizontal: 4,
   },
   halfBtn: {
     width: '48%',
     marginHorizontal: '1%',
+  },
+  editBtn: { flex: 1 },
+  shareSquare: {
+    width: 48,
+    height: 48,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   anonRow: {
     flexDirection: 'row',
@@ -1384,6 +1417,21 @@ const styles = StyleSheet.create({
   // Straddle the cover edge — the detail that makes it read as designed.
   avatarOverlap: {
     marginTop: -48,
+  },
+  // A neon halo around the portrait. Built from a border + shadow rather than a
+  // gradient ring because Avatar already owns its own circular clip; wrapping it
+  // keeps the halo outside that clip where it belongs.
+  avatarGlow: {
+    padding: 3,
+    borderRadius: 999,
+    borderWidth: 2,
+    borderColor: 'rgba(139,92,246,0.65)',
+    backgroundColor: 'rgba(10,16,36,0.9)',
+    shadowColor: '#EC4899',
+    shadowOpacity: 0.45,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 10,
   },
   modalCoverRow: {
     alignItems: 'center',

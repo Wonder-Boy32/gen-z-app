@@ -17,8 +17,14 @@
 // no native module and needs no rebuild. A single <Path> gives one outline,
 // one gradient stroke, and a genuinely smooth join.
 //
-// The geometry is expressed in terms of the measured width, so the silhouette
-// scales with the screen instead of being a fixed-size drawing.
+// PROPORTIONS
+//
+// The first version of this dock was too heavy: a 54pt tall band with a 156pt
+// wide plateau read as a blocky tray rather than a floating dock. The numbers
+// below are tuned against the reference — a slimmer band, a narrower plateau,
+// and shoulders that spread over 30pt so the rise reads as a curve instead of a
+// trapezoid. They are expressed in terms of the measured width where it matters,
+// so the silhouette scales with the screen instead of being a fixed drawing.
 
 import React, { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -33,12 +39,13 @@ import type { Tab } from '../TabBar';
 // every screen. Light mode only changes the interior, never the ramp.
 const NEON = ['#22D3EE', '#3B82F6', '#8B5CF6', '#EC4899'];
 
-const BAR_TOP = 46; // top edge of the dock body, below the raised plateau
-const BAR_BOTTOM = 100;
-const PLATEAU_TOP = 16; // how high the middle of the silhouette rises
-const BUMP_HALF = 78; // half-width of the plateau's flat section
-const CENTER_R = 27; // radius of the raised button
-const CENTER_CY = BAR_TOP - 18;
+const BAR_TOP = 42; // y of the flat top edge
+const BAR_BOTTOM = 96; // y of the bottom edge
+const PLATEAU_TOP = 20; // y of the raised middle section
+const BUMP_HALF = 58; // half-width of the plateau's flat section
+const SHOULDER = 30; // how far each shoulder spreads beyond the plateau
+const CENTER_R = 28; // radius of the raised centre button
+const CENTER_CY = 30; // sits high enough that the ring is never clipped
 const HEIGHT = BAR_BOTTOM + 4;
 
 const ITEMS: { key: Tab; label: string; icon: IconName; iconActive: IconName }[] = [
@@ -54,21 +61,28 @@ const ITEMS: { key: Tab; label: string; icon: IconName; iconActive: IconName }[]
  *
  * Read it as one continuous stroke: flat top edge from the left cap, a cubic
  * rise into the plateau, across the plateau, a cubic fall back to the top edge,
- * then down the right cap, along the bottom, and up the left cap. The cubics use
- * control points pulled toward the plateau so the shoulders curve rather than
- * forming corners.
+ * then down the right cap, along the bottom, and up the left cap.
+ *
+ * The shoulders use a smoothstep — both control points sit at the horizontal
+ * midpoint of the rise, one at each end's height. That is what turns the join
+ * into a wave: the tangent is vertical in the middle of the rise, so there is no
+ * corner where the slope changes abruptly, which is exactly what the two-segment
+ * approximation used to show.
  */
 function dockPath(w: number): string {
   const cx = w / 2;
   const cap = (BAR_BOTTOM - BAR_TOP) / 2; // fully rounded ends
   const l = cx - BUMP_HALF;
   const r = cx + BUMP_HALF;
+  const s = SHOULDER;
+  const midL = (l - s + (l + 10)) / 2; // horizontal midpoint of the left rise
+  const midR = (r - 10 + (r + s)) / 2; // and of the right rise
   return [
     `M ${cap} ${BAR_TOP}`,
-    `H ${l - 26}`,
-    `C ${l - 8} ${BAR_TOP} ${l - 4} ${PLATEAU_TOP} ${l + 14} ${PLATEAU_TOP}`,
-    `H ${r - 14}`,
-    `C ${r + 4} ${PLATEAU_TOP} ${r + 8} ${BAR_TOP} ${r + 26} ${BAR_TOP}`,
+    `H ${l - s}`,
+    `C ${midL} ${BAR_TOP} ${midL} ${PLATEAU_TOP} ${l + 10} ${PLATEAU_TOP}`,
+    `H ${r - 10}`,
+    `C ${midR} ${PLATEAU_TOP} ${midR} ${BAR_TOP} ${r + s} ${BAR_TOP}`,
     `H ${w - cap}`,
     `A ${cap} ${cap} 0 0 1 ${w} ${BAR_TOP + cap}`,
     `A ${cap} ${cap} 0 0 1 ${w - cap} ${BAR_BOTTOM}`,
@@ -105,15 +119,12 @@ export default function NeonDock({
 
   return (
     <View
-      style={[
-        styles.wrap,
-        { paddingBottom: insets.bottom > 0 ? insets.bottom + 4 : 14 },
-      ]}
+      style={[styles.wrap, { paddingBottom: insets.bottom > 0 ? insets.bottom + 4 : 14 }]}
       onLayout={(e) => setW(e.nativeEvent.layout.width)}
     >
       {w > 0 && (
         <>
-          <Svg width={w} height={HEIGHT} style={StyleSheet.absoluteFill}>
+          <Svg width={w} height={HEIGHT} style={StyleSheet.absoluteFill} pointerEvents="none">
             <Defs>
               <LinearGradient id="neonStroke" x1="0" y1="0" x2="1" y2="0">
                 {NEON.map((c, i) => (
@@ -125,34 +136,47 @@ export default function NeonDock({
                   <Stop key={c} offset={i / (NEON.length - 1)} stopColor={c} stopOpacity={0.16} />
                 ))}
               </LinearGradient>
+              <LinearGradient id="neonGlow" x1="0" y1="0" x2="0" y2="1">
+                {NEON.map((c, i) => (
+                  <Stop key={c} offset={i / (NEON.length - 1)} stopColor={c} stopOpacity={0.9} />
+                ))}
+              </LinearGradient>
             </Defs>
 
-            {/* interior first, then the outline on top so it is never clipped */}
+            {/* Bloom first: two wide, faint strokes of the same outline. The
+                interior is painted over them next, so only the outer half of
+                each stroke survives and the dock appears to cast its own light
+                instead of carrying a border. */}
+            <Path d={path} fill="none" stroke="url(#neonGlow)" strokeWidth={18} strokeOpacity={0.1} />
+            <Path d={path} fill="none" stroke="url(#neonGlow)" strokeWidth={9} strokeOpacity={0.16} />
+
+            {/* interior, then the crisp outline on top so it is never clipped */}
             <Path d={path} fill={light ? 'rgba(255,255,255,0.94)' : 'rgba(8,13,28,0.90)'} />
             <Path d={path} fill="url(#neonFill)" />
             <Path
               d={path}
               fill="none"
               stroke="url(#neonStroke)"
-              strokeWidth={2.4}
+              strokeWidth={2}
               strokeLinejoin="round"
             />
 
             {/* the raised button: dark core, gradient ring, glowing mark */}
+            <Circle cx={w / 2} cy={CENTER_CY} r={CENTER_R + 6} fill="url(#neonGlow)" fillOpacity={0.14} />
             <Circle
               cx={w / 2}
               cy={CENTER_CY}
               r={CENTER_R}
               fill={light ? '#FFFFFF' : '#0A1024'}
             />
-            <Circle cx={w / 2} cy={CENTER_CY} r={CENTER_R - 6} fill="url(#neonFill)" />
+            <Circle cx={w / 2} cy={CENTER_CY} r={CENTER_R - 7} fill="url(#neonFill)" />
             <Circle
               cx={w / 2}
               cy={CENTER_CY}
               r={CENTER_R}
               fill="none"
               stroke="url(#neonStroke)"
-              strokeWidth={2.8}
+              strokeWidth={2.4}
             />
             <Path
               d={INFINITY}
@@ -181,8 +205,8 @@ export default function NeonDock({
               >
                 <Icon
                   name={active ? item.iconActive : item.icon}
-                  size={23}
-                  color={active ? (light ? '#0B1220' : '#FFFFFF') : light ? '#64708C' : 'rgba(226,240,255,0.52)'}
+                  size={22}
+                  color={active ? (light ? '#0B1220' : '#FFFFFF') : light ? '#64708C' : 'rgba(226,240,255,0.55)'}
                 />
                 {active && (
                   <View
@@ -207,7 +231,7 @@ export default function NeonDock({
             accessibilityState={{ selected: tab === centerItem.key }}
             accessibilityLabel={centerItem.label}
             hitSlop={12}
-            style={[styles.hit, { left: w / 2 - CENTER_R, top: CENTER_CY - CENTER_R }]}
+            style={[styles.hit, { left: w / 2 - 28, top: CENTER_CY - 28 }]}
           />
         </>
       )}
@@ -230,15 +254,15 @@ const styles = StyleSheet.create({
   },
   activeDot: {
     position: 'absolute',
-    bottom: 6,
+    bottom: 5,
     width: 4,
     height: 4,
     borderRadius: 2,
   },
   badge: {
     position: 'absolute',
-    top: 8,
-    right: 8,
+    top: 6,
+    right: 6,
     minWidth: 17,
     height: 17,
     paddingHorizontal: 4,

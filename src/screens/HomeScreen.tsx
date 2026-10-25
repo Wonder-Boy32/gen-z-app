@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Linking, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Keyboard, Linking, Platform, StyleSheet, Text, View } from 'react-native';
 import { supabase } from '../supabase/client';
 import { parseAnonLink } from '../utils/deeplink';
 import AnonymousSendScreen from './AnonymousSendScreen';
@@ -19,6 +19,25 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
   const [tab, setTab] = useState<Tab>('feed');
   const [feedKey, setFeedKey] = useState(0);
   const [chatUnread, setChatUnread] = useState(0);
+
+  // The dock is a navigation surface, not furniture: while a keyboard is up it
+  // has no business occupying the bottom of the screen, and on a short phone it
+  // would push a composer into the top half. It is unmounted rather than hidden
+  // so the space it took goes back to whatever is being typed into.
+  //
+  // Platform-specific events on purpose — `keyboardDidShow` does not exist on
+  // iOS, and `keyboardWillShow` does not exist on Android.
+  const [keyboardUp, setKeyboardUp] = useState(false);
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const s = Keyboard.addListener(showEvt, () => setKeyboardUp(true));
+    const h = Keyboard.addListener(hideEvt, () => setKeyboardUp(false));
+    return () => {
+      s.remove();
+      h.remove();
+    };
+  }, []);
 
   // Android back at the tab level: step back to the Feed tab rather than letting
   // the press close the app from Discover, Chat or Profile. Returning false on
@@ -148,10 +167,12 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
           initialHashtagMode={pendingTag}
           initialLocationMode={pendingLocation}
           focused={tab === 'feed'}
-          onJoinDrop={() => setTab('post')}
-          onCreateIntent={handleCreateIntent}
-          openActivitySignal={openActivitySignal}
-        />
+           onJoinDrop={() => setTab('post')}
+           onCreateIntent={handleCreateIntent}
+           openActivitySignal={openActivitySignal}
+           onOpenSearch={() => setTab('discover')}
+           onOpenChat={() => setTab('chat')}
+         />
       </View>
       <View style={[styles.content, tab !== 'discover' && styles.hiddenTab]}>
         <DiscoverScreen
@@ -194,7 +215,9 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
       <UploadBar />
 
       {/* unread badge hidden while you're already in the Chat tab (WhatsApp style) */}
-      <NeonDock tab={tab} onChange={setTab} badges={{ chat: tab === 'chat' ? 0 : chatUnread }} />
+      {!keyboardUp && (
+        <NeonDock tab={tab} onChange={setTab} badges={{ chat: tab === 'chat' ? 0 : chatUnread }} />
+      )}
 
       {/* deep-link anonymous send overlay (opens from a link, any tab, cold start) */}
       {(anonDraft || anonRecipient) && (
