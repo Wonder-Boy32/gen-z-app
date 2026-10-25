@@ -9,7 +9,7 @@
 // StyleSheet.create() calls evaluates those reads at MODULE LOAD. That is the
 // whole difficulty with runtime theming in React Native: by the time the user
 // taps "White" in Settings, every style object in the app already holds the
-// string '#0D1426' and there is no way to change it from the outside.
+// string '#0C1030' and there is no way to change it from the outside.
 //
 // There are two honest ways out:
 //
@@ -46,47 +46,62 @@ import { StyleSheet } from 'react-native';
 // Palettes
 // ============================================================
 
-/** Midnight navy + electric orange — the original identity. */
+/**
+ * Deep midnight navy + electric violet — the neon identity.
+ *
+ * This palette replaces the original navy/orange scheme. The ramp is the same
+ * one the dock and the story ring use (cyan → blue → violet → magenta), so the
+ * chrome and the brand surfaces finally belong to the same object.
+ *
+ * Every value is unique across BOTH palettes except the pure-white onAccent and
+ * the black shadow — see the note on REVERSE. Two tokens sharing a value would
+ * make a legacy literal ambiguous; two tokens sharing WHITE is harmless, because
+ * whichever one it maps to is still white.
+ */
 const DARK = {
-  // backgrounds — deep midnight navy
-  bg: '#060A16',
-  bgDeep: '#04070F',
-  surface: '#0D1426',
-  surfaceAlt: '#141C33',
-  surfaceInput: '#0A101F',
+  // backgrounds — near-black with a violet undertone, so the neon is the only
+  // light source in the app. Pulled toward purple rather than navy: the
+  // reference's blacks are tinted by the magenta light, not by blue chrome.
+  bg: '#07040F',
+  bgDeep: '#030109',
+  surface: '#0D0A22',
+  surfaceAlt: '#171033',
+  surfaceInput: '#0A0718',
 
   // glass (soft glassmorphism — translucent + light border)
-  glass: 'rgba(18, 25, 48, 0.78)',
-  glassBorder: 'rgba(255,255,255,0.10)',
+  glass: 'rgba(16, 12, 38, 0.72)',
+  glassBorder: 'rgba(180,150,255,0.18)',
 
   // borders
-  border: '#1E2A47',
-  borderStrong: '#2C3B61',
+  border: '#221A4A',
+  borderStrong: '#3A2B7A',
 
-  // text — white / light gray
-  text: '#F4F6FB',
-  textMuted: '#9AA5C0',
-  textFaint: '#64708C',
+  // text — white / pale lavender
+  text: '#FAF8FF',
+  textMuted: '#A79BD6',
+  textFaint: '#73689E',
 
-  // brand accents — electric orange (from logo) + violet/blue glow
-  accent: '#FF9D1F',
-  accentStrong: '#FF7A00',
-  accentSoft: 'rgba(255,157,31,0.15)',
-  accentGlow: 'rgba(255,157,31,0.38)',
-  violet: '#8B7BFF',
-  glowBlue: '#5B8CFF',
+  // brand accents — the reference's magenta. This is the single lever that
+  // re-colours every CTA in the app, so it deliberately sits between the violet
+  // and the hot pink of the ramp rather than on either end.
+  accent: '#E040FB',
+  accentStrong: '#FF2FB9',
+  accentSoft: 'rgba(224,64,251,0.18)',
+  accentGlow: 'rgba(224,64,251,0.5)',
+  violet: '#8B5CF6',
+  glowBlue: '#3B82F6',
 
   // supporting
   yellow: '#FCE123',
-  cyan: '#A8E6F2',
-  logoWhite: '#F8F8F8',
+  cyan: '#22D3EE',
+  logoWhite: '#FAFBFF',
 
   // feedback
   success: '#34D399',
-  danger: '#FF5C7C',
+  danger: '#FF3D7F',
 
   // misc
-  overlay: 'rgba(3,6,14,0.55)',
+  overlay: 'rgba(5,7,22,0.62)',
   shadow: '#000000',
 
   // ---- gradient + on-colour tokens ------------------------------------
@@ -100,23 +115,23 @@ const DARK = {
   // Anything painted behind text must come from here — never a literal.
 
   /** Standard raised-panel gradient (search fields, studio zones, cards). */
-  gradFrom: '#141E3A',
-  gradTo: '#0B1224',
+  gradFrom: '#1A1140',
+  gradTo: '#0A0620',
   /** The Create hero: the deepest panel in the app. */
-  heroFrom: '#16203C',
-  heroTo: '#0C1322',
+  heroFrom: '#241455',
+  heroTo: '#0B0724',
   /** Profile cover fallback when the user has no cover image. */
-  coverFrom: '#2B1B4E',
-  coverTo: '#101A33',
+  coverFrom: '#3A0F5E',
+  coverTo: '#0E0A2E',
 
   /**
-   * Text drawn ON the orange accent (buttons, the selected settings chip).
+   * Text drawn ON the accent (buttons, the selected settings chip).
    *
-   * Deliberately dark in BOTH palettes: the accent does not change between
-   * themes, so the text on it must not either. Named so a future palette edit
-   * cannot turn the label on an orange button white-on-orange by accident.
+   * White, because the accent is now a saturated violet/magenta: dark text on it
+   * loses contrast, which is exactly the opposite of what it did on orange. Kept
+   * as a token so the label can never drift from the fill it sits on.
    */
-  onAccent: '#0B1120',
+  onAccent: '#FFFFFF',
 
   /**
    * Muted text drawn over media (video placeholders, thumbnails).
@@ -163,13 +178,13 @@ const LIGHT: Palette = {
   textMuted: '#6C6C78',
   textFaint: '#9B9BA6',
 
-  // brand accents — hue held, alpha washed
-  accent: '#FF9D1F',
-  accentStrong: '#FF7A00',
-  accentSoft: 'rgba(255,157,31,0.16)',
-  accentGlow: 'rgba(255,157,31,0.28)',
-  violet: '#7C5CFF',
-  glowBlue: '#2F6BFF',
+  // brand accents — the same magenta as dark, alpha washed for white
+  accent: '#E040FB',
+  accentStrong: '#FF2FB9',
+  accentSoft: 'rgba(224,64,251,0.16)',
+  accentGlow: 'rgba(224,64,251,0.3)',
+  violet: '#8B5CF6',
+  glowBlue: '#3B82F6',
 
   // supporting — darkened for contrast on white
   yellow: '#E0B400',
@@ -204,15 +219,15 @@ const LIGHT: Palette = {
   coverFrom: '#EFE9FF',
   coverTo: '#F4F4F7',
 
-  // dark in both palettes — see the dark palette for why
-  onAccent: '#0B1120',
+  // white in both palettes — the accent is dark enough in either theme
+  onAccent: '#FFFFFF',
   onMediaMuted: '#9AA5C0',
 };
 
 /**
  * Dark value → palette key.
  *
- * Lets a style object that captured '#0D1426' at module load be translated to
+ * Lets a style object that captured '#0C1030' at module load be translated to
  * whichever colour that token holds now. Built from DARK only: DARK is what
  * every module-level style captured, since the app boots dark and the saved
  * palette is applied before the app graph loads (see initThemeSync).
@@ -578,7 +593,7 @@ export function cacheThemeMode(next: ThemeMode): void {
 //
 // These do NOT change between themes: the mark is the mark.
 export const brand = {
-  navy: '#060A16',
+  navy: '#06070F',
   orange: '#FF8A00',
   red: '#F73B2E',
   magenta: '#E0409E',
