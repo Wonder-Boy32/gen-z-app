@@ -34,6 +34,7 @@ import PublicProfileScreen from './PublicProfileScreen';
 import ProfilePeekModal from '../components/ProfilePeekModal';
 import InviteSheet from '../components/InviteSheet';
 import StoryViewer from '../components/StoryViewer';
+import NeonRing from '../components/ui/NeonRing';
 // `peek as cachePeek` — this file already has a local `peek` state at line 202
 // for the profile-peek modal, and the unaliased import shadowed it.
 import { cacheKey, filterLive, peek as cachePeek, put } from '../utils/fastCache';
@@ -1572,9 +1573,9 @@ export default function FeedScreen({
             contentContainerStyle={styles.storiesContent}
             renderItem={({ item, index }) => (
               <Pressable style={styles.storyItem} onPress={() => setStoryAt(index)}>
-                <View style={[styles.storyRing, item.following && styles.storyRingFollowed]}>
+                <NeonRing size={58} stroke={2.4} active={item.following}>
                   <Avatar url={item.avatar_url} name={item.username} size={48} verified={!!item.verified} />
-                </View>
+                </NeonRing>
                 <View style={styles.storyNameRow}>
                   <Text style={styles.storyName} numberOfLines={1}>
                     {item.username}
@@ -2427,18 +2428,8 @@ const styles = StyleSheet.create({
   },
   storiesContent: { paddingHorizontal: 16 },
   storyItem: { alignItems: 'center', marginRight: 14, width: 64 },
-  storyRing: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.28)',
-    padding: 2,
-  },
-  storyRingFollowed: {
-    borderColor: colors.accent,
-    ...shadows.glow,
-  },
+  // The ring itself now lives in NeonRing (a gradient stroke), so only the
+  // spacing of the rail item stays here.
   storyAvatar: { width: 48, height: 48, borderRadius: 24 },
   storyAvatarPlaceholder: {
     width: 48,
