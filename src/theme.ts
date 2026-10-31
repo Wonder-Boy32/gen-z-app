@@ -102,6 +102,9 @@ const DARK = {
 
   // misc
   overlay: 'rgba(5,7,22,0.62)',
+  scrimRgb: '6,10,22',
+  chrome: 'rgba(255,255,255,0.06)',
+  chromeBorder: 'rgba(255,255,255,0.10)',
   shadow: '#000000',
 
   // ---- gradient + on-colour tokens ------------------------------------
@@ -196,7 +199,10 @@ const LIGHT: Palette = {
   danger: '#E5484D',
 
   // misc — a light scrim, so overlays on photos still read as overlays
-  overlay: 'rgba(255,255,255,0.62)',
+  overlay: 'rgba(242,243,247,0.92)',
+  scrimRgb: '246,246,249',
+  chrome: 'rgba(255,255,255,0.88)',
+  chromeBorder: 'rgba(16,18,40,0.10)',
   shadow: '#000000',
 
   // ---- gradient + on-colour tokens (see the notes on the dark palette) ----

@@ -1342,7 +1342,7 @@ export default function FeedScreen({
       {/* top readability scrim — fades to transparent below the nav, no hard navy band */}
       <View style={[styles.topScrim, { height: feedTop + 6 }]} pointerEvents="none">
         {[0.45, 0.45, 0.43, 0.4, 0.36, 0.31, 0.25, 0.18, 0.12, 0.06, 0].map((o, i) => (
-          <View key={i} style={{ flex: 1, backgroundColor: `rgba(6,10,22,${o})` }} />
+          <View key={i} style={{ flex: 1, backgroundColor: `rgba($\{colors.scrimRgb\},\$\{o\})` }} />
         ))}
       </View>
       {/* Brand lockup, pinned top-LEFT as in the reference. It used to be
@@ -1454,12 +1454,12 @@ export default function FeedScreen({
         {/* Same double-offset bug as the filter button: child of railWrap, so top:0. */}
         <View style={[styles.fadeEdge, styles.fadeLeft]} pointerEvents="none">
           {[0.75, 0.5, 0.3, 0.15, 0.06].map((o, i) => (
-            <View key={i} style={[styles.fadeStrip, { backgroundColor: `rgba(6,10,22,${o})` }]} />
+            <View key={i} style={[styles.fadeStrip, { backgroundColor: `rgba($\{colors.scrimRgb\},\$\{o\})` }]} />
           ))}
         </View>
         <View style={[styles.fadeEdge, styles.fadeRight]} pointerEvents="none">
           {[0.06, 0.15, 0.3, 0.5, 0.75].map((o, i) => (
-            <View key={i} style={[styles.fadeStrip, { backgroundColor: `rgba(6,10,22,${o})` }]} />
+            <View key={i} style={[styles.fadeStrip, { backgroundColor: `rgba($\{colors.scrimRgb\},\$\{o\})` }]} />
           ))}
         </View>
       </View>
@@ -2168,7 +2168,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     gap: 22,
     paddingHorizontal: 20,
-    paddingRight: 68,
+    paddingRight: 20,
   },
   railItem: {
     alignItems: 'center',
@@ -2411,7 +2411,9 @@ const styles = StyleSheet.create({
     height: 38,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.overlay,
+    backgroundColor: colors.chrome,
+    borderWidth: 1,
+    borderColor: colors.chromeBorder,
     borderRadius: 999,
   },
   bellBadge: {
