@@ -2182,13 +2182,13 @@ const styles = StyleSheet.create({
     height: 30,
   },
   railText: {
-    color: 'rgba(214,222,238,0.62)',
+    color: colors.textMuted,
     fontSize: 15,
     fontWeight: '700',
   },
   railTextActive: {
     color: colors.accent,
-    textShadowColor: 'rgba(229,43,255,0.45)',
+    textShadowColor: colors.accentGlow,
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 12,
   },
@@ -2309,7 +2309,7 @@ const styles = StyleSheet.create({
     borderColor: colors.accent,
     backgroundColor: 'rgba(229,43,255,0.16)',
   },
-  subChipText: { color: 'rgba(214,222,238,0.62)', fontSize: 11.5, fontWeight: '700' },
+  subChipText: { color: colors.textMuted, fontSize: 11.5, fontWeight: '700' },
   subChipTextActive: { color: colors.accent },
   prefsOverlay: {
     flex: 1,
