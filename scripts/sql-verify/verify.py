@@ -324,6 +324,45 @@ note("anon-send: refusal raises a code the UI maps",
      "anon_blocked" in err or "blocked" in err.lower(), err)
 
 # ------------------------------------------------ Phase 2 policy assertions
+# A guard, because this harness has already lied twice in the same way: it
+# asserted against a table where the stub enabled RLS but defined no SELECT
+# policy. Postgres requires an UPDATE to select the row it will lock, so the
+# write matched zero rows and reported success. The policy under test looked
+# broken when in fact the fixture made every row invisible.
+#
+# Any watched table with RLS on and no SELECT/ALL policy is a fixture bug, not
+# a finding. Fail here, before the assertions, so the cause is never ambiguous.
+_WATCHED = {"conversations", "messages", "posts", "profiles", "hashtags", "objects"}
+
+
+def rls_without_select():
+    sql = """
+        select c.relname
+          from pg_class c
+          join pg_namespace n on n.oid = c.relnamespace
+         where n.nspname in ('public', 'storage')
+           and c.relkind = 'r'
+           and c.relrowsecurity
+           and not exists (
+                 select 1 from pg_policies p
+                  where p.schemaname = n.nspname
+                    and p.tablename = c.relname
+                    and p.cmd in ('SELECT', 'ALL'))
+         order by 1
+    """
+    with psycopg.connect(DSN) as c:
+        with c.cursor() as cur:
+            cur.execute(sql)
+            rows = [r[0] for r in cur.fetchall()]
+        c.rollback()
+    return [t for t in rows if t in _WATCHED]
+
+
+_blind = rls_without_select()
+note("fixture: every watched table has a SELECT policy when RLS is on",
+     not _blind,
+     "blind tables (rows invisible, writes silently no-op): " + ", ".join(_blind))
+
 # try_as only answers "did it raise?". These need row counts: an RLS-filtered
 # UPDATE succeeds and changes nothing, which is precisely the bug that made
 # conversation edits silently no-op.
