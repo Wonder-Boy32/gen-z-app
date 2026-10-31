@@ -15,7 +15,7 @@ export type ChatPalette = {
 };
 
 export const CHAT_COLORS: ChatPalette[] = [
-  { key: 'orange', label: 'Orange', myBg: '#C13BFF', myText: '#0A0F1E', myTime: 'rgba(10,15,30,0.72)', theirBg: '#1D2740', tailMine: '#C13BFF', tailTheirs: '#1D2740' },
+  { key: 'orange', label: 'Orange', myBg: '#FF9A2E', myText: '#0A0F1E', myTime: 'rgba(10,15,30,0.72)', theirBg: '#1D2740', tailMine: '#FF9A2E', tailTheirs: '#1D2740' },
   { key: 'teal', label: 'Teal', myBg: '#2BC5B4', myText: '#04140F', myTime: 'rgba(4,20,15,0.70)', theirBg: '#12302C', tailMine: '#2BC5B4', tailTheirs: '#12302C' },
   { key: 'purple', label: 'Violet', myBg: '#8B5CF6', myText: '#0B081F', myTime: 'rgba(11,8,31,0.70)', theirBg: '#231C45', tailMine: '#8B5CF6', tailTheirs: '#231C45' },
   { key: 'pink', label: 'Pink', myBg: '#FF6B9D', myText: '#1F0510', myTime: 'rgba(31,5,16,0.70)', theirBg: '#3A1B2E', tailMine: '#FF6B9D', tailTheirs: '#3A1B2E' },

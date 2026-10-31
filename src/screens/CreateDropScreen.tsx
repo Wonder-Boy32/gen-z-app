@@ -89,7 +89,7 @@ const RATIOS: { id: string; label: string; ratio: number | null }[] = [
   { id: '9:16', label: '9:16', ratio: 9 / 16 },
   { id: '16:9', label: '16:9', ratio: 16 / 9 },
 ];
-const TEXT_DROP_COLORS = ['#0C1030', '#E52BFF', '#8B5CF6', '#FF5C7C', '#34D399', '#1E2466'];
+const TEXT_DROP_COLORS = ['#0C1030', '#FF9A2E', '#8B5CF6', '#FF5C7C', '#34D399', '#1E2466'];
 
 // ---- Create hub ----------------------------------------------------------
 // Templates are recipes over state this screen ALREADY has (mode, collage,
@@ -117,7 +117,7 @@ const HUB_TEMPLATES: HubTemplate[] = [
     group: 'For you',
     title: 'Quick drop',
     sub: 'Pick media and go',
-    accent: '#C13BFF',
+    accent: '#FF9A2E',
     icon: 'flash-outline',
     mode: 'media',
     openPicker: true,
@@ -204,10 +204,10 @@ const TOOLS: { id: EditorOverlay; icon: IconName; color: string; label: string }
   { id: 'sound', icon: 'musical-note', color: '#4DD8FF', label: 'Sound' },
   { id: 'effects', icon: 'sparkles', color: '#8B5CF6', label: 'Effects' },
   { id: 'text', icon: 'text', color: '#FFFFFF', label: 'Text' },
-  { id: 'stickers', icon: 'pricetag', color: '#E52BFF', label: 'Stickers' },
-  { id: 'filters', icon: 'color-palette', color: '#E52BFF', label: 'Filters' },
+  { id: 'stickers', icon: 'pricetag', color: '#FF9A2E', label: 'Stickers' },
+  { id: 'filters', icon: 'color-palette', color: '#FF9A2E', label: 'Filters' },
   { id: 'voiceover', icon: 'mic', color: '#4DD8FF', label: 'Voiceover' },
-  { id: 'speed', icon: 'flash', color: '#E52BFF', label: 'Speed' },
+  { id: 'speed', icon: 'flash', color: '#FF9A2E', label: 'Speed' },
   { id: 'crop', icon: 'scan', color: '#FFFFFF', label: 'Crop' },
   { id: 'rotate', icon: 'sync', color: '#4DD8FF', label: 'Rotate' },
 ];
