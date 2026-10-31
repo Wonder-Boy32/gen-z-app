@@ -229,3 +229,10 @@ insert into storage.buckets (id, name, public) values ('media','media',true);
 -- conversations only: verify.py seeds messages as a privileged role, so turning
 -- RLS on there breaks its own fixture instead of testing a policy.
 alter table public.conversations enable row level security;
+
+-- RLS UPDATE needs SELECT to find the rows it will write. schema.sql:264-267
+-- defines conversations_select for participants; without it here, a participant
+-- sees zero conversations and every UPDATE legitimately matches nothing.
+drop policy if exists conversations_select on public.conversations;
+create policy conversations_select on public.conversations for select
+  using (exists (select 1 from public.conversation_participants cp where cp.conversation_id = id and cp.user_id = auth.uid()));

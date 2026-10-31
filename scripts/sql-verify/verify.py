@@ -323,7 +323,7 @@ note("anon-send: blocked pair is refused", not ok, "allowed")
 note("anon-send: refusal raises a code the UI maps",
      "anon_blocked" in err or "blocked" in err.lower(), err)
 
-# --- Phase 2 policy assertions ------------------------------------------
+# ------------------------------------------------ Phase 2 policy assertions
 # try_as only answers "did it raise?". These need row counts: an RLS-filtered
 # UPDATE succeeds and changes nothing, which is precisely the bug that made
 # conversation edits silently no-op.
