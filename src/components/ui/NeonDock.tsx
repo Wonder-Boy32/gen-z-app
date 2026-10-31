@@ -1,76 +1,25 @@
 // ============================================================
-// NeonDock — the floating wave dock
+// NeonDock — capsule with a raised centre disc
 // ============================================================
 //
-// THE SHAPE, DESCRIBED IN WORDS
+// The silhouette is the union of two shapes: a 56pt capsule spanning the full
+// width, and a 40pt disc sitting on the centre. The disc's bottom is TANGENT to
+// the capsule's bottom edge, so it only ever breaks the TOP edge — which is why
+// this can be written as one closed path with a single arc over the middle,
+// instead of a boolean union of two paths that would leave a seam in the glow.
 //
-// Look at the reference dock and it is not a bar with a bump on top. The top
-// edge is one continuous wave: a crest, a dip around Home, a thin crest, a dip
-// around Search, then it swells into a wide dome that the centre button sits on,
-// dips again around Alerts, crests, dips around Profile, and closes.
-//
-// The two inner dips are not separate from the dome — they carve into its
-// shoulders. That is what makes the silhouette look like a single organic
-// object. So the top edge is defined as a SUM of windowed bumps:
-//
-//     y(x) = CREST - DOME_RISE·dome(x) + DEPTH·Σ pocket_i(x)
-//
-// with each bump being cos²(π u / 2) over |u| < 1, a window that reaches 1 at
-// its centre and 0 with ZERO SLOPE at both edges. Zero slope is the reason the
-// joins have no visible corners no matter where the bumps are placed, and the
-// reason overlapping a pocket on the dome shoulder just carves a notch instead
-// of producing a kink.
-//
-// The edge is then sampled every 1.5pt and emitted as a real path, so the
-// silhouette scales with the measured width instead of being a fixed drawing.
-// The ends are true semicircles: the first pocket's window starts just inside
-// the left cap, where its contribution is zero, so the cap joins at crest height
-// with a horizontal tangent.
-//
-// react-native-svg is already compiled into the dev client (react-native-qrcode-svg
-// depends on it), so none of this adds a native module.
-
+// Icons sit in faint circular wells, the active one filled — that ring is the
+// shape's rhythm in the reference, not an afterthought.
 import React, { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import Svg, {
-  Circle,
-  ClipPath,
-  Defs,
-  G,
-  LinearGradient,
-  Path,
-  RadialGradient,
-  Rect,
-  Stop,
-} from 'react-native-svg';
-import { colors, getThemeMode } from '../../theme';
-import { useInsets } from '../../utils/useInsets';
+import Svg, { Circle, Defs, G, LinearGradient, Path, Stop } from 'react-native-svg';
 import Icon, { IconName } from './Icon';
-import type { Tab } from '../TabBar';
 
-// The reference ramp, left to right. Fixed rather than themed: this is a brand
-// surface, and the point of it is that it is unmistakably the same object in
-// every screen. Light mode only changes the interior, never the ramp.
-const NEON = ['#FFB24B', '#FF8A2E', '#B15CFF', '#7C3AED'];
+export type DockTab = 'feed' | 'discover' | 'post' | 'chat' | 'profile';
 
-const CREST = 54; // the high points of the top edge, between pockets
-const BOTTOM = 108; // the flat bottom edge
-const DOME_RISE = 46; // how far the centre rises above the crest
-const DOME_HALF = 0.15; // dome half-width, as a fraction of the dock width
-const POCKET_DEPTH = 15; // how far each icon's pocket dips below the crest
-const POCKET_HALF = 0.066; // pocket half-width, as a fraction of the dock width
-// Icon centres. The outer pair sits at 0.16 rather than hugging the ends: its
-// pocket window has to finish BEFORE the end cap starts, otherwise the cap joins
-// the top edge part-way down a dip and shows a step. At 0.16 the window ends at
-// 0.094 of the width, which clears the cap even on a 320pt phone.
-const ICONS = [0.16, 0.325, 0.675, 0.84];
-const CENTER_R = 31;
-const CENTER_CY = 34; // ring top sits just above the dome
-const HEIGHT = BOTTOM + 4;
-const PAD = 9; // room inside the canvas for the bloom, so it is not clipped
-const ICON_Y = (CREST + BOTTOM) / 2;
+type Item = { key: DockTab; label: string; icon: IconName; iconActive: IconName };
 
-const ITEMS: { key: Tab; label: string; icon: IconName; iconActive: IconName }[] = [
+const ITEMS: Item[] = [
   { key: 'feed', label: 'Home', icon: 'home-outline', iconActive: 'home' },
   { key: 'discover', label: 'Search', icon: 'search-outline', iconActive: 'search' },
   { key: 'post', label: 'Create', icon: 'add', iconActive: 'add' },
@@ -78,242 +27,167 @@ const ITEMS: { key: Tab; label: string; icon: IconName; iconActive: IconName }[]
   { key: 'profile', label: 'Profile', icon: 'person-outline', iconActive: 'person' },
 ];
 
-/** cos² window: 1 at the centre, exactly 0 with zero slope at |u| = 1. */
-function window(u: number): number {
-  if (u <= -1 || u >= 1) return 0;
-  const c = Math.cos((u * Math.PI) / 2);
-  return c * c;
-}
+const PAD_X = 8;
+const CANVAS_TOP = 26; // headroom for the disc above the capsule
+const BAR_H = 56;
+const DOME_R = 40;
+const CAP = BAR_H / 2;
+const WELL_R = 21;
+const CENTER_R = 33;
+const HEIGHT = CANVAS_TOP + BAR_H + 6;
 
-/** Height of the top edge at x, in the dock's own coordinate space. */
-function topY(x: number, w: number): number {
-  const cx = w / 2;
-  let y = CREST - DOME_RISE * window((x - cx) / (DOME_HALF * w));
-  for (const f of ICONS) {
-    y += POCKET_DEPTH * window((x - f * w) / (POCKET_HALF * w));
-  }
-  return y;
-}
+// Where the disc crosses the capsule's top edge. The disc's centre sits
+// BAR_H - DOME_R below that edge, so the chord is that distance, not the cap
+// radius — using the cap radius put the arc endpoints off the edge and bowed the
+// top line.
+const GAP = BAR_H - DOME_R;
+const CHORD = Math.sqrt(DOME_R * DOME_R - GAP * GAP);
 
-/**
- * The dock outline as a function of width.
- *
- * Everything is computed in a space `PAD` inside the canvas on each side, so the
- * outer bloom has somewhere to land. The path is one closed contour.
- */
-function dockPath(w: number): string {
-  const inner = w - PAD * 2;
-  const cap = (BOTTOM - CREST) / 2; // fully rounded ends
-  const x0 = cap;
-  const x1 = inner - cap;
+const SLOTS = [0.13, 0.31, 0.69, 0.87];
 
-  // sample the wave; 1.5pt is well below what the eye can resolve on a phone
-  const step = 1.5;
-  const pts: string[] = [];
-  for (let x = x0; x <= x1 + 0.001; x += step) {
-    pts.push(`L ${x.toFixed(2)} ${topY(x, inner).toFixed(2)}`);
-  }
-  // make sure the edge lands exactly on the right cap
-  pts.push(`L ${x1.toFixed(2)} ${topY(x1, inner).toFixed(2)}`);
-
+function dockPath(inner: number) {
+  const top = CANVAS_TOP;
+  const bottom = top + BAR_H;
+  const cx = inner / 2;
+  const cap = CAP;
+  const rightEnd = inner - cap;
   return [
-    `M ${x0} ${CREST}`,
-    ...pts.slice(1), // the first sample is the start point already emitted
-    `A ${cap} ${cap} 0 0 1 ${inner} ${CREST + cap}`,
-    `A ${cap} ${cap} 0 0 1 ${x1} ${BOTTOM}`,
+    `M ${cap} ${top}`,
+    `H ${(cx - CHORD).toFixed(2)}`,
+    `A ${DOME_R} ${DOME_R} 0 0 1 ${(cx + CHORD).toFixed(2)} ${top}`,
+    `H ${rightEnd}`,
+    `A ${cap} ${cap} 0 0 1 ${inner} ${top + cap}`,
+    `A ${cap} ${cap} 0 0 1 ${rightEnd} ${bottom}`,
     `H ${cap}`,
-    `A ${cap} ${cap} 0 0 1 0 ${CREST + cap}`,
-    `A ${cap} ${cap} 0 0 1 ${cap} ${CREST}`,
+    `A ${cap} ${cap} 0 0 1 0 ${top + cap}`,
+    `A ${cap} ${cap} 0 0 1 ${cap} ${top}`,
     'Z',
   ].join(' ');
 }
 
-/** An infinity mark, drawn about the origin so it can be translated freely. */
-const INFINITY = 'M -13 0 C -13 -8 -4 -8 0 0 C 4 8 13 8 13 0 C 13 -8 4 -8 0 0 C -4 8 -13 8 -13 0 Z';
+type Props = {
+  tab: DockTab;
+  onChange: (t: DockTab) => void;
+  badges?: Partial<Record<DockTab, number>>;
+};
 
-export default function NeonDock({
-  tab,
-  onChange,
-  badges,
-}: {
-  tab: Tab;
-  onChange: (t: Tab) => void;
-  badges?: Partial<Record<Tab, number>>;
-}) {
-  const insets = useInsets();
+export default function NeonDock({ tab, onChange, badges }: Props) {
   const [w, setW] = useState(0);
-  const light = getThemeMode() === 'light';
-  const path = useMemo(() => (w > PAD * 2 + 120 ? dockPath(w) : ''), [w]);
-  const inner = w - PAD * 2;
-  const cx = PAD + inner / 2;
-
-  const sideItems = ITEMS.filter((i) => i.key !== 'post');
-  const centerItem = ITEMS.find((i) => i.key === 'post')!;
+  const inner = Math.max(0, w - PAD_X * 2);
+  const path = useMemo(() => (inner > 200 ? dockPath(inner) : ''), [inner]);
+  const cy = CANVAS_TOP + BAR_H - DOME_R;
+  const midY = CANVAS_TOP + BAR_H / 2;
 
   return (
-    <View
-      style={[styles.wrap, { paddingBottom: insets.bottom > 0 ? insets.bottom + 4 : 14 }]}
-      onLayout={(e) => setW(e.nativeEvent.layout.width)}
-    >
-      {!!path && (
-        <>
-          <Svg width={w} height={HEIGHT} style={StyleSheet.absoluteFill} pointerEvents="none">
-            <Defs>
-              <LinearGradient id="neonStroke" x1="0" y1="0" x2="1" y2="0">
-                {NEON.map((c, i) => (
-                  <Stop key={c} offset={i / (NEON.length - 1)} stopColor={c} />
-                ))}
-              </LinearGradient>
-              <LinearGradient id="neonFill" x1="0" y1="0" x2="1" y2="0">
-                {NEON.map((c, i) => (
-                  <Stop key={c} offset={i / (NEON.length - 1)} stopColor={c} stopOpacity={0.18} />
-                ))}
-              </LinearGradient>
-              <RadialGradient id="pocketCyan" cx="0.5" cy="0.5" r="0.5">
-                <Stop offset="0" stopColor={NEON[0]} stopOpacity={0.55} />
-                <Stop offset="0.65" stopColor={NEON[1]} stopOpacity={0.18} />
-                <Stop offset="1" stopColor={NEON[1]} stopOpacity={0} />
-              </RadialGradient>
-              <RadialGradient id="pocketMagenta" cx="0.5" cy="0.5" r="0.5">
-                <Stop offset="0" stopColor={NEON[3]} stopOpacity={0.55} />
-                <Stop offset="0.65" stopColor={NEON[2]} stopOpacity={0.18} />
-                <Stop offset="1" stopColor={NEON[2]} stopOpacity={0} />
-              </RadialGradient>
-              <ClipPath id="dockClip">
-                <Path d={path} />
-              </ClipPath>
-            </Defs>
-
-            <G transform={`translate(${PAD} 0)`}>
-              {/* bloom: two wide, faint strokes of the same outline, painted
-                  first so the interior covers their inner half and only an
-                  outer halo survives */}
-              <Path d={path} fill="none" stroke="url(#neonStroke)" strokeWidth={20} strokeOpacity={0.1} />
-              <Path d={path} fill="none" stroke="url(#neonStroke)" strokeWidth={9} strokeOpacity={0.16} />
-
-              <Path d={path} fill={light ? 'rgba(255,255,255,0.95)' : 'rgba(7,6,22,0.92)'} />
-
-              {/* the lit pocket behind the active icon */}
-              <G clipPath="url(#dockClip)">
-                {sideItems.map((item, i) => {
-                  const active = item.key === tab;
-                  return (
-                    <Circle
-                      key={item.key}
-                      cx={ICONS[i] * inner}
-                      cy={ICON_Y}
-                      r={30}
-                      fill={`url(#${i < 2 ? 'pocketCyan' : 'pocketMagenta'})`}
-                      opacity={active ? 1 : 0.22}
-                    />
-                  );
-                })}
-                <Path d={path} fill="url(#neonFill)" />
-              </G>
-
-              <Path d={path} fill="none" stroke="url(#neonStroke)" strokeWidth={2} strokeLinejoin="round" />
-
-              {/* the raised button: dark core, gradient ring, glowing mark */}
-              <Circle cx={inner / 2} cy={CENTER_CY} r={CENTER_R + 7} fill="url(#neonFill)" />
-              <Circle cx={inner / 2} cy={CENTER_CY} r={CENTER_R} fill={light ? '#FFFFFF' : '#080718'} />
-              <Circle cx={inner / 2} cy={CENTER_CY} r={CENTER_R - 8} fill="url(#neonFill)" />
+    <View style={styles.wrap} onLayout={(e) => setW(e.nativeEvent.layout.width)} pointerEvents="box-none">
+      {inner > 200 && (
+        <Svg width={w} height={HEIGHT}>
+          <Defs>
+            <LinearGradient id="rail" x1="0" y1="0" x2="1" y2="0.35">
+              <Stop offset="0" stopColor="#FFB24B" />
+              <Stop offset="0.35" stopColor="#FF8A2E" />
+              <Stop offset="0.7" stopColor="#B15CFF" />
+              <Stop offset="1" stopColor="#7C3AED" />
+            </LinearGradient>
+            <LinearGradient id="core" x1="0" y1="0" x2="1" y2="1">
+              <Stop offset="0" stopColor="#12102E" />
+              <Stop offset="1" stopColor="#07051A" />
+            </LinearGradient>
+          </Defs>
+          <G transform={`translate(${PAD_X} 0)`}>
+            <Path d={path} stroke="url(#rail)" strokeWidth={16} strokeOpacity={0.14} fill="none" />
+            <Path d={path} stroke="url(#rail)" strokeWidth={7} strokeOpacity={0.3} fill="none" />
+            <Path d={path} fill="rgba(7,6,20,0.92)" />
+            <Path d={path} stroke="url(#rail)" strokeWidth={1.8} fill="none" />
+            {SLOTS.map((f, i) => (
               <Circle
-                cx={inner / 2}
-                cy={CENTER_CY}
-                r={CENTER_R}
-                fill="none"
-                stroke="url(#neonStroke)"
-                strokeWidth={2.6}
+                key={i}
+                cx={f * inner}
+                cy={midY}
+                r={WELL_R}
+                fill={tab === ITEMS[i].key ? 'rgba(255,178,75,0.16)' : 'transparent'}
+                stroke={tab === ITEMS[i].key ? 'url(#rail)' : 'rgba(255,255,255,0.16)'}
+                strokeWidth={tab === ITEMS[i].key ? 1.6 : 1.2}
               />
-              <Path
-                d={INFINITY}
-                transform={`translate(${inner / 2} ${CENTER_CY})`}
-                fill="none"
-                stroke="url(#neonStroke)"
-                strokeWidth={2.8}
-                strokeLinecap="round"
-              />
-            </G>
-          </Svg>
-
-          {sideItems.map((item, i) => {
-            const active = item.key === tab;
-            const x = PAD + ICONS[i] * inner;
-            const badge = badges?.[item.key] ?? 0;
-            const showBadge = badge > 0 && item.key !== tab;
-            return (
-              <Pressable
-                key={item.key}
-                onPress={() => onChange(item.key)}
-                accessibilityRole="tab"
-                accessibilityState={{ selected: active }}
-                accessibilityLabel={item.label}
-                hitSlop={8}
-                style={[styles.hit, { left: x - 30, top: ICON_Y - 30 }]}
-              >
-                <Icon
-                  name={active ? item.iconActive : item.icon}
-                  size={23}
-                  color={active ? '#FFFFFF' : light ? '#5C6484' : 'rgba(226,240,255,0.72)'}
-                />
-                {showBadge && (
-                  <View style={styles.badge}>
-                    <Text style={styles.badgeText}>{badge > 99 ? '99+' : badge}</Text>
-                  </View>
-                )}
-              </Pressable>
-            );
-          })}
-
-          <Pressable
-            onPress={() => onChange(centerItem.key)}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: tab === centerItem.key }}
-            accessibilityLabel={centerItem.label}
-            hitSlop={10}
-            style={[styles.hit, { left: cx - CENTER_R, top: CENTER_CY - CENTER_R }]}
-          />
-        </>
+            ))}
+            <Circle cx={inner / 2} cy={cy} r={CENTER_R} fill="url(#core)" />
+            <Circle cx={inner / 2} cy={cy} r={CENTER_R} stroke="url(#rail)" strokeWidth={4} fill="none" />
+            <Circle cx={inner / 2} cy={cy} r={CENTER_R - 6} stroke="url(#rail)" strokeWidth={1} strokeOpacity={0.5} fill="none" />
+          </G>
+        </Svg>
       )}
 
-      {/* nothing renders until the width is known — the silhouette depends on it */}
-      {!path && <RectPlaceholder />}
+      {ITEMS.filter((i) => i.key !== 'post').map((it) => {
+        const i = ITEMS.indexOf(it);
+        const left = PAD_X + SLOTS[i] * inner - WELL_R;
+        const n = badges?.[it.key] ?? 0;
+        return (
+          <Pressable
+            key={it.key}
+            style={[styles.hit, { left, top: midY - WELL_R }]}
+            onPress={() => onChange(it.key)}
+            hitSlop={6}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: tab === it.key }}
+            accessibilityLabel={it.label}
+          >
+            <Icon
+              name={tab === it.key ? it.iconActive : it.icon}
+              size={22}
+              color={tab === it.key ? '#FFFFFF' : 'rgba(226,232,255,0.72)'}
+            />
+            {n > 0 && (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{n > 9 ? '9+' : n}</Text>
+              </View>
+            )}
+          </Pressable>
+        );
+      })}
+
+      <Pressable
+        style={[styles.center, { left: PAD_X + inner / 2 - CENTER_R, top: cy - CENTER_R }]}
+        onPress={() => onChange('post')}
+        accessibilityRole="tab"
+        accessibilityState={{ selected: tab === 'post' }}
+        accessibilityLabel="Create a Drop"
+      >
+        <Svg width={44} height={26} viewBox="0 0 44 26">
+          <Defs>
+            <LinearGradient id="inf" x1="0" y1="0" x2="1" y2="1">
+              <Stop offset="0" stopColor="#FFE9A8" />
+              <Stop offset="0.45" stopColor="#FFB24B" />
+              <Stop offset="1" stopColor="#B15CFF" />
+            </LinearGradient>
+          </Defs>
+          <Path
+            d="M 15 4 C 8 4 8 22 15 22 C 21 22 23 4 29 4 C 36 4 36 22 29 22 C 23 22 21 4 15 4 Z"
+            fill="none"
+            stroke="url(#inf)"
+            strokeWidth={3.4}
+            strokeLinecap="round"
+          />
+        </Svg>
+      </Pressable>
     </View>
   );
 }
 
-/** A quiet placeholder for the single frame between mount and measurement. */
-function RectPlaceholder() {
-  return <View style={styles.placeholder} />;
-}
-
 const styles = StyleSheet.create({
-  wrap: {
-    height: HEIGHT + 4,
-    marginHorizontal: 12,
-    marginTop: -16, // let the centre button sit closer to the content above it
-  },
-  hit: {
-    position: 'absolute',
-    width: 60,
-    height: 60,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  wrap: { height: HEIGHT, marginTop: -18, marginHorizontal: 6, justifyContent: 'flex-end' },
+  hit: { position: 'absolute', width: WELL_R * 2, height: WELL_R * 2, alignItems: 'center', justifyContent: 'center' },
+  center: { position: 'absolute', width: CENTER_R * 2, height: CENTER_R * 2, alignItems: 'center', justifyContent: 'center' },
   badge: {
     position: 'absolute',
-    top: 6,
-    right: 4,
-    minWidth: 17,
-    height: 17,
-    paddingHorizontal: 4,
-    borderRadius: 9,
-    backgroundColor: NEON[3],
+    top: -2,
+    right: -2,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    paddingHorizontal: 3,
+    backgroundColor: '#FF4D6D',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: colors.bg,
   },
   badgeText: { color: '#FFFFFF', fontSize: 9, fontWeight: '800' },
-  placeholder: { flex: 1 },
 });
