@@ -16,7 +16,9 @@
     "build:prod": "node scripts/preflight-env.js && eas build --platform android --profile production",
     "verify:sql": "python scripts/sql-verify/verify.py",
     "verify:drops": "python scripts/sql-verify/check_drops_sql.py",
-    "verify:expiry": "python scripts/sql-verify/check_expiry_rule.py"
+    "verify:expiry": "python scripts/sql-verify/check_expiry_rule.py",
+    "verify:mutes": "python scripts/sql-verify/check_mutes_consolidation.py",
+    "verify:region": "python scripts/sql-verify/check_region_mirror.py"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",

@@ -256,10 +256,13 @@ export function MutedScreen({
         blurb: 'Muted people still follow you, you just stop seeing their posts in the feed.',
         emptyText: 'Nobody is muted. Muting keeps a follow intact while hiding the posts.',
         searchPlaceholder: 'Search muted accounts',
-        table: 'muted_accounts',
+        // Single source of truth for mutes. The feed inserts into muted_users,
+        // so this list has to read and delete there too — otherwise "Unmute"
+        // removed a row the feed never looked at and the person stayed hidden.
+        table: 'muted_users',
         ownerColumn: 'user_id',
         targetColumn: 'muted_id',
-        selectExpr: 'muted_id, profile:profiles!muted_accounts_muted_id_fkey(username, avatar_url, verified)',
+        selectExpr: 'muted_id, profile:profiles!muted_users_muted_id_fkey(username, avatar_url, verified)',
         actionLabel: 'Unmute',
       }}
     />

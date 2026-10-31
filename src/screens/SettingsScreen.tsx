@@ -192,7 +192,10 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
         .maybeSingle(),
       supabase.from('settings').select('*').eq('user_id', user.id).maybeSingle(),
       supabase.from('blocks').select('blocked_id', head).eq('blocker_id', user.id),
-      supabase.from('muted_accounts').select('muted_id', head).eq('user_id', user.id),
+      // muted_users, not muted_accounts: the feed writes and reads mutes there.
+      // Reading the other table made Settings claim "nobody is muted" while the
+      // feed was actively hiding people, and unmuting from here changed nothing.
+      supabase.from('muted_users').select('muted_id', head).eq('user_id', user.id),
       supabase.from('hidden_words').select('word', head).eq('user_id', user.id),
       fetchAccountStats(user.id),
     ]);
