@@ -34,7 +34,7 @@ with psycopg.connect(DSN, autocommit=True) as _c:
     _c.execute((HERE / "stub_schema.sql").read_text(encoding="utf-8"))
 print("stub schema applied")
 
-for _f in sorted((REPO / "supabase").glob("20261023_0*.sql")):
+for _f in sorted((REPO / "supabase").glob("2026*.sql")):
     with psycopg.connect(DSN, autocommit=True) as _c:
         _c.execute(_f.read_text(encoding="utf-8"))
     print("applied  " + _f.name)
