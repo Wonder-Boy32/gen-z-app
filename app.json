@@ -5,7 +5,6 @@
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": true,
     "scheme": "genz",
     "icon": "./assets/icon-launcher.png",
     "plugins": [
@@ -15,11 +14,11 @@
       "expo-dev-client",
       [
         "expo-notifications",
-          {
-            "icon": "./assets/notif-icon.png",
-            "color": "#FF9D1F",
-            "defaultChannel": "default"
-          }
+        {
+          "icon": "./assets/notif-icon.png",
+          "color": "#FF9D1F",
+          "defaultChannel": "default"
+        }
       ],
       "ffmpeg-expo",
       [
@@ -35,7 +34,9 @@
           "image": "./assets/brand-splash.png",
           "imageWidth": 220
         }
-      ]
+      ],
+      "expo-font",
+      "expo-asset"
     ],
     "android": {
       "package": "com.genz.app",
