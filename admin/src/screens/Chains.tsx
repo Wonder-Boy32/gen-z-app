@@ -7,7 +7,7 @@ export default function Chains() {
   return (
     <Page
       title="Drop Chains"
-      sub="Reply threads on a root drop. Every member keeps its own 48-hour timer — a response never extends the root."
+      sub="Reply threads on a root drop. Every member keeps its own 7-day timer — a response never extends the root."
     >
       {c.loading ? <Spinner /> : !c.data || c.data.chains.length === 0 ? (
         <Empty text="No active chains." />

@@ -11,8 +11,8 @@ export default function Pulse() {
 
   return (
     <Page
-      title="48H Pulse"
-      sub="The temporary-content ecosystem — every Drop still lives exactly 48 hours. This section only monitors."
+      title="7D Pulse"
+      sub="The temporary-content ecosystem — every Drop lives exactly 7 days. This section only monitors."
     >
       <div className="stat-grid" style={{ marginBottom: 18 }}>
         <Stat label="Active Drops" value={d.active_drops} tone="accent" />
@@ -61,10 +61,10 @@ export default function Pulse() {
       <div className="sec-block">
         <Card title="Why admin can't touch the timer">
           <p className="muted">
-            The 48-hour rule is enforced at the database level: <span className="mono">posts.expires_at</span> is
+            The 7-day rule is enforced at the database level: <span className="mono">posts.expires_at</span> is
             immutable (trigger <span className="mono">lock_drop_timestamps</span>), and no admin function in the
             control center reads, extends, resets or restarts a Drop timer. Removing a Drop hides it (soft flag);
-            restoring it never resurrects it past its original expiry. Create → 48h → expire → disappear, always.
+            restoring it never resurrects it past its original expiry. Create → 7 days → expire → disappear, always.
           </p>
         </Card>
       </div>

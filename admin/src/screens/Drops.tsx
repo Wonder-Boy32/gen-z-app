@@ -25,7 +25,7 @@ export default function Drops() {
   return (
     <Page
       title="Drops"
-      sub="48-hour content. Admin can remove or restore — never extend. The timer is untouchable by design."
+      sub="7-day content. Admin can remove or restore — never extend. The timer is untouchable by design."
       actions={
         <input className="input" style={{ maxWidth: 240 }} placeholder="Search creator / caption…" value={search} onChange={(e) => setSearch(e.target.value)} />
       }
@@ -92,8 +92,8 @@ export default function Drops() {
         <ReasonPrompt
           title={pending.action === 'remove' ? 'Remove drop' : 'Restore drop'}
           message={pending.action === 'remove'
-            ? 'Hide this drop from the platform? The 48-hour timer is untouched — restoring later only works until it naturally expires.'
-            : 'Bring this drop back? Only works if it has not already expired (48h rule).'}
+            ? 'Hide this drop from the platform? The 7-day timer is untouched — restoring later only works until it naturally expires.'
+            : 'Bring this drop back? Only works if it has not already expired (7-day rule).'}
           confirmLabel={pending.action}
           danger={pending.action === 'remove'}
           onConfirm={(reason) => act(pending.drop, pending.action, reason)}

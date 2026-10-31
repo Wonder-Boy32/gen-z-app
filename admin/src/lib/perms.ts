@@ -12,7 +12,7 @@ export interface AdminModule {
 
 export const MODULES: AdminModule[] = [
   { key: 'overview', label: 'Dashboard', icon: 'grid', perm: 'dashboard.view', section: 'main', mobile: true },
-  { key: 'pulse', label: '48H Pulse', icon: 'activity', perm: 'pulse.view', section: 'main', mobile: true },
+  { key: 'pulse', label: '7D Pulse', icon: 'activity', perm: 'pulse.view', section: 'main', mobile: true },
   { key: 'users', label: 'Users', icon: 'users', perm: 'users.view', section: 'main', mobile: true },
   { key: 'drops', label: 'Drops', icon: 'zap', perm: 'drops.view', section: 'main', mobile: true },
   { key: 'moderation', label: 'Moderation', icon: 'shield', perm: 'moderation.view', section: 'content', mobile: true },

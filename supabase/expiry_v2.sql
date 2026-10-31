@@ -14,10 +14,22 @@ create extension if not exists pg_cron;
 create extension if not exists pg_net;
 
 -- ------------------------------------------------------------
--- 1) DB-LEVEL 48h ENFORCEMENT
---    INSERT: created_at := now() (client value ignored), expires_at := created_at + 48h
---    UPDATE: expires_at recomputed from created_at (existing
---            lock_drop_timestamps trigger still blocks created_at edits)
+-- 1) EXPIRY TRIGGER — *** SUPERSEDED, DO NOT RE-RUN THIS SECTION ***
+--
+--    The body below sets a 48-HOUR window. The live rule is 7 DAYS, set by
+--    supabase/seven_day_expiry.sql, which redefines this same function with
+--    the same name. Whichever file runs last wins, silently.
+--
+--    If you re-run this file you revert every Drop to two days: no error,
+--    posts simply start disappearing three days early. Keep the rest of the
+--    file (genz_storage_delete, genz_purge_expired, the cleanup queue) — just
+--    re-run seven_day_expiry.sql afterwards, and note that
+--    supabase/20261101_04_expiry_rule_assert.sql will now fail loudly if the
+--    48h body is what is deployed.
+--
+--    The name still says 48h on purpose: renaming means dropping the
+--    function a live trigger points at, and a half-applied rename leaves
+--    posts with a trigger referencing nothing — every INSERT would fail.
 -- ------------------------------------------------------------
 create or replace function public.enforce_48h_expiry()
 returns trigger language plpgsql set search_path = public as $$
