@@ -224,3 +224,8 @@ grant usage, select on all sequences in schema public to authenticated;
 
 -- the pre-existing public bucket this migration hardens
 insert into storage.buckets (id, name, public) values ('media','media',true);
+
+-- --- Phase 2: RLS must be ON for tables whose policies we assert against.
+-- conversations only: verify.py seeds messages as a privileged role, so turning
+-- RLS on there breaks its own fixture instead of testing a policy.
+alter table public.conversations enable row level security;

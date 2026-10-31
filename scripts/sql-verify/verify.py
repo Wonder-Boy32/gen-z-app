@@ -323,6 +323,40 @@ note("anon-send: blocked pair is refused", not ok, "allowed")
 note("anon-send: refusal raises a code the UI maps",
      "anon_blocked" in err or "blocked" in err.lower(), err)
 
+# --- Phase 2 policy assertions ------------------------------------------
+# try_as only answers "did it raise?". These need row counts: an RLS-filtered
+# UPDATE succeeds and changes nothing, which is precisely the bug that made
+# conversation edits silently no-op.
+def count_as(role, uid, sql, params=()):
+    try:
+        with psycopg.connect(DSN) as c:
+            c.autocommit = False
+            with c.cursor() as cur:
+                cur.execute("set local role " + role)
+                if uid:
+                    cur.execute("select set_config('request.jwt.claim.sub', %s, true)", (uid,))
+                cur.execute(sql, params)
+                n = cur.rowcount if cur.description is None else len(cur.fetchall())
+            c.rollback()
+        return n, ""
+    except Exception as e:
+        return -1, str(e).strip().splitlines()[0][:160]
+
+n, err = count_as("authenticated", A, "update public.conversations set id = id where id = %s", (CONV_AB,))
+note("conversations: a participant can update the conversation", n == 1, f"rows={n} {err}")
+
+n, err = count_as("authenticated", C, "update public.conversations set id = id where id = %s", (CONV_AB,))
+note("conversations: a non-participant cannot update it", n == 0, f"rows={n} {err}")
+
+with psycopg.connect(DSN, autocommit=True) as c:
+    c.execute("insert into storage.objects (bucket_id,name,owner) values ('chat-media', %s, %s) on conflict do nothing",
+              (CONV_AB + "/" + C + "/x.jpg", C))
+
+n, err = count_as("authenticated", A, "update storage.objects set owner = owner where name = %s", (CONV_AB + "/" + C + "/x.jpg",))
+note("chat-media: a member cannot rewrite another member's object", n == 0, f"rows={n} {err}")
+
+n, err = count_as("authenticated", C, "update storage.objects set owner = owner where name = %s", (CONV_AB + "/" + C + "/x.jpg",))
+note("chat-media: a non-member cannot update it even as owner", n == 0, f"rows={n} {err}")
 print("\n--- refusal reasons (a block only counts if it fires for this reason) ---")
 _diag = [
   ("chat-media foreign folder", "authenticated", A,
