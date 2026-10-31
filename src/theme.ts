@@ -84,10 +84,10 @@ const DARK = {
   // brand accents — the reference's magenta. This is the single lever that
   // re-colours every CTA in the app, so it deliberately sits between the violet
   // and the hot pink of the ramp rather than on either end.
-  accent: '#E040FB',
-  accentStrong: '#FF2FB9',
-  accentSoft: 'rgba(224,64,251,0.18)',
-  accentGlow: 'rgba(224,64,251,0.5)',
+  accent: '#FF9A2E',
+  accentStrong: '#FFC24B',
+  accentSoft: 'rgba(255,154,46,0.18)',
+  accentGlow: 'rgba(255,154,46,0.5)',
   violet: '#8B5CF6',
   glowBlue: '#3B82F6',
 
@@ -179,10 +179,10 @@ const LIGHT: Palette = {
   textFaint: '#9B9BA6',
 
   // brand accents — the same magenta as dark, alpha washed for white
-  accent: '#E040FB',
-  accentStrong: '#FF2FB9',
-  accentSoft: 'rgba(224,64,251,0.16)',
-  accentGlow: 'rgba(224,64,251,0.3)',
+  accent: '#FF9A2E',
+  accentStrong: '#FFC24B',
+  accentSoft: 'rgba(255,154,46,0.16)',
+  accentGlow: 'rgba(255,154,46,0.3)',
   violet: '#8B5CF6',
   glowBlue: '#3B82F6',
 
