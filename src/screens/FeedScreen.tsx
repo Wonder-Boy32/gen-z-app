@@ -1365,7 +1365,7 @@ export default function FeedScreen({
             accessibilityRole="button"
             accessibilityLabel="Search"
           >
-            <Icon name="search-outline" size={21} color={colors.logoWhite} />
+            <Icon name="search-outline" size={21} color={colors.text} />
           </Pressable>
         )}
 
@@ -1376,7 +1376,7 @@ export default function FeedScreen({
           accessibilityRole="button"
           accessibilityLabel="Activity"
         >
-          <Icon name="notifications-outline" size={21} color={colors.logoWhite} />
+          <Icon name="notifications-outline" size={21} color={colors.text} />
           {unreadCount > 0 && (
             <View style={styles.bellBadge}>
               <Text style={styles.bellBadgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
@@ -1390,7 +1390,7 @@ export default function FeedScreen({
           accessibilityRole="button"
           accessibilityLabel="Feed preferences"
         >
-          <Icon name="options-outline" size={20} color={colors.logoWhite} />
+          <Icon name="options-outline" size={20} color={colors.text} />
         </Pressable>
       </View>
 
