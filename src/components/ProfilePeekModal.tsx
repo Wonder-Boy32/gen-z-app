@@ -272,7 +272,7 @@ const styles = StyleSheet.create({
     ...shadows.glow,
   },
   followBtnActive: {
-    backgroundColor: 'rgba(255,122,0,0.15)',
+    backgroundColor: 'rgba(229,43,255,0.15)',
   },
   followBtnText: {
     color: colors.bg,

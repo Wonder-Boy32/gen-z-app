@@ -13,7 +13,7 @@ export type TextLayer = {
   y: number;
 };
 
-const COLORS = ['#FFFFFF', '#FF9D1F', '#8B7BFF', '#34D399', '#FF5C7C', '#FCE123', '#000000'];
+const COLORS = ['#FFFFFF', '#C13BFF', '#8B5CF6', '#34D399', '#FF5C7C', '#FCE123', '#000000'];
 const SIZES = [
   { id: 's', label: 'S', size: 16 },
   { id: 'm', label: 'M', size: 26 },

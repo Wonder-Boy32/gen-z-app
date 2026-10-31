@@ -485,7 +485,7 @@ const styles = StyleSheet.create({
   // ambient glows
   orbOrange: {
     position: 'absolute', top: -110, right: -100, width: 280, height: 280,
-    borderRadius: 999, backgroundColor: 'rgba(255,157,31,0.07)',
+    borderRadius: 999, backgroundColor: 'rgba(193,59,255,0.07)',
   },
   orbViolet: {
     position: 'absolute', bottom: -140, left: -120, width: 320, height: 320,

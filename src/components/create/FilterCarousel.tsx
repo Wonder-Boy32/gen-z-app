@@ -17,7 +17,7 @@ export type FilterDef = {
 
 export const FILTERS: FilterDef[] = [
   { id: 'original', label: 'Original', tint: null, group: 'looks' },
-  { id: 'vibe', label: 'Vibe', tint: 'rgba(255,157,31,0.20)', group: 'looks' },
+  { id: 'vibe', label: 'Vibe', tint: 'rgba(193,59,255,0.20)', group: 'looks' },
   { id: 'midnight', label: 'Midnight', tint: 'rgba(30,42,90,0.42)', group: 'looks' },
   { id: 'sunset', label: 'Sunset', tint: 'rgba(255,92,124,0.24)', group: 'looks' },
   { id: 'mono', label: 'Mono', tint: 'rgba(120,125,140,0.50)', group: 'looks' },

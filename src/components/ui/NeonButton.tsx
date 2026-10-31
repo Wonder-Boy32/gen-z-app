@@ -12,10 +12,10 @@
 
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import Icon, { IconName } from './Icon';
+import NeonGradientFill, { NEON_RAMP } from './NeonGradient';
 
-export const NEON_RAMP = ['#22D3EE', '#3B82F6', '#8B5CF6', '#EC4899'];
+export { NEON_RAMP };
 
 export default function NeonButton({
   title,
@@ -44,24 +44,7 @@ export default function NeonButton({
         style,
       ]}
     >
-      <Svg width="100%" height="100%" style={StyleSheet.absoluteFill} pointerEvents="none">
-        <Defs>
-          <LinearGradient id="neonBtn" x1="0" y1="0" x2="1" y2="0">
-            {NEON_RAMP.map((c, i) => (
-              <Stop key={c} offset={i / (NEON_RAMP.length - 1)} stopColor={c} />
-            ))}
-          </LinearGradient>
-          {/* a second, vertical pass at low opacity lifts the top edge so the
-              button reads as lit from above instead of flatly filled */}
-          <LinearGradient id="neonBtnSheen" x1="0" y1="0" x2="0" y2="1">
-            <Stop offset="0" stopColor="#FFFFFF" stopOpacity={0.22} />
-            <Stop offset="0.55" stopColor="#FFFFFF" stopOpacity={0} />
-          </LinearGradient>
-        </Defs>
-        <Rect x="0" y="0" width="100%" height="100%" rx={radius} fill="url(#neonBtn)" />
-        <Rect x="0" y="0" width="100%" height="100%" rx={radius} fill="url(#neonBtnSheen)" />
-      </Svg>
-
+      <NeonGradientFill radius={radius} />
       <View style={styles.inner} pointerEvents="none">
         {icon && <Icon name={icon} size={17} color="#FFFFFF" />}
         <Text style={styles.label} numberOfLines={1}>
@@ -77,7 +60,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     justifyContent: 'center',
     // the glow is what separates this from a flat accent pill
-    shadowColor: '#8B5CF6',
+    shadowColor: '#B15CFF',
     shadowOpacity: 0.45,
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 4 },

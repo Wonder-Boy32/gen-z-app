@@ -97,15 +97,15 @@ const COPY: Record<NotifyType, string> = {
 const CHIP: Record<NotifyType, { icon: IconName; color: string }> = {
   follow: { icon: 'person-add', color: '#4DD8FF' },
   like: { icon: 'heart', color: '#FF3B5C' },
-  comment: { icon: 'chatbubble', color: '#8B7BFF' },
-  reply: { icon: 'chatbubble-ellipses', color: '#8B7BFF' },
-  reaction: { icon: 'sparkles', color: '#FF9D1F' },
+  comment: { icon: 'chatbubble', color: '#8B5CF6' },
+  reply: { icon: 'chatbubble-ellipses', color: '#8B5CF6' },
+  reaction: { icon: 'sparkles', color: '#C13BFF' },
   repost: { icon: 'repeat', color: '#34D399' },
   comment_like: { icon: 'heart', color: '#FF3B5C' },
   anon_message: { icon: 'eye-off', color: '#A8E6F2' },
   call: { icon: 'call', color: '#FF5C7C' },
-  new_login: { icon: 'shield-checkmark', color: '#FF9D1F' },
-  upload: { icon: 'cloud-upload', color: '#FF9D1F' },
+  new_login: { icon: 'shield-checkmark', color: '#C13BFF' },
+  upload: { icon: 'cloud-upload', color: '#C13BFF' },
 };
 
 function timeAgo(iso: string): string {

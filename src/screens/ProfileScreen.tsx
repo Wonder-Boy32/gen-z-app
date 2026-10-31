@@ -14,7 +14,7 @@ import {
 import { supabase } from '../supabase/client';
 import { colors, radius, shadows } from '../theme';
 import { TOP_INSET } from '../utils/useInsets';
-import LogoHeader from '../components/LogoHeader';
+import NeonGradientFill from '../components/ui/NeonGradient';
 import Button from '../components/Button';
 import NeonButton from '../components/ui/NeonButton';
 import Icon, { IconName } from '../components/ui/Icon';
@@ -307,6 +307,17 @@ export default function ProfileScreen({
   const achievements = useAchievements(profile, posts, totalLikes);
   const activePosts = posts; // RLS already returns only unexpired posts
 
+  // Average engagement per drop, from this profile's own rows: a like counts 1,
+  // a comment 2, because a comment costs the reader more. Deliberately a plain
+  // average of real numbers rather than a weighted 0–10 score, which would look
+  // like a metric the app does not actually keep.
+  const engagementScore = activePosts.length
+    ? Math.round(
+        activePosts.reduce((s, p) => s + (p.likes_count ?? 0) + 2 * (p.comments_count ?? 0), 0) /
+          activePosts.length
+      )
+    : 0;
+
   const tabData: { [k in Tab]: (Post | RepostRow)[] } = {
     active: posts,
     videos: posts.filter((p) => p.media_type === 'video'),
@@ -339,6 +350,9 @@ export default function ProfileScreen({
           contentContainerStyle={styles.content}
           ListHeaderComponent={
             <View style={styles.header}>
+              {/* Top bar as in the reference: the handle is the title, with one
+                  control at each edge. The logo lockup belongs on the feed, not
+                  repeated over your own profile. */}
               <View style={styles.topRow}>
                 <Pressable
                   style={styles.settingsBtn}
@@ -353,8 +367,18 @@ export default function ProfileScreen({
                     </View>
                   )}
                 </Pressable>
-                <LogoHeader compact />
-                <Pressable style={styles.settingsBtn} onPress={() => setSettingsOpen(true)} hitSlop={8}>
+                <View style={styles.titleWrap}>
+                  <Text style={styles.titleName} numberOfLines={1}>
+                    @{profile?.username ?? 'unknown'}
+                  </Text>
+                  {profile?.verified && <VerifiedBadge size={14} glow={false} />}
+                </View>
+                <Pressable
+                  style={styles.settingsBtn}
+                  onPress={() => setSettingsOpen(true)}
+                  hitSlop={8}
+                  accessibilityLabel="Settings"
+                >
                   <Icon name="settings" size={17} color={colors.textMuted} />
                 </Pressable>
               </View>
@@ -389,75 +413,133 @@ export default function ProfileScreen({
                 </View>
               </View>
 
-              <Pressable onPress={() => setAvatarSheet(true)} hitSlop={8} style={styles.avatarOverlap}>
-                {/* the glowing outline the reference puts around the portrait */}
-                <View style={styles.avatarGlow}>
-                  <Avatar
-                    url={profile?.avatar_url}
-                    name={profile?.display_name || profile?.username || 'G'}
-                    size={94}
-                    ring
-                    verified={!!profile?.verified}
-                  />
+              {/* Portrait on the left, counters on the right — the reference's
+                  header. The portrait still straddles the cover edge; only its
+                  alignment changed, so the cover feature is untouched. */}
+              <View style={styles.identityRow}>
+                <Pressable onPress={() => setAvatarSheet(true)} hitSlop={8}>
+                  <View style={styles.avatarGlow}>
+                    <Avatar
+                      url={profile?.avatar_url}
+                      name={profile?.display_name || profile?.username || 'G'}
+                      size={84}
+                      ring
+                      verified={!!profile?.verified}
+                    />
+                  </View>
+                  <View style={styles.addBadge}>
+                    <Icon name="add" size={13} color="#FFFFFF" />
+                  </View>
+                </Pressable>
+
+                <View style={styles.statsRow}>
+                  <View style={styles.stat}>
+                    <Text style={styles.statNumber}>{activePosts.length}</Text>
+                    <Text style={styles.statLabel}>Posts</Text>
+                  </View>
+                  <Pressable style={styles.stat} onPress={() => setPeopleMode('followers')}>
+                    <Text style={styles.statNumber}>{followers}</Text>
+                    <Text style={styles.statLabel}>Followers</Text>
+                  </Pressable>
+                  <Pressable style={styles.stat} onPress={() => setPeopleMode('following')}>
+                    <Text style={styles.statNumber}>{following}</Text>
+                    <Text style={styles.statLabel}>Following</Text>
+                  </Pressable>
                 </View>
-              </Pressable>
-
-              <View style={styles.nameRow}>
-                <Text style={styles.displayName}>{profile?.display_name || profile?.username || 'Gen Z user'}</Text>
-                {profile?.verified && <VerifiedBadge size={19} style={styles.verified} />}
               </View>
-              <Text style={styles.username}>@{profile?.username ?? 'unknown'}</Text>
 
-              {/* Temporary mood — tap to set, change or clear. It clears itself. */}
-              <Pressable
-                style={[moodStyles.chip, !mood && moodStyles.chipEmpty]}
-                onPress={() => setMoodOpen(true)}
-              >
-                {mood ? (
-                  <>
-                    <Text style={moodStyles.emoji}>{mood.emoji}</Text>
-                    <Text style={moodStyles.label} numberOfLines={1}>
-                      {mood.label}
-                    </Text>
-                    <Text style={moodStyles.time}>{shortTimeLeft(mood.expiresAt)}</Text>
-                  </>
-                ) : (
-                  <>
-                    <Text style={moodStyles.emoji}>✨</Text>
-                    <Text style={moodStyles.placeholder}>Set a status</Text>
-                  </>
+              <View style={styles.bioBlock}>
+                <View style={styles.nameRow}>
+                  <Text style={styles.displayName}>
+                    {profile?.display_name || profile?.username || 'Gen Z user'}
+                  </Text>
+                  {profile?.verified && <VerifiedBadge size={17} style={styles.verified} />}
+                  {!!profile?.pronouns && <Text style={styles.meta}>{profile.pronouns}</Text>}
+                </View>
+
+                {!!profile?.bio && <Text style={styles.bio}>{profile.bio}</Text>}
+                {!!profile?.location && (
+                  <View style={styles.metaRow}>
+                    <Icon name="location" size={13} color={colors.cyan} />
+                    <Text style={styles.metaLoc}>{profile.location}</Text>
+                  </View>
                 )}
-              </Pressable>
 
-              {!!profile?.pronouns && <Text style={styles.meta}>{profile.pronouns}</Text>}
-              {!!profile?.location && (
-                <View style={styles.metaRow}>
-                  <Icon name="location" size={13} color={colors.textMuted} />
-                  <Text style={styles.metaLoc}>{profile.location}</Text>
+                {/* Temporary mood — tap to set, change or clear. It clears itself. */}
+                <Pressable
+                  style={[moodStyles.chip, !mood && moodStyles.chipEmpty]}
+                  onPress={() => setMoodOpen(true)}
+                >
+                  {mood ? (
+                    <>
+                      <Text style={moodStyles.emoji}>{mood.emoji}</Text>
+                      <Text style={moodStyles.label} numberOfLines={1}>
+                        {mood.label}
+                      </Text>
+                      <Text style={moodStyles.time}>{shortTimeLeft(mood.expiresAt)}</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={moodStyles.emoji}>✨</Text>
+                      <Text style={moodStyles.placeholder}>Set a status</Text>
+                    </>
+                  )}
+                </Pressable>
+
+                <Text style={styles.joinDate}>
+                  Joined{' '}
+                  {new Date(profile?.created_at ?? Date.now()).toLocaleDateString([], {
+                    month: 'long',
+                    year: 'numeric',
+                  })}
+                </Text>
+              </View>
+
+              {/* Real engagement, not an invented score: the average of
+                  likes + 2×comments across this profile's own live drops.
+                  Hidden when there are no drops, because 0.0 would be a lie
+                  dressed as a metric. */}
+              {activePosts.length > 0 && (
+                <View style={styles.engageOuter}>
+                  <NeonGradientFill radius={999} sheen={false} />
+                  <View style={styles.engageInner}>
+                    <Icon name="ribbon-outline" size={15} color={colors.cyan} />
+                    <Text style={styles.engageValue}>{engagementScore}</Text>
+                    <Text style={styles.engageLabel}>Engagement Score</Text>
+                    <Text style={styles.engageMeta}>{totalLikes} likes</Text>
+                  </View>
                 </View>
               )}
-              {!!profile?.bio && <Text style={styles.bio}>{profile.bio}</Text>}
-              <Text style={styles.joinDate}>
-                Joined {new Date(profile?.created_at ?? Date.now()).toLocaleDateString([], { month: 'long', year: 'numeric' })}
-              </Text>
 
-              <View style={styles.statsRow}>
-                <View style={styles.stat}>
-                  <Text style={styles.statNumber}>{activePosts.length}</Text>
-                  <Text style={styles.statLabel}>active</Text>
-                </View>
-                <Pressable style={styles.stat} onPress={() => setPeopleMode('followers')}>
-                  <Text style={styles.statNumber}>{followers}</Text>
-                  <Text style={styles.statLabel}>followers</Text>
+              {/* Highlights. These are REAL destinations inside this app — the
+                  reference's Travel/Music/Friends labels are invented categories
+                  and this app has no highlights store, so the rail is built from
+                  what a tap can actually open. */}
+              <View style={styles.highlights}>
+                <Pressable style={styles.highlight} onPress={() => setTab('active')}>
+                  <View style={styles.highlightRing}>
+                    <Icon name="grid-outline" size={19} color={colors.text} />
+                  </View>
+                  <Text style={styles.highlightLabel}>Drops</Text>
                 </Pressable>
-                <Pressable style={styles.stat} onPress={() => setPeopleMode('following')}>
-                  <Text style={styles.statNumber}>{following}</Text>
-                  <Text style={styles.statLabel}>following</Text>
+                <Pressable style={styles.highlight} onPress={() => setTab('videos')}>
+                  <View style={styles.highlightRing}>
+                    <Icon name="videocam-outline" size={19} color={colors.text} />
+                  </View>
+                  <Text style={styles.highlightLabel}>Videos</Text>
                 </Pressable>
-                <View style={styles.stat}>
-                  <Text style={styles.statNumber}>{totalLikes}</Text>
-                  <Text style={styles.statLabel}>likes</Text>
-                </View>
+                <Pressable style={styles.highlight} onPress={() => setTab('saved')}>
+                  <View style={styles.highlightRing}>
+                    <Icon name="bookmark-outline" size={19} color={colors.text} />
+                  </View>
+                  <Text style={styles.highlightLabel}>Saved</Text>
+                </Pressable>
+                <Pressable style={styles.highlight} onPress={openViewers}>
+                  <View style={styles.highlightRing}>
+                    <Icon name="eye-outline" size={19} color={colors.text} />
+                  </View>
+                  <Text style={styles.highlightLabel}>Viewers</Text>
+                </Pressable>
               </View>
 
               {/* Wide neon primary + a square secondary, as in the reference:
@@ -558,12 +640,33 @@ export default function ProfileScreen({
                 </View>
               )}
 
+              {/* Icon tabs with a magenta underline, as in the reference. All four
+                  existing tabs are kept — dropping Reposts or Saved would be a
+                  feature removal dressed up as a redesign. */}
               <View style={styles.tabs}>
-                {(['active', 'videos', 'reposts', 'saved'] as Tab[]).map((t) => (
-                  <Pressable key={t} style={[styles.tab, tab === t && styles.tabActive]} onPress={() => setTab(t)}>
-                    <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>{t}</Text>
-                  </Pressable>
-                ))}
+                {(
+                  [
+                    ['active', 'grid-outline', 'Posts'],
+                    ['videos', 'videocam-outline', 'Videos'],
+                    ['reposts', 'repeat', 'Reposts'],
+                    ['saved', 'bookmark-outline', 'Saved'],
+                  ] as [Tab, any, string][]
+                ).map(([t, icon, label]) => {
+                  const on = tab === t;
+                  return (
+                    <Pressable
+                      key={t}
+                      style={styles.tab}
+                      onPress={() => setTab(t)}
+                      accessibilityRole="tab"
+                      accessibilityState={{ selected: on }}
+                      accessibilityLabel={label}
+                    >
+                      <Icon name={icon} size={21} color={on ? colors.text : colors.textFaint} />
+                      {on && <View style={styles.tabUnderline} />}
+                    </Pressable>
+                  );
+                })}
               </View>
             </View>
           }
@@ -981,10 +1084,86 @@ const styles = StyleSheet.create({
     fontSize: 36,
     fontWeight: '800',
   },
+  titleWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    flexShrink: 1,
+  },
+  titleName: { color: colors.text, fontSize: 16, fontWeight: '800', flexShrink: 1 },
+  // portrait left, counters right — the reference's header row
+  identityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'stretch',
+    paddingHorizontal: 16,
+    marginTop: -42,
+  },
+  addBadge: {
+    position: 'absolute',
+    right: 0,
+    bottom: 0,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: colors.bg,
+  },
+  bioBlock: {
+    alignSelf: 'stretch',
+    paddingHorizontal: 16,
+    marginTop: 10,
+  },
+  // the engagement panel: gradient rim (SVG) with a solid inset so the border is
+  // a true ramp rather than one flat colour
+  engageOuter: {
+    alignSelf: 'stretch',
+    marginHorizontal: 16,
+    marginTop: 14,
+    height: 44,
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
+  engageInner: {
+    flex: 1,
+    margin: 1.6,
+    borderRadius: 999,
+    backgroundColor: colors.surface,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    gap: 8,
+  },
+  engageValue: { color: colors.text, fontSize: 15, fontWeight: '800' },
+  engageLabel: { color: colors.text, fontSize: 12.5, fontWeight: '700', flex: 1 },
+  engageMeta: { color: colors.textMuted, fontSize: 11.5, fontWeight: '600' },
+  highlights: {
+    flexDirection: 'row',
+    alignSelf: 'stretch',
+    justifyContent: 'space-around',
+    marginTop: 16,
+    paddingHorizontal: 10,
+  },
+  highlight: { alignItems: 'center', width: 66 },
+  highlightRing: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1.6,
+    borderColor: colors.violet,
+  },
+  highlightLabel: { color: colors.textMuted, fontSize: 10.5, marginTop: 5, fontWeight: '600' },
   nameRow: {
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 10,
+    gap: 6,
   },
   displayName: {
     color: colors.text,
@@ -1029,11 +1208,12 @@ const styles = StyleSheet.create({
   },
   statsRow: {
     flexDirection: 'row',
-    marginTop: 14,
+    flex: 1,
+    justifyContent: 'space-evenly',
+    marginLeft: 10,
   },
   stat: {
     alignItems: 'center',
-    marginHorizontal: 16,
   },
   statNumber: {
     color: colors.text,
@@ -1081,8 +1261,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 6,
     borderWidth: 1,
-    borderColor: 'rgba(255,122,0,0.35)',
-    backgroundColor: 'rgba(255,122,0,0.08)',
+    borderColor: 'rgba(229,43,255,0.35)',
+    backgroundColor: 'rgba(229,43,255,0.08)',
     borderRadius: 999,
     paddingVertical: 8,
   },
@@ -1268,29 +1448,24 @@ const styles = StyleSheet.create({
   },
   tabs: {
     flexDirection: 'row',
-    backgroundColor: colors.surface,
-    borderRadius: radius.pill,
-    padding: 4,
+    alignSelf: 'stretch',
     marginTop: 18,
-    width: '100%',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
   },
   tab: {
     flex: 1,
-    paddingVertical: 9,
-    borderRadius: radius.pill,
+    paddingVertical: 12,
     alignItems: 'center',
   },
-  tabActive: {
+  // the reference's active indicator: a short magenta bar under the icon
+  tabUnderline: {
+    position: 'absolute',
+    bottom: 0,
+    height: 2.5,
+    width: '52%',
+    borderRadius: 2,
     backgroundColor: colors.accent,
-  },
-  tabText: {
-    color: colors.textMuted,
-    fontSize: 12,
-    fontWeight: '700',
-    textTransform: 'capitalize',
-  },
-  tabTextActive: {
-    color: colors.bg,
   },
   tile: {
     flex: 1 / 3,

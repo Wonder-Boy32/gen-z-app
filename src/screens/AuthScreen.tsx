@@ -795,7 +795,7 @@ const styles = StyleSheet.create({
   },
   genderChipActive: {
     borderColor: colors.accent,
-    backgroundColor: 'rgba(255,122,0,0.10)',
+    backgroundColor: 'rgba(229,43,255,0.10)',
   },
   genderText: {
     color: colors.textMuted,
@@ -895,7 +895,7 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   sheetRowActive: {
-    backgroundColor: 'rgba(255,122,0,0.08)',
+    backgroundColor: 'rgba(229,43,255,0.08)',
   },
   sheetRowText: {
     color: colors.text,

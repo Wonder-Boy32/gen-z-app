@@ -246,7 +246,7 @@ function Pill({ label, active, onPress }: { label: string; active: boolean; onPr
           active && styles.pillGlow,
           {
             // These two output ranges used to be the dark palette written out
-            // as literals ('rgba(20,28,51,1)' / 'rgba(30,42,71,1)'). An animated
+            // as literals ('rgba(21,26,70,1)' / 'rgba(47,55,152,1)'). An animated
             // outputRange is not a style-sheet value, so the theme remap in
             // theme.ts could never reach it: in White mode every unselected
             // pill stayed navy while the rest of Discover turned white.

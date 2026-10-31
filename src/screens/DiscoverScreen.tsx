@@ -907,7 +907,7 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onO
           <View style={styles.dcEmpty}>
             <GradientFill from={colors.gradFrom} to={colors.gradTo} steps={14} style={FILL} />
             <Glow color={colors.accent} size={220} strength={0.14} style={styles.dcEmptyGlow} />
-            <CornerBrackets color="rgba(255,157,31,0.4)" size={20} inset={12} />
+            <CornerBrackets color="rgba(193,59,255,0.4)" size={20} inset={12} />
             {/* An empty feed should read as "you're early", not "this app is
                 broken". Same pixels, completely different feeling. */}
             <Text style={styles.dcEmptyTitle}>You&apos;re early. 👀</Text>
@@ -999,7 +999,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 5,
     borderWidth: 1,
-    borderColor: 'rgba(255,157,31,0.35)',
+    borderColor: 'rgba(193,59,255,0.35)',
     backgroundColor: colors.accentSoft,
     borderRadius: radius.pill,
     paddingHorizontal: 10,
@@ -1015,7 +1015,7 @@ const styles = StyleSheet.create({
     gap: 10,
     borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: 'rgba(255,157,31,0.22)',
+    borderColor: 'rgba(193,59,255,0.22)',
     backgroundColor: colors.surface,
     paddingHorizontal: 14,
     paddingVertical: 14,
@@ -1116,7 +1116,7 @@ const styles = StyleSheet.create({
     marginTop: 20,
     borderRadius: radius.xl,
     borderWidth: 1,
-    borderColor: 'rgba(255,157,31,0.25)',
+    borderColor: 'rgba(193,59,255,0.25)',
     backgroundColor: colors.surface,
     padding: 26,
     alignItems: 'center',
@@ -1199,7 +1199,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     backgroundColor: 'rgba(4,8,18,0.72)',
     borderWidth: 1,
-    borderColor: 'rgba(255,157,31,0.35)',
+    borderColor: 'rgba(193,59,255,0.35)',
     paddingHorizontal: 8,
     paddingVertical: 3,
   },

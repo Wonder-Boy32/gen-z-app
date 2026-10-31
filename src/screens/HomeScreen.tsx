@@ -172,6 +172,7 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
            openActivitySignal={openActivitySignal}
            onOpenSearch={() => setTab('discover')}
            onOpenChat={() => setTab('chat')}
+           chatUnread={tab === 'chat' ? 0 : chatUnread}
          />
       </View>
       <View style={[styles.content, tab !== 'discover' && styles.hiddenTab]}>

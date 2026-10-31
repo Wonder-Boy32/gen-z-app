@@ -163,9 +163,12 @@ export default function FeedScreen({
   openActivitySignal = 0,
   onOpenSearch,
   onOpenChat,
+  chatUnread = 0,
 }: {
   onOpenSearch?: () => void;
   onOpenChat?: () => void;
+  /** unread chats, for the badge on the messages control (owned by HomeScreen) */
+  chatUnread?: number;
   onJoinDrop?: () => void;
   onCreateIntent?: (intent: { sound?: string; replyTo?: string }) => void;
   initialUserMode?: string | null;
@@ -1365,17 +1368,7 @@ export default function FeedScreen({
             <Icon name="search-outline" size={21} color={colors.logoWhite} />
           </Pressable>
         )}
-        {onOpenChat && (
-          <Pressable
-            style={styles.iconBtn}
-            onPress={onOpenChat}
-            hitSlop={8}
-            accessibilityRole="button"
-            accessibilityLabel="Messages"
-          >
-            <Icon name="paper-plane-outline" size={20} color={colors.logoWhite} />
-          </Pressable>
-        )}
+
         <Pressable
           style={styles.iconBtn}
           onPress={() => setNotifOpen(true)}
@@ -1389,6 +1382,15 @@ export default function FeedScreen({
               <Text style={styles.bellBadgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
             </View>
           )}
+        </Pressable>
+        <Pressable
+          style={styles.iconBtn}
+          onPress={() => setPrefsOpen(true)}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel="Feed preferences"
+        >
+          <Icon name="options-outline" size={20} color={colors.logoWhite} />
         </Pressable>
       </View>
 
@@ -1448,10 +1450,6 @@ export default function FeedScreen({
             absolutely positioned at `railTop` — passing railTop again measured from
             railWrap's own top edge and pushed the button a second railTop down the
             screen, so it floated over the video instead of sitting in the rail. */}
-        <Pressable style={styles.railFilterBtn} onPress={() => setPrefsOpen(true)} hitSlop={6}>
-          <Icon name="options-outline" size={16} color={colors.logoWhite} style={styles.railFilterIcon} />
-        </Pressable>
-
         {/* edge fades so it's obvious more tabs exist */}
         {/* Same double-offset bug as the filter button: child of railWrap, so top:0. */}
         <View style={[styles.fadeEdge, styles.fadeLeft]} pointerEvents="none">
@@ -1571,6 +1569,23 @@ export default function FeedScreen({
             keyExtractor={(u) => u.id}
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.storiesContent}
+            ListHeaderComponent={
+              /* The reference's first tile is the "add" affordance. It opens the
+                 real create flow rather than a stub. */
+              <Pressable
+                style={styles.storyItem}
+                onPress={() => onCreateIntent?.({})}
+                accessibilityRole="button"
+                accessibilityLabel="Add a story"
+              >
+                <View style={styles.addStoryCircle}>
+                  <Icon name="add" size={26} color="#FFFFFF" />
+                </View>
+                <Text style={styles.storyName} numberOfLines={1}>
+                  Add Story
+                </Text>
+              </Pressable>
+            }
             renderItem={({ item, index }) => (
               <Pressable style={styles.storyItem} onPress={() => setStoryAt(index)}>
                 <NeonRing size={58} stroke={2.4} active={item.following}>
@@ -2173,7 +2188,7 @@ const styles = StyleSheet.create({
   },
   railTextActive: {
     color: colors.accent,
-    textShadowColor: 'rgba(255,122,0,0.45)',
+    textShadowColor: 'rgba(229,43,255,0.45)',
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 12,
   },
@@ -2198,7 +2213,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,122,0,0.18)',
+    backgroundColor: 'rgba(229,43,255,0.18)',
     borderWidth: 1,
     borderColor: colors.accent,
   },
@@ -2292,7 +2307,7 @@ const styles = StyleSheet.create({
   },
   subChipActive: {
     borderColor: colors.accent,
-    backgroundColor: 'rgba(255,122,0,0.16)',
+    backgroundColor: 'rgba(229,43,255,0.16)',
   },
   subChipText: { color: 'rgba(214,222,238,0.62)', fontSize: 11.5, fontWeight: '700' },
   subChipTextActive: { color: colors.accent },
@@ -2332,7 +2347,7 @@ const styles = StyleSheet.create({
   },
   prefsChipActive: {
     borderColor: colors.accent,
-    backgroundColor: 'rgba(255,122,0,0.14)',
+    backgroundColor: 'rgba(229,43,255,0.14)',
   },
   prefsChipText: { color: colors.textMuted, fontSize: 13, fontWeight: '700' },
   prefsChipTextActive: { color: colors.accent },
@@ -2348,7 +2363,7 @@ const styles = StyleSheet.create({
   },
   prefsRowActive: {
     borderColor: colors.accent,
-    backgroundColor: 'rgba(255,122,0,0.12)',
+    backgroundColor: 'rgba(229,43,255,0.12)',
   },
   prefsRowText: { color: colors.textMuted, fontSize: 12.5, fontWeight: '700' },
   prefsRowTextActive: { color: colors.accent },
@@ -2378,6 +2393,18 @@ const styles = StyleSheet.create({
     backgroundColor: colors.overlay,
     borderRadius: 999,
     padding: 9,
+  },
+  msgBadge: {
+    position: 'absolute',
+    top: 1,
+    right: 1,
+    minWidth: 16,
+    height: 16,
+    paddingHorizontal: 3,
+    borderRadius: 8,
+    backgroundColor: colors.danger,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   iconBtn: {
     width: 38,
@@ -2428,6 +2455,19 @@ const styles = StyleSheet.create({
   },
   storiesContent: { paddingHorizontal: 16 },
   storyItem: { alignItems: 'center', marginRight: 14, width: 64 },
+  addStoryCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.accent,
+    shadowColor: colors.accent,
+    shadowOpacity: 0.55,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 8,
+  },
   // The ring itself now lives in NeonRing (a gradient stroke), so only the
   // spacing of the rail item stays here.
   storyAvatar: { width: 48, height: 48, borderRadius: 24 },

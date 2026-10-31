@@ -135,7 +135,7 @@ const CHANNELS: ChannelSpec[] = [
     name: 'General',
     importance: 'HIGH',
     vibration: [0, 200, 120, 200],
-    light: '#FF9D1F',
+    light: '#C13BFF',
   },
   {
     id: 'likes',
@@ -149,7 +149,7 @@ const CHANNELS: ChannelSpec[] = [
     name: 'Comments and replies',
     importance: 'MAX',
     vibration: [0, 180, 110, 180],
-    light: '#8B7BFF',
+    light: '#8B5CF6',
   },
   {
     id: 'follows',

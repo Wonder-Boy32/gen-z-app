@@ -51,7 +51,7 @@ import type { Tab } from '../TabBar';
 // The reference ramp, left to right. Fixed rather than themed: this is a brand
 // surface, and the point of it is that it is unmistakably the same object in
 // every screen. Light mode only changes the interior, never the ramp.
-const NEON = ['#22D3EE', '#3B82F6', '#8B5CF6', '#EC4899'];
+const NEON = ['#FFB24B', '#FF8A2E', '#B15CFF', '#7C3AED'];
 
 const CREST = 54; // the high points of the top edge, between pockets
 const BOTTOM = 108; // the flat bottom edge
@@ -74,7 +74,7 @@ const ITEMS: { key: Tab; label: string; icon: IconName; iconActive: IconName }[]
   { key: 'feed', label: 'Home', icon: 'home-outline', iconActive: 'home' },
   { key: 'discover', label: 'Search', icon: 'search-outline', iconActive: 'search' },
   { key: 'post', label: 'Create', icon: 'add', iconActive: 'add' },
-  { key: 'chat', label: 'Alerts', icon: 'notifications-outline', iconActive: 'notifications' },
+  { key: 'chat', label: 'Chat', icon: 'chatbubble-outline', iconActive: 'chatbubbles' },
   { key: 'profile', label: 'Profile', icon: 'person-outline', iconActive: 'person' },
 ];
 

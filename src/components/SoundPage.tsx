@@ -209,7 +209,7 @@ const styles = StyleSheet.create({
   },
   countPill: {
     alignSelf: 'flex-start',
-    backgroundColor: 'rgba(255,122,0,0.14)',
+    backgroundColor: 'rgba(229,43,255,0.14)',
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 5,

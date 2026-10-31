@@ -235,7 +235,7 @@ const styles = StyleSheet.create({
     width: 340,
     height: 340,
     borderRadius: 170,
-    backgroundColor: 'rgba(255,157,31,0.10)',
+    backgroundColor: 'rgba(193,59,255,0.10)',
   },
   glowBottom: {
     position: 'absolute',

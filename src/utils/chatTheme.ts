@@ -15,9 +15,9 @@ export type ChatPalette = {
 };
 
 export const CHAT_COLORS: ChatPalette[] = [
-  { key: 'orange', label: 'Orange', myBg: '#FF9D1F', myText: '#0A0F1E', myTime: 'rgba(10,15,30,0.72)', theirBg: '#1D2740', tailMine: '#FF9D1F', tailTheirs: '#1D2740' },
+  { key: 'orange', label: 'Orange', myBg: '#C13BFF', myText: '#0A0F1E', myTime: 'rgba(10,15,30,0.72)', theirBg: '#1D2740', tailMine: '#C13BFF', tailTheirs: '#1D2740' },
   { key: 'teal', label: 'Teal', myBg: '#2BC5B4', myText: '#04140F', myTime: 'rgba(4,20,15,0.70)', theirBg: '#12302C', tailMine: '#2BC5B4', tailTheirs: '#12302C' },
-  { key: 'purple', label: 'Violet', myBg: '#8B7BFF', myText: '#0B081F', myTime: 'rgba(11,8,31,0.70)', theirBg: '#231C45', tailMine: '#8B7BFF', tailTheirs: '#231C45' },
+  { key: 'purple', label: 'Violet', myBg: '#8B5CF6', myText: '#0B081F', myTime: 'rgba(11,8,31,0.70)', theirBg: '#231C45', tailMine: '#8B5CF6', tailTheirs: '#231C45' },
   { key: 'pink', label: 'Pink', myBg: '#FF6B9D', myText: '#1F0510', myTime: 'rgba(31,5,16,0.70)', theirBg: '#3A1B2E', tailMine: '#FF6B9D', tailTheirs: '#3A1B2E' },
   { key: 'blue', label: 'Blue', myBg: '#5B8CFF', myText: '#06102A', myTime: 'rgba(6,16,42,0.70)', theirBg: '#15264A', tailMine: '#5B8CFF', tailTheirs: '#15264A' },
   { key: 'green', label: 'Green', myBg: '#34D399', myText: '#04150D', myTime: 'rgba(4,21,13,0.70)', theirBg: '#123A2C', tailMine: '#34D399', tailTheirs: '#123A2C' },
@@ -74,7 +74,7 @@ export const WALLPAPERS: WallpaperDef[] = [
     base: '#170A14',
     glows: [
       { w: 360, h: 360, top: '20%', right: -160, color: 'rgba(255,109,124,0.09)' },
-      { w: 320, h: 320, top: '58%', left: -170, color: 'rgba(255,157,31,0.07)' },
+      { w: 320, h: 320, top: '58%', left: -170, color: 'rgba(193,59,255,0.07)' },
     ],
   },
   {

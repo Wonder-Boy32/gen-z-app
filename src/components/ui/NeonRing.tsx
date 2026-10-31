@@ -14,7 +14,7 @@
 import React, { ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 import Svg, { Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
-import { NEON_RAMP } from './NeonButton';
+import { NEON_RAMP } from './NeonGradient';
 
 export default function NeonRing({
   size,
@@ -59,7 +59,7 @@ export default function NeonRing({
 
 const styles = StyleSheet.create({
   glow: {
-    shadowColor: '#8B5CF6',
+    shadowColor: '#B15CFF',
     shadowOpacity: 0.5,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 0 },

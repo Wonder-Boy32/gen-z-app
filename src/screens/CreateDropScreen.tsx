@@ -89,7 +89,7 @@ const RATIOS: { id: string; label: string; ratio: number | null }[] = [
   { id: '9:16', label: '9:16', ratio: 9 / 16 },
   { id: '16:9', label: '16:9', ratio: 16 / 9 },
 ];
-const TEXT_DROP_COLORS = ['#0D1426', '#FF7A00', '#8B7BFF', '#FF5C7C', '#34D399', '#1E2A47'];
+const TEXT_DROP_COLORS = ['#0C1030', '#E52BFF', '#8B5CF6', '#FF5C7C', '#34D399', '#1E2466'];
 
 // ---- Create hub ----------------------------------------------------------
 // Templates are recipes over state this screen ALREADY has (mode, collage,
@@ -117,7 +117,7 @@ const HUB_TEMPLATES: HubTemplate[] = [
     group: 'For you',
     title: 'Quick drop',
     sub: 'Pick media and go',
-    accent: '#FF9D1F',
+    accent: '#C13BFF',
     icon: 'flash-outline',
     mode: 'media',
     openPicker: true,
@@ -137,7 +137,7 @@ const HUB_TEMPLATES: HubTemplate[] = [
     group: 'Text',
     title: 'Text card',
     sub: 'A line worth reading',
-    accent: '#8B7BFF',
+    accent: '#8B5CF6',
     icon: 'create-outline',
     mode: 'text',
   },
@@ -166,7 +166,7 @@ const HUB_TEMPLATES: HubTemplate[] = [
     group: 'Photos',
     title: 'Photo dump',
     sub: 'Up to four in a grid',
-    accent: '#FFB02E',
+    accent: '#22D3EE',
     icon: 'grid-outline',
     mode: 'media',
     collage: 'grid',
@@ -202,12 +202,12 @@ const TOOLS: { id: EditorOverlay; icon: IconName; color: string; label: string }
   { id: 'trim', icon: 'cut-outline', color: '#FFFFFF', label: 'Trim' },
   { id: 'cover', icon: 'film-outline', color: '#FFFFFF', label: 'Cover' },
   { id: 'sound', icon: 'musical-note', color: '#4DD8FF', label: 'Sound' },
-  { id: 'effects', icon: 'sparkles', color: '#8B7BFF', label: 'Effects' },
+  { id: 'effects', icon: 'sparkles', color: '#8B5CF6', label: 'Effects' },
   { id: 'text', icon: 'text', color: '#FFFFFF', label: 'Text' },
-  { id: 'stickers', icon: 'pricetag', color: '#FF7A00', label: 'Stickers' },
-  { id: 'filters', icon: 'color-palette', color: '#FF7A00', label: 'Filters' },
+  { id: 'stickers', icon: 'pricetag', color: '#E52BFF', label: 'Stickers' },
+  { id: 'filters', icon: 'color-palette', color: '#E52BFF', label: 'Filters' },
   { id: 'voiceover', icon: 'mic', color: '#4DD8FF', label: 'Voiceover' },
-  { id: 'speed', icon: 'flash', color: '#FF7A00', label: 'Speed' },
+  { id: 'speed', icon: 'flash', color: '#E52BFF', label: 'Speed' },
   { id: 'crop', icon: 'scan', color: '#FFFFFF', label: 'Crop' },
   { id: 'rotate', icon: 'sync', color: '#4DD8FF', label: 'Rotate' },
 ];
@@ -406,11 +406,11 @@ function FilterPill({
           {
             backgroundColor: v.interpolate({
               inputRange: [0, 1],
-              outputRange: ['rgba(20,28,51,1)', 'rgba(255,157,31,0.15)'],
+              outputRange: ['rgba(21,26,70,1)', 'rgba(193,59,255,0.15)'],
             }),
             borderColor: v.interpolate({
               inputRange: [0, 1],
-              outputRange: ['rgba(30,42,71,1)', 'rgba(255,157,31,1)'],
+              outputRange: ['rgba(47,55,152,1)', 'rgba(193,59,255,1)'],
             }),
           },
         ]}
@@ -1274,7 +1274,7 @@ export default function CreateDropScreen({
       } else {
         row.content = content.trim();
         row.text_bg = textColor;
-        row.text_color = ['#0D1426', '#1E2A47'].includes(textColor) ? '#FFFFFF' : '#0D1426';
+        row.text_color = ['#0C1030', '#1E2466'].includes(textColor) ? '#FFFFFF' : '#0C1030';
       }
 
       row.sound = sound?.name ?? null;
@@ -1613,7 +1613,7 @@ export default function CreateDropScreen({
               <View
                 style={[
                   styles.hbActionIcon,
-                  { backgroundColor: colors.accentSoft, borderColor: 'rgba(255,157,31,0.28)' },
+                  { backgroundColor: colors.accentSoft, borderColor: 'rgba(193,59,255,0.28)' },
                 ]}
               >
                 <Icon name="albums-outline" size={17} color={colors.accent} />
@@ -1777,7 +1777,7 @@ export default function CreateDropScreen({
                 <Press style={styles.cvZone} onPress={() => setPickerOpen(true)} shrink={0.99}>
                   <GradientFill from={colors.gradFrom} to={colors.gradTo} steps={16} style={FILL} />
                   <Glow color={colors.accent} size={300} strength={0.12} style={styles.cvZoneGlow} />
-                  <CornerBrackets color="rgba(255,157,31,0.5)" size={22} inset={12} />
+                  <CornerBrackets color="rgba(193,59,255,0.5)" size={22} inset={12} />
 
                   {hasMedia ? (
                     <View style={styles.cvZoneMedia}>
@@ -1902,7 +1902,7 @@ export default function CreateDropScreen({
                       styles.cvTextInput,
                       {
                         color:
-                          textColor === '#0D1426' || textColor === '#1E2A47'
+                          textColor === '#0C1030' || textColor === '#1E2466'
                             ? colors.text
                             : colors.bg,
                       },
@@ -2246,7 +2246,7 @@ export default function CreateDropScreen({
             {/* ---------- live post preview ---------- */}
             <View style={styles.pvCard}>
               <GradientFill from={colors.gradFrom} to={colors.gradTo} steps={14} style={FILL} />
-              <CornerBrackets color="rgba(255,157,31,0.35)" size={18} inset={10} />
+              <CornerBrackets color="rgba(193,59,255,0.35)" size={18} inset={10} />
 
               <View style={styles.pvHead}>
                 <Avatar
@@ -2277,7 +2277,7 @@ export default function CreateDropScreen({
                         styles.pvTextBody,
                         {
                           color:
-                            textColor === '#0D1426' || textColor === '#1E2A47'
+                            textColor === '#0C1030' || textColor === '#1E2466'
                               ? colors.text
                               : colors.bg,
                         },
@@ -2770,7 +2770,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 5,
     borderWidth: 1,
-    borderColor: 'rgba(255,157,31,0.35)',
+    borderColor: 'rgba(193,59,255,0.35)',
     backgroundColor: colors.accentSoft,
     borderRadius: radius.pill,
     paddingHorizontal: 9,
@@ -2824,7 +2824,7 @@ const styles = StyleSheet.create({
     minHeight: 330,
     borderRadius: radius.xl,
     borderWidth: 1,
-    borderColor: 'rgba(255,157,31,0.22)',
+    borderColor: 'rgba(193,59,255,0.22)',
     backgroundColor: colors.surface,
     overflow: 'hidden',
     justifyContent: 'center',
@@ -3112,7 +3112,7 @@ const styles = StyleSheet.create({
   hbHero: {
     borderRadius: radius.xl,
     borderWidth: 1,
-    borderColor: 'rgba(255,157,31,0.22)',
+    borderColor: 'rgba(193,59,255,0.22)',
     backgroundColor: colors.surface,
     padding: 18,
     overflow: 'hidden',
@@ -3427,7 +3427,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
     borderWidth: 1,
-    borderColor: 'rgba(255,157,31,0.35)',
+    borderColor: 'rgba(193,59,255,0.35)',
     backgroundColor: colors.accentSoft,
     borderRadius: radius.pill,
     paddingHorizontal: 9,
@@ -3440,7 +3440,7 @@ const styles = StyleSheet.create({
   pvCard: {
     borderRadius: radius.xl,
     borderWidth: 1,
-    borderColor: 'rgba(255,157,31,0.2)',
+    borderColor: 'rgba(193,59,255,0.2)',
     backgroundColor: colors.surface,
     padding: 14,
     overflow: 'hidden',
@@ -3476,7 +3476,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
     borderWidth: 1,
-    borderColor: 'rgba(255,157,31,0.3)',
+    borderColor: 'rgba(193,59,255,0.3)',
     backgroundColor: colors.accentSoft,
     borderRadius: radius.pill,
     paddingHorizontal: 8,

@@ -158,9 +158,9 @@ export default function NewChatModal({ visible, onClose, onOpen }: Props) {
               data={[
                 ...(online.length ? [{ key: 'Online now', icon: 'radio', color: '#34C759', items: online }] : []),
                 ...(recent.length ? [{ key: 'Recently active', icon: 'time-outline', color: '#FFC53D', items: recent }] : []),
-                ...(suggested.length ? [{ key: 'Suggested for you', icon: 'sparkles', color: '#8B7BFF', items: suggested }] : []),
+                ...(suggested.length ? [{ key: 'Suggested for you', icon: 'sparkles', color: '#8B5CF6', items: suggested }] : []),
                 ...(following.length ? [{ key: 'People you follow', icon: 'people-outline', color: '#4DD8FF', items: following }] : []),
-                ...(trending.length ? [{ key: 'Trending creators', icon: 'flame', color: '#FF7A00', items: trending }] : []),
+                ...(trending.length ? [{ key: 'Trending creators', icon: 'flame', color: '#E52BFF', items: trending }] : []),
               ]}
               keyExtractor={(s) => s.key}
               renderItem={({ item }) => (

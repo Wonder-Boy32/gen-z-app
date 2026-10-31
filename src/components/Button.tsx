@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { ActivityIndicator, Animated, Pressable, StyleSheet, Text } from 'react-native';
 import { colors, radius } from '../theme';
+import NeonGradientFill from './ui/NeonGradient';
 
 type Props = {
   title: string;
@@ -43,8 +44,12 @@ export default function Button({
           pressed && !blocked && styles.pressed,
         ]}
       >
+        {/* The primary action is the brand ramp, not a solid accent: every
+            primary button in the app now matches the dock and the Edit Profile
+            CTA, which is what makes the identity read as one system. */}
+        {variant === 'primary' && <NeonGradientFill radius={radius.pill} />}
         {loading ? (
-          <ActivityIndicator color={variant === 'primary' ? colors.bg : colors.accent} />
+          <ActivityIndicator color={variant === 'primary' ? '#FFFFFF' : colors.accent} />
         ) : (
           <Text
             style={[styles.text, styles[`text_${variant}`]]}
@@ -77,13 +82,16 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   primary: {
-    backgroundColor: colors.accent,
+    // the fill is the SVG gradient drawn inside the Pressable; a background
+    // colour here would cap the corners of it
+    backgroundColor: 'transparent',
+    overflow: 'hidden',
     ...({
-      shadowColor: '#FF9D1F',
-      shadowOpacity: 0.35,
-      shadowRadius: 12,
-      shadowOffset: { width: 0, height: 0 },
-      elevation: 7,
+      shadowColor: '#8B5CF6',
+      shadowOpacity: 0.45,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: 3 },
+      elevation: 8,
     } as object),
   },
   secondary: {
@@ -106,7 +114,7 @@ const styles = StyleSheet.create({
     opacity: 0.85,
   },
   text_primary: {
-    color: colors.bg,
+    color: colors.onAccent,
   },
   text_secondary: {
     color: colors.text,

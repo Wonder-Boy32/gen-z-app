@@ -17,11 +17,11 @@ export default function VerifiedBadge({ size = 14, glow = true, style }: Props) 
   const textStyle: TextStyle = {
     fontSize: size,
     lineHeight: size + 1,
-    color: '#FFB02E',
+    color: '#22D3EE',
     textAlign: 'center',
     ...(glow
       ? {
-          textShadowColor: 'rgba(255,157,31,0.85)',
+          textShadowColor: 'rgba(193,59,255,0.85)',
           textShadowRadius: Math.max(2.5, size * 0.5),
         }
       : null),
