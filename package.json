@@ -13,6 +13,7 @@
     "check": "node scripts/preflight-env.js && tsc --noEmit",
     "migrate:media": "node scripts/migrate-private-media.mjs",
     "cleanup:media": "node scripts/cleanup-orphan-media.mjs",
+    "test:rls": "node scripts/rls-test.mjs",
     "build:preview": "node scripts/preflight-env.js && eas build --platform android --profile preview",
     "build:prod": "node scripts/preflight-env.js && eas build --platform android --profile production",
     "verify:sql": "python scripts/sql-verify/verify.py",
