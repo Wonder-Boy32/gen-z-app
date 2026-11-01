@@ -44,3 +44,6 @@ node-compile-cache/
 
 # dated brand-asset backups - keep out of history
 assets/_brand-backup*/
+
+# never let the service-role key near the Expo bundler (it auto-loads .env.local)
+scripts/.secrets.env

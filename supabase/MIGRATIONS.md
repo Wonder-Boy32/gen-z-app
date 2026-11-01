@@ -18,6 +18,7 @@ reading the green "Success" banner. There is deliberately no `_02`.
 | `20261101_05_mutes_single_source.sql` | two mute tables nothing synced; muting in the feed left Settings saying "Nobody is muted" | `to_regclass('public.muted_accounts')` = NULL; `muted_users` has one `FOR ALL` policy |
 | `20261101_06_profile_region_mirror.sql` | `profiles.location_region` was read by 3 admin queries and written by nothing (always empty) | trigger `profiles_sync_region` present; 2 region rows, 0 disagreeing |
 | `20261101_07_feed_keyset_index.sql` | feed paged by cursor with no matching index | `posts_feed_keyset_idx` on `(created_at DESC, id DESC)` |
+| `20261101_08_storage_delete_confirm.sql` | an unconfirmed `pg_net` delete was reported as success, so expired media outlived its row | `has_pessimistic_branch = true`, `has_old_branch = false` |
 
 **Checked and cleared:** `public.conversations` has no DELETE policy. That is
 correct, not a repeat of the UPDATE defect — nothing deletes a conversation.
@@ -25,6 +26,32 @@ There is no `.delete()` on `conversations` in `src/`, and no
 `delete from public.conversations` or `delete_conversation` RPC anywhere in the
 repo. Leaving a chat removes a `conversation_participants` row. Deny-by-default
 is the intended behaviour here.
+
+### What `_08` found, and what it cost
+
+Measured before the fix: `posts` held 0 rows, yet 46 unreferenced post-media
+objects were still in the **public** `media` bucket and still downloadable by
+URL, while `media_cleanup_queue` held 0 rows — the retry queue cannot help when
+nothing is ever put in it. Expired Drops had outlived their seven days.
+
+Cause: `genz_storage_delete()` polled `net._http_response` for 5s and, on
+silence, returned `ok := true, err := 'in_flight'`. The purge reads `ok` as
+"deleted", drops the post row, and never queues. Silence is now a failure, so
+the caller queues and the next cron run retries — and a retry that finds the
+object already gone gets 404, which is accepted, so the queue still drains.
+
+Cleanup of the existing 46 used `scripts/cleanup-orphan-media.mjs`
+(`npm run cleanup:media`), not `genz_cleanup_orphan_media()`, because that
+function polls per object and 32 orphans exceeded the SQL editor's statement
+timeout twice. The script takes its deletion set from the server's own
+`genz_find_orphan_media()` report, subtracts a locally re-derived reference set
+again, never touches `avatars/`, and needs `--apply --yes`. Result: 0 auto,
+0 review remaining.
+
+Also removed: one orphaned `chat/...` image in the public bucket (the last
+legacy chat object). `migrate-private-media.mjs --dry-run` reports all 13
+message references already private and present, so that script has no work
+left to do.
 
 ---
 
