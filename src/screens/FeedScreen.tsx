@@ -10,6 +10,7 @@ import {
   Share,
   StyleSheet,
   Text,
+  Platform,
   useWindowDimensions,
   View,
   ViewToken,
@@ -470,7 +471,34 @@ export default function FeedScreen({
     );
   }, []);
 
-  const load = useCallback(async () => {
+  // ---- keyset pagination ---------------------------------------------------
+  // The feed used to stop at 90 posts: `.limit(90)` with no way to ask for
+  // more, so a busy account ran out of feed and a quiet one never loaded.
+  //
+  // Offset pagination is wrong here because the ranking reorders rows on the
+  // client — page 2 could repeat what page 1 just showed. So the cursor is the
+  // (created_at, id) of the OLDEST row fetched, and the next page asks for
+  // strictly older rows. `id` breaks ties: two posts can share a timestamp, and
+  // without it a page boundary can silently drop one of them.
+  const FEED_PAGE = 60;
+
+  // PostgREST hands timestamps back as "...+00:00". A literal `+` inside a query
+  // string means "space", so a cursor carrying the raw value is a filter that
+  // decodes to "... 00:00" and matches nothing — the feed would look exhausted
+  // at exactly the page boundary. Normalising to the `Z` form removes the
+  // character entirely instead of relying on every encoder in the chain.
+  const isoZ = (v: string) => {
+    const t = new Date(v);
+    return Number.isNaN(t.getTime()) ? v : t.toISOString();
+  };
+
+  const cursorRef = useRef<{ created_at: string; id: string } | null>(null);
+  const rawRef = useRef<FeedPostRow[]>([]);
+  const loadingMoreRef = useRef(false);
+  const [feedExhausted, setFeedExhausted] = useState(false);
+
+  const load = useCallback(async (opts?: { append?: boolean }) => {
+    const append = !!opts?.append;
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -523,7 +551,18 @@ export default function FeedScreen({
       // stops it being served in the window before that job runs.
       .gt('expires_at', new Date().toISOString())
       .order('created_at', { ascending: false })
-      .limit(90);
+      // Deterministic tie-break, so a page boundary that lands on two posts
+      // sharing a timestamp cannot skip one of them.
+      .order('id', { ascending: false })
+      .limit(FEED_PAGE);
+    // Older than the oldest row we already hold. The nested and() is what makes
+    // the comparison lexicographic on the pair rather than on created_at alone.
+    if (append && cursorRef.current) {
+      const c = cursorRef.current;
+      query = query.or(
+        `created_at.lt.${c.created_at},and(created_at.eq.${c.created_at},id.lt.${c.id})`
+      );
+    }
     if (dropMode) query = query.eq('drop_id', dropMode);
     else if (userMode) query = query.eq('user_id', userMode);
     else if (audioMode) query = query.eq('audio', audioMode);
@@ -599,7 +638,37 @@ export default function FeedScreen({
       return;
     }
 
-    let rows = ((data ?? []) as FeedPostRow[]).filter(
+    const fresh = (data ?? []) as FeedPostRow[];
+
+    // The cursor moves on THIS page only. Reading it back off the merged list
+    // would leave it pinned to the oldest row we already had, and every "load
+    // more" would ask for the same page forever.
+    if (fresh.length) {
+      const last = fresh[fresh.length - 1];
+      cursorRef.current = { created_at: isoZ(last.created_at), id: last.id };
+    }
+    setFeedExhausted(fresh.length < FEED_PAGE);
+
+    if (!append) {
+      rawRef.current = [];
+      cursorRef.current = fresh.length
+        ? {
+            created_at: isoZ(fresh[fresh.length - 1].created_at),
+            id: fresh[fresh.length - 1].id,
+          }
+        : null;
+    }
+
+    // Merge newest-first and keep one row per id. A repost row or a refresh
+    // racing a load-more can offer the same post twice, and duplicate keys make
+    // React drop cells unpredictably.
+    const mergedById = new Map<string, FeedPostRow>();
+    for (const p of [...(append ? rawRef.current : []), ...fresh]) {
+      if (!mergedById.has(p.id)) mergedById.set(p.id, p);
+    }
+    rawRef.current = [...mergedById.values()];
+
+    let rows = rawRef.current.filter(
       (p) => !hidden.has(p.id) && !muted.has(p.user_id) && !blocked.has(p.user_id)
     );
 
@@ -693,8 +762,11 @@ export default function FeedScreen({
           // time for organic rows. Organic rows are already created_at-desc, so
           // their relative order is preserved; reposts land where they happened.
           const when = (p: FeedPostRow) => repostAt[p.id] ?? new Date(p.created_at).getTime();
-          // keep the feed's existing ceiling so the pager does not grow
-          rows = [...rows, ...fromRepost].sort((a, b) => when(b) - when(a)).slice(0, 90);
+          // No ceiling here any more. `.slice(0, 90)` silently discarded every
+          // row past the 90th, which would have thrown away each appended page
+          // the moment the cursor started working. Growth is bounded by the
+          // cursor instead: pages stop when a page comes back short.
+          rows = [...rows, ...fromRepost].sort((a, b) => when(b) - when(a));
         }
       }
     }
@@ -908,6 +980,25 @@ export default function FeedScreen({
     setActiveDrop((dropData?.[0] as Drop) ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, dropMode, userMode, audioMode, hashtagMode, locationMode, feedPrefs, liveSection, expFilter, aroundScope, rankRows, loadSuggestions]);
+
+  // Ask for the next page. Deliberately not available on the scoped views
+  // (one user / sound / tag / drop / place): those are "show me these", they are
+  // bounded by definition, and paginating them would just page through a set
+  // the user already asked to see in full.
+  const loadMore = useCallback(async () => {
+    if (loadingMoreRef.current || feedExhausted) return;
+    // No cursor yet = the first page has not landed. FlatList fires
+    // onEndReached on mount when the content is shorter than the viewport, so
+    // without this the very first frame can request page 1 a second time.
+    if (!cursorRef.current) return;
+    if (dropMode || userMode || audioMode || hashtagMode || locationMode) return;
+    loadingMoreRef.current = true;
+    try {
+      await load({ append: true });
+    } finally {
+      loadingMoreRef.current = false;
+    }
+  }, [load, feedExhausted, dropMode, userMode, audioMode, hashtagMode, locationMode]);
 
   useEffect(() => {
     load();
@@ -1727,6 +1818,16 @@ export default function FeedScreen({
           contentContainerStyle={styles.feedContent}
           onViewableItemsChanged={onViewable}
           viewabilityConfig={viewabilityConfig}
+          // Vertical pager: keep working while there is more feed, and mount
+          // only what is on screen. Without these a paging list keeps every
+          // visited cell alive, and a decoded video per cell is what turns a
+          // long session into an OOM on a mid-range Android.
+          onEndReached={loadMore}
+          onEndReachedThreshold={1.5}
+          initialNumToRender={2}
+          maxToRenderPerBatch={3}
+          updateCellsBatchingPeriod={50}
+          removeClippedSubviews={Platform.OS === 'android'}
           // cut the audio on touch; see holdForSwipe above
           onScrollBeginDrag={holdForSwipe}
           onMomentumScrollBegin={holdForSwipe}

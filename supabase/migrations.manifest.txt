@@ -132,6 +132,7 @@ pg_net_fix.sql
 20261101_04_expiry_rule_assert.sql
 20261101_05_mutes_single_source.sql
 20261101_06_profile_region_mirror.sql
+20261101_07_feed_keyset_index.sql
 
 # ---------------------------------------------------------- retired
 #
