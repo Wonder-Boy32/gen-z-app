@@ -19,9 +19,12 @@ reading the green "Success" banner. There is deliberately no `_02`.
 | `20261101_06_profile_region_mirror.sql` | `profiles.location_region` was read by 3 admin queries and written by nothing (always empty) | trigger `profiles_sync_region` present; 2 region rows, 0 disagreeing |
 | `20261101_07_feed_keyset_index.sql` | feed paged by cursor with no matching index | `posts_feed_keyset_idx` on `(created_at DESC, id DESC)` |
 
-**Still open from this batch:** `public.conversations` has no DELETE policy, so
-conversation deletion is likely another silent zero-row the same way UPDATE was.
-Flagged, not yet fixed.
+**Checked and cleared:** `public.conversations` has no DELETE policy. That is
+correct, not a repeat of the UPDATE defect — nothing deletes a conversation.
+There is no `.delete()` on `conversations` in `src/`, and no
+`delete from public.conversations` or `delete_conversation` RPC anywhere in the
+repo. Leaving a chat removes a `conversation_participants` row. Deny-by-default
+is the intended behaviour here.
 
 ---
 
