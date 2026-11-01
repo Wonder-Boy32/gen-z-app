@@ -1,0 +1,149 @@
+# ============================================================
+# GEN Z ? the order the database is built in
+#
+# This file IS the answer to "what order do I run these in". 76 .sql files
+# were hand-run over months with nothing recording the sequence, so a fresh
+# install was guesswork. Read top to bottom.
+#
+# Rules
+#   ? one filename per line, relative to supabase/
+#   ? `#` starts a comment
+#   ? `!skip <file>` = deliberately not applied (reason stated above it)
+#   ? every .sql in this folder must appear exactly once, either listed or
+#     skipped. scripts/sql-verify/fresh_install.py fails if one is neither,
+#     so a new migration cannot be forgotten.
+#
+# The order below was not designed. It was measured: run the replay, read what
+# broke, move the file that provides the missing object, repeat. Comments mark
+# the dependencies that forced a position, because they are not obvious.
+#
+# Verified by replay, not by inspection:
+#     npm run verify:fresh
+# ============================================================
+
+# ---------------------------------------------------------- base
+schema.sql
+# removed_at/removed_by are read by expiry, reposts and account_security but
+# were only ever declared inside admin_center.sql. Declared early instead.
+00_shared_columns.sql
+
+# ---------------------------------------------------------- identity + social
+social.sql
+profile2.sql
+profile3.sql
+profile_cover.sql
+profile_status.sql
+profile_views.sql
+search.sql
+# notifications.sql must precede comment_likes.sql: comment likes insert
+# notification rows and reference the table by FK.
+notifications.sql
+# feed2.sql adds posts.content, which discover.sql reads when extracting
+# hashtags from captions. discover.sql in turn creates post_hashtags, which
+# hashtags_locations_v2.sql needs.
+feed2.sql
+discover.sql
+hashtags_where_fix.sql
+feed_advanced.sql
+lifetime_likes.sql
+comment_likes.sql
+comment_dislikes.sql
+streak.sql
+invite_tooling.sql
+sound_picker.sql
+sound_favorites.sql
+push_notifications.sql
+
+# ---------------------------------------------------------- drops + expiry
+drops.sql
+drop_creator.sql
+# hashtags_locations_v2.sql reads posts.location, which drop_creator.sql adds.
+hashtags_locations_v2.sql
+expiry.sql
+expiry_v2.sql
+# seven_day_expiry.sql owns the 7-day window (expiry_v2.sql still says 48h).
+# It rewrites existing rows, so it reads posts.removed_at from the base block.
+seven_day_expiry.sql
+reposts_enforcement.sql
+
+# ---------------------------------------------------------- messaging
+# calls.sql before messaging_v2.sql: messaging_v2 alters public.calls.
+calls.sql
+chat2.sql
+chat_upgrades.sql
+chat_fix.sql
+chat-fix.sql
+chat_realtime.sql
+chat_recursion_fix.sql
+chat_settings.sql
+# messaging_v2.sql adds messages.body and public.message_reactions, both of
+# which messaging_v3/realtime need.
+messaging_v2.sql
+messaging_v2_hardening.sql
+messaging_v2_hardening_v2.sql
+messaging_v2_realtime.sql
+messaging_v3.sql
+create_direct_conversation.sql
+anonymous_messages.sql
+anon_notifications_cleanup.sql
+report_evidence.sql
+
+# ---------------------------------------------------------- accounts + security
+auth_upgrade.sql
+account_security.sql
+_accsec_part2.sql
+security_hardening.sql
+final_fix.sql
+
+# ---------------------------------------------------------- modules
+genzplus.sql
+verification_requests.sql
+support_and_prefs.sql
+
+# ---------------------------------------------------------- admin
+admin_center.sql
+_admin_part2.sql
+_admin_part3.sql
+admin_hotfix.sql
+admin_verification_queue.sql
+login_alerts.sql
+# genzplus_opay.sql needs admin_permissions, which admin_center.sql creates.
+genzplus_opay.sql
+# admin_alerts.sql reads genzplus_payments, created by genzplus_opay.sql.
+admin_alerts.sql
+
+# ---------------------------------------------------------- post-admin
+# Deliberately after admin_center.sql: it adds columns to chat_reports, and
+# admin_center.sql is what introduces status/severity/resolved_* on that table.
+messaging_v3b_report_reason.sql
+
+# ---------------------------------------------------------- infrastructure
+pg_net_fix.sql
+
+# ---------------------------------------------------------- dated migrations
+20261023_01_storage_privacy_lockdown.sql
+20261023_02_hashtag_sync_repair.sql
+20261023_03_admin_role_escalation.sql
+20261023_04_anonymous_send_authorization.sql
+20261023_05_view_once_consumption.sql
+20261023_06_message_expiry_clamp.sql
+20261101_01_phase2_policy_fixes.sql
+20261101_03_drops_autoschedule_fix.sql
+20261101_04_expiry_rule_assert.sql
+20261101_05_mutes_single_source.sql
+20261101_06_profile_region_mirror.sql
+
+# ---------------------------------------------------------- retired
+#
+# drop2.sql is now a comment-only pointer. Its content was invalid SQL that
+# could never run; the working replacement is
+# 20261101_03_drops_autoschedule_fix.sql. Kept in the tree so anyone
+# searching for "next drop" finds the explanation.
+!skip drop2.sql
+
+# messaging_v2_hardening_v2.run.sql is a partial re-statement of policies that
+# messaging_v2_hardening_v2.sql already declares in full. Applying both is
+# harmless today (they are drops and creates) but it is a second copy of the
+# same rules, which is how the two mute tables drifted apart. The .sql file is
+# authoritative; this one is not in the build.
+!skip messaging_v2_hardening_v2.run.sql

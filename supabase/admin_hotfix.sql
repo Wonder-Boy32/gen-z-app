@@ -1,4 +1,4 @@
-﻿-- ============================================================
+-- ============================================================
 -- GEN Z ADMIN — HOTFIX v2 (run this in the SQL editor)
 -- 1) Analytics column fixes (sender_id / follower_id)
 -- 2) Retention INTERSECT bigint/uuid fix

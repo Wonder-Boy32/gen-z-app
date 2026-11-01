@@ -29,6 +29,7 @@
 do $$
 declare
   v_src     text;
+  v_code    text;
   v_default text;
 begin
   if to_regclass('public.posts') is null then
@@ -55,7 +56,13 @@ begin
     return;
   end if;
 
-  if v_src ilike '%7 days%' and v_src not ilike '%48 hours%' then
+  -- Compare CODE, not prose. seven_day_expiry.sql keeps the historical name and
+  -- explains the change in a comment that says "Was '48 hours'" — matching on
+  -- the raw body flagged that comment as drift and failed a correct database.
+  -- Stripping -- comments first is what makes the assertion about behaviour.
+  v_code := regexp_replace(v_src, '--[^\n]*', '', 'g');
+
+  if v_code ilike '%interval ''7 days''%' and v_code not ilike '%interval ''48 hours''%' then
     raise notice 'expiry rule OK: 7 days (default: %)', v_default;
   else
     raise exception

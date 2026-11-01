@@ -1,4 +1,4 @@
-﻿-- ============================================================
+-- ============================================================
 -- GEN Z â€” ACCOUNT & SECURITY SYSTEM (run ONCE, additive)
 --
 -- Everything real: OTPs are Supabase Auth OTPs (single-use,

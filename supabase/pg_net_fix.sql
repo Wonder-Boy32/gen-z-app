@@ -1,4 +1,4 @@
-﻿create or replace function public.recover_verify_and_reset(
+create or replace function public.recover_verify_and_reset(
   p_identifier text, p_method text, p_code text, p_new_password text default null
 ) returns jsonb language plpgsql security definer set search_path = public as $$
 declare
