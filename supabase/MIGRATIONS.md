@@ -4,6 +4,27 @@
 
 ---
 
+## Phase 2 batch — APPLIED to production 2026-11-01
+
+Project `GenZ`, ref `fwouxamnmfdzwxpefoyb`. All six files below were run in the
+Supabase SQL editor and then **proved with a separate read-only query**, not by
+reading the green "Success" banner. There is deliberately no `_02`.
+
+| File | What it fixes | Post-run proof |
+|---|---|---|
+| `20261101_01_phase2_policy_fixes.sql` | `conversations` had no UPDATE policy (every edit silently hit 0 rows); retires the pre-lockdown `media_*` storage policies; removals now revoke chat-media edit/delete | `conversations_update` = UPDATE; `media_read/upload/update/delete` count = 0; `posts.expires_at` default = `+7 days` |
+| `20261101_03_drops_autoschedule_fix.sql` | `drop2.sql` put `where` after `limit 1`, so `genz-next-drop` never existed | `cron.job` has `genz-next-drop`, `*/15 * * * *`, active |
+| `20261101_04_expiry_rule_assert.sql` | the 7-day window lived only in a function body that an older file could silently revert | no `EXPIRY DRIFT` raised; default `(now() + '7 days'::interval)` |
+| `20261101_05_mutes_single_source.sql` | two mute tables nothing synced; muting in the feed left Settings saying "Nobody is muted" | `to_regclass('public.muted_accounts')` = NULL; `muted_users` has one `FOR ALL` policy |
+| `20261101_06_profile_region_mirror.sql` | `profiles.location_region` was read by 3 admin queries and written by nothing (always empty) | trigger `profiles_sync_region` present; 2 region rows, 0 disagreeing |
+| `20261101_07_feed_keyset_index.sql` | feed paged by cursor with no matching index | `posts_feed_keyset_idx` on `(created_at DESC, id DESC)` |
+
+**Still open from this batch:** `public.conversations` has no DELETE policy, so
+conversation deletion is likely another silent zero-row the same way UPDATE was.
+Flagged, not yet fixed.
+
+---
+
 ## The blocker you must fix first
 
 Of the **44 SQL files in `supabase/`, 22 are tracked by git and 22 are not.**

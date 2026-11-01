@@ -1,6 +1,9 @@
 -- ============================================================
 -- GEN Z — ONE RULE, ONE PLACE: assert the 7-day Drop window
 --
+-- APPLIED to production 2026-11-01 (ref fwouxamnmfdzwxpefoyb). Verified after
+-- the run: no EXPIRY DRIFT raised; default is (now() + '7 days'::interval).
+--
 -- THE HAZARD
 --   public.enforce_48h_expiry() is the BEFORE INSERT/UPDATE trigger that
 --   decides how long a Drop lives. It is defined in TWO files:

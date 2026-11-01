@@ -1,6 +1,9 @@
 -- ============================================================
 -- GEN Z — index for keyset pagination on the feed
 --
+-- APPLIED to production 2026-11-01 (ref fwouxamnmfdzwxpefoyb). Verified after
+-- the run: pg_indexes returns posts_feed_keyset_idx on (created_at DESC, id DESC).
+--
 -- THE QUERY
 --   FeedScreen now pages with a cursor instead of stopping at 90 rows:
 --

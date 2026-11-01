@@ -1,6 +1,11 @@
 -- ============================================================
 -- GEN Z — ONE MUTES TABLE: retire public.muted_accounts
 --
+-- APPLIED to production 2026-11-01 (ref fwouxamnmfdzwxpefoyb). Pre-count was
+-- 0 rows in muted_accounts, so 0 moved. Verified after the run:
+-- to_regclass('public.muted_accounts') is NULL and muted_users carries exactly
+-- one FOR ALL policy (muted_users_owner).
+--
 -- THE BUG (not just duplication)
 --   Two tables held the same fact:
 --

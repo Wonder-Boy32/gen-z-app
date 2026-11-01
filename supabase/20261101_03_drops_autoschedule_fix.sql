@@ -1,6 +1,8 @@
 -- ============================================================
 -- GEN Z — DROPS AUTOSCHEDULER (repair of drop2.sql)
 --
+-- APPLIED to production 2026-11-01 (ref fwouxamnmfdzwxpefoyb). Verified after
+-- the run: cron.job has genz-next-drop at '*/15 * * * *', active = true.
 -- WHAT WAS BROKEN
 --   supabase/drop2.sql never worked. It places `where` AFTER `limit 1`:
 --

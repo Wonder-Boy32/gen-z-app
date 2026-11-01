@@ -1,6 +1,10 @@
 -- ============================================================
 -- GEN Z — profiles.location_region is a column nobody writes
 --
+-- APPLIED to production 2026-11-01 (ref fwouxamnmfdzwxpefoyb). Verified after
+-- the run: trigger profiles_sync_region exists on public.profiles; 2 rows have
+-- a region and 0 disagree with location_region.
+--
 -- THE FINDING
 --   profiles carries three location-ish columns:
 --

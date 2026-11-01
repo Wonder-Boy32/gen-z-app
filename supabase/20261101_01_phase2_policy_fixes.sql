@@ -6,8 +6,10 @@
 -- expired content is touched, so this is safe to apply to production once
 -- reviewed. Every statement is idempotent: re-running the file is a no-op.
 --
--- NOT APPLIED to production. Run locally first with:
---   npm run verify:sql
+-- APPLIED to production 2026-11-01 (ref fwouxamnmfdzwxpefoyb). Verified after
+-- the run: conversations_update exists as UPDATE; the four legacy media_* storage
+-- policies return 0 rows; posts.expires_at default reads +7 days.
+-- Local proof before the live run: npm run verify:sql
 --
 -- begin;
 
