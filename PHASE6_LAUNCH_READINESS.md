@@ -106,10 +106,39 @@ to claim them:
 
 | Item | Why it is yours |
 |---|---|
-| Rotate the Giphy key | Needs your Giphy account. Note: `EXPO_PUBLIC_GIPHY_API_KEY` is compiled into the client bundle, so rotation only takes effect after a rebuild — and the durable fix is restricting the key by Android package name / web origin in the Giphy dashboard, since any client-side key is extractable by design. |
+| Rotate the Giphy key | **Done 2026-11-01.** See below. |
 | Revoke the GitHub PAT pasted in an earlier session | Only you can revoke it. |
 | Real Android device pass | Section 4 above. |
 | APK / Play Store prep | Needs the release keystore and Play Console access. |
+
+### Giphy key — rotated, with a correction
+
+The exposed key (`IqiU1D…`) was revoked and replaced with a new 32-character key
+(`NfhrBr…`), verified live (`HTTP 200`, `meta.status 200`, `meta.msg "OK"`) from
+the repo's own `.env`, and the app is on the same "Free Beta Key Access" tier
+(100 calls/hour) as before. The replacement carries the same app name,
+description and platform, and the handoff copy of the key was destroyed after it
+was written into `.env`.
+
+**Correction to an earlier claim in this document:** I said the durable fix was
+to restrict the key by Android package name and web origin. That is not possible
+on this tier. GIPHY's current dashboard exposes exactly four fields — App Name,
+API Key, Description, Platform — and no allowed-domains, referrer, Android
+package or iOS bundle-id control. There is also no in-place roll or regenerate:
+`Delete API Key` is the only key-mutating control, so revocation and reissue is
+delete-then-create, not a roll.
+
+Consequences worth knowing:
+
+- `EXPO_PUBLIC_GIPHY_API_KEY` is compiled into the bundle at build time, so any
+  already-installed build now has a dead key and GIF search will fail until it
+  is rebuilt. The picker degrades to its "add a key" state rather than crashing.
+- A public Giphy key in a client URL is GIPHY's intended design; without
+  restriction support on this tier, exposure of the new key is a matter of
+  *when*, not *if*. The only structural fix is proxying Giphy through a Supabase
+  edge function so the key never ships. That is a deliberate feature change, not
+  a config tweak, and is deferred to launch week.
+
 
 ## 6. Reproduce any of this
 
