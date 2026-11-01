@@ -1862,7 +1862,7 @@ const styles = StyleSheet.create({
     borderLeftColor: colors.cyan,
     paddingLeft: 8,
     marginBottom: 6,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: colors.chrome,
     borderRadius: 6,
     paddingVertical: 3,
     paddingRight: 8,

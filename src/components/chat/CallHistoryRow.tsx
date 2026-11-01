@@ -77,7 +77,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 7,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: colors.chrome,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 999,

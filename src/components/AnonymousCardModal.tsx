@@ -133,7 +133,7 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingBottom: 38,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: colors.chromeBorder,
     alignItems: 'center',
   },
   cardWrap: {

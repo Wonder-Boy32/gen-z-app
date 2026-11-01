@@ -128,7 +128,7 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingBottom: 40,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: colors.chromeBorder,
   },
   title: { color: colors.text, fontSize: 17, fontWeight: '900', marginBottom: 16 },
   switchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 },

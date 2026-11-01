@@ -2860,7 +2860,7 @@ const styles = StyleSheet.create({
   cvChip: {
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: 'rgba(255,255,255,0.03)',
+    backgroundColor: colors.chrome,
     borderRadius: radius.pill,
     paddingHorizontal: 11,
     paddingVertical: 5,

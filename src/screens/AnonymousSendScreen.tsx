@@ -224,7 +224,7 @@ const styles = StyleSheet.create({
   headlineName: { color: colors.accent },
   subline: { color: colors.textMuted, fontSize: 13, marginTop: 6, marginBottom: 20 },
   inputCard: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: colors.chrome,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.12)',
     borderRadius: radius.lg,

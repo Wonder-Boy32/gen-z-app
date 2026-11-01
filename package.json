@@ -19,7 +19,8 @@
     "verify:expiry": "python scripts/sql-verify/check_expiry_rule.py",
     "verify:mutes": "python scripts/sql-verify/check_mutes_consolidation.py",
     "verify:region": "python scripts/sql-verify/check_region_mirror.py",
-    "verify:fresh": "python scripts/sql-verify/fresh_install.py"
+    "verify:fresh": "python scripts/sql-verify/fresh_install.py",
+    "check:theme": "node scripts/check-theme.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
