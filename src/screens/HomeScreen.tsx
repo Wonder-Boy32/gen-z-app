@@ -10,6 +10,7 @@ import CreateDropScreen from './CreateDropScreen';
 import ProfileScreen from './ProfileScreen';
 import ChatsScreen from './ChatsScreen';
 import DiscoverScreen from './DiscoverScreen';
+import ExploreScreen from './ExploreScreen';
 import UploadBar from '../components/ui/UploadBar';
 import { colors } from '../theme';
 import { useAndroidBack } from '../utils/useAndroidBack';
@@ -62,6 +63,9 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
 
   // create-intent routing: sound page / reply-with-drop / anon card -> create tab
   const [createIntent, setCreateIntent] = useState<{ sound?: string; replyTo?: string; mediaUri?: string } | null>(null);
+  // Explore is a page, not a tab: it is a detour from the feed, so it opens over
+  // the tabs and closes back to whichever one you came from.
+  const [exploreOpen, setExploreOpen] = useState(false);
 
   const handleCreateIntent = (intent: { sound?: string; replyTo?: string; mediaUri?: string }) => {
     setCreateIntent(intent);
@@ -170,6 +174,7 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
            onJoinDrop={() => setTab('post')}
            onCreateIntent={handleCreateIntent}
            openActivitySignal={openActivitySignal}
+           onOpenExplore={() => setExploreOpen(true)}
            onOpenSearch={() => setTab('discover')}
            onOpenChat={() => setTab('chat')}
            chatUnread={tab === 'chat' ? 0 : chatUnread}
@@ -220,6 +225,35 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
         <NeonDock tab={tab} onChange={setTab} badges={{ chat: tab === 'chat' ? 0 : chatUnread }} />
       )}
 
+      {/* Explore: the Drop banner, Create, Invite and people suggestions that
+          used to float over the video in the feed. Sits above the dock so it
+          reads as a page rather than a tab. */}
+      {exploreOpen && (
+        <View style={styles.exploreOverlay}>
+          <ExploreScreen
+            onCreate={() => {
+              setExploreOpen(false);
+              handleCreateIntent({});
+            }}
+            onSearch={() => {
+              setExploreOpen(false);
+              setTab('discover');
+            }}
+            onJoinDrop={(dropId) => {
+              // Entering a Drop is a post to it, which is what replyToDropId
+              // means downstream — the same path chain replies already take.
+              setExploreOpen(false);
+              handleCreateIntent({ replyTo: dropId });
+            }}
+            onOpenUser={(id) => {
+              setExploreOpen(false);
+              openFiltered(id, null, null);
+            }}
+            onClose={() => setExploreOpen(false)}
+          />
+        </View>
+      )}
+
       {/* deep-link anonymous send overlay (opens from a link, any tab, cold start) */}
       {(anonDraft || anonRecipient) && (
         <View style={styles.anonOverlay}>
@@ -254,6 +288,15 @@ const styles = StyleSheet.create({
   },
   hiddenTab: {
     display: 'none',
+  },
+  exploreOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 60,
+    backgroundColor: colors.bg,
   },
   anonOverlay: {
     position: 'absolute',

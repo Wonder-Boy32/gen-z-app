@@ -162,10 +162,15 @@ export default function FeedScreen({
   initialLocationMode = null,
   focused = true,
   openActivitySignal = 0,
+  onOpenExplore,
   onOpenSearch,
   onOpenChat,
   chatUnread = 0,
 }: {
+  /** Opens the Explore page — the Drop banner, Create, Invite and people
+   *  suggestions used to float on top of the video. One icon, one destination. */
+  onOpenExplore?: () => void;
+  /** Retained so callers that still route a search intent keep working. */
   onOpenSearch?: () => void;
   onOpenChat?: () => void;
   /** unread chats, for the badge on the messages control (owned by HomeScreen) */
@@ -1433,7 +1438,7 @@ export default function FeedScreen({
       {/* top readability scrim — fades to transparent below the nav, no hard navy band */}
       <View style={[styles.topScrim, { height: feedTop + 6 }]} pointerEvents="none">
         {[0.45, 0.45, 0.43, 0.4, 0.36, 0.31, 0.25, 0.18, 0.12, 0.06, 0].map((o, i) => (
-          <View key={i} style={{ flex: 1, backgroundColor: `rgba($\{colors.scrimRgb\},\$\{o\})` }} />
+          <View key={i} style={{ flex: 1, backgroundColor: `rgba(${colors.scrimRgb},${o})` }} />
         ))}
       </View>
       {/* Brand lockup, pinned top-LEFT as in the reference. It used to be
@@ -1448,15 +1453,19 @@ export default function FeedScreen({
           Discover, messages opens Chats, the bell opens Activity — so the row
           matches the reference without becoming decoration. */}
       <View style={[styles.topActions, { top: safeTop + 6 }]}>
-        {onOpenSearch && (
+        {/* Compass, not a magnifier. This used to be a second search entry that
+            only switched to the Discover tab — duplicating the dock's search
+            icon. It is now the single entry to Explore, which is the page the
+            old floating Drop banner and the empty-state pile moved into. */}
+        {onOpenExplore && (
           <Pressable
             style={styles.iconBtn}
-            onPress={onOpenSearch}
+            onPress={onOpenExplore}
             hitSlop={8}
             accessibilityRole="button"
-            accessibilityLabel="Search"
+            accessibilityLabel="Explore"
           >
-            <Icon name="search-outline" size={21} color={colors.text} />
+            <Icon name="compass-outline" size={21} color={colors.text} />
           </Pressable>
         )}
 
@@ -1545,12 +1554,12 @@ export default function FeedScreen({
         {/* Same double-offset bug as the filter button: child of railWrap, so top:0. */}
         <View style={[styles.fadeEdge, styles.fadeLeft]} pointerEvents="none">
           {[0.75, 0.5, 0.3, 0.15, 0.06].map((o, i) => (
-            <View key={i} style={[styles.fadeStrip, { backgroundColor: `rgba($\{colors.scrimRgb\},\$\{o\})` }]} />
+            <View key={i} style={[styles.fadeStrip, { backgroundColor: `rgba(${colors.scrimRgb},${o})` }]} />
           ))}
         </View>
         <View style={[styles.fadeEdge, styles.fadeRight]} pointerEvents="none">
           {[0.06, 0.15, 0.3, 0.5, 0.75].map((o, i) => (
-            <View key={i} style={[styles.fadeStrip, { backgroundColor: `rgba($\{colors.scrimRgb\},\$\{o\})` }]} />
+            <View key={i} style={[styles.fadeStrip, { backgroundColor: `rgba(${colors.scrimRgb},${o})` }]} />
           ))}
         </View>
       </View>
@@ -1694,7 +1703,13 @@ export default function FeedScreen({
         </Animated.View>
       )}
 
-      {activeDrop && (
+      {/* Only while you are actually inside a Drop. This banner used to hover
+          over every video on the feed, which is the "stuff showing on top of a
+          video" complaint: it covered the post's own caption and the empty
+          state's text bled through the translucent card. In drop mode it is
+          load-bearing (it carries "Back to feed"), so it stays exactly there
+          and nowhere else. */}
+      {activeDrop && dropMode && (
         <Animated.View
             style={[
             styles.dropBanner,
@@ -1857,68 +1872,14 @@ export default function FeedScreen({
                 onPress={() => onCreateIntent?.({})}
                 style={styles.emptyCta}
               />
-              {/* The feed is empty because there are not enough PEOPLE yet, which
-                  posting alone cannot fix — inviting is the only thing that does.
-                  It belongs here rather than buried in settings, because this is
-                  the screen where the absence is felt. */}
-              <Pressable style={styles.inviteCta} onPress={() => setInviteOpen(true)}>
-                <Icon name="person-add-outline" size={16} color={colors.accent} />
-                <Text style={styles.inviteCtaText}>Invite friends to Gen Z</Text>
+              {/* Invite and people-suggestions used to sit here, stacked under
+                  the button — three competing actions over a half-empty screen.
+                  Both now live on Explore, which is what the empty state points
+                  at in one line instead of reproducing it. */}
+              <Pressable style={styles.emptyExploreLink} onPress={() => onOpenExplore?.()}>
+                <Icon name="compass-outline" size={15} color={colors.accent} />
+                <Text style={styles.emptyExploreText}>Find people and live Drops in Explore</Text>
               </Pressable>
-              {suggestions.length > 0 && (
-                <View style={styles.suggestWrap}>
-                  <View style={styles.suggestTitleRow}>
-                    <Icon name="flame" size={15} color={colors.accent} />
-                    <Text style={styles.suggestTitle}>
-                      {mode === 'following' ? 'People you might like' : 'Discover something new'}
-                    </Text>
-                  </View>
-                  <FlatList
-                    data={suggestions}
-                    horizontal
-                    keyExtractor={(s) => s.id}
-                    showsHorizontalScrollIndicator={false}
-                    renderItem={({ item }) => (
-                      <Pressable
-                        style={styles.suggestCard}
-                        onPress={() => setPublicProfile({ id: item.id, username: item.username })}
-                      >
-                        {item.avatar_url ? (
-                          <Image source={{ uri: item.avatar_url }} style={styles.suggestAvatar} />
-                        ) : (
-                          <View style={[styles.suggestAvatar, styles.suggestAvatarPlaceholder]}>
-                            <Text style={styles.suggestLetter}>{item.username.charAt(0).toUpperCase()}</Text>
-                          </View>
-                        )}
-                        <View style={styles.suggestNameRow}>
-                          <Text style={styles.suggestName} numberOfLines={1}>
-                            @{item.username}
-                          </Text>
-                          {!!(item as any).verified && <VerifiedBadge size={11} glow={false} />}
-                        </View>
-                        <Pressable
-                          style={[styles.suggestBtn, item.following && styles.suggestBtnFollowing]}
-                          onPress={() => {
-                            if (!item.following) followUser(item.id);
-                          }}
-                          hitSlop={4}
-                        >
-                          <Icon
-                            name={item.following ? 'checkmark' : 'add'}
-                            size={12}
-                            color={item.following ? colors.accent : colors.bg}
-                          />
-                          <Text
-                            style={[styles.suggestBtnText, item.following && styles.suggestBtnTextFollowing]}
-                          >
-                            {item.following ? 'Following' : 'Follow'}
-                          </Text>
-                        </Pressable>
-                      </Pressable>
-                    )}
-                  />
-                </View>
-              )}
             </View>
           }
         />
@@ -2677,6 +2638,17 @@ const styles = StyleSheet.create({
   emptyTitle: { color: colors.text, fontSize: 20, fontWeight: '700' },
   emptyText: { color: colors.textMuted, fontSize: 14, textAlign: 'center', marginTop: 10, lineHeight: 20 },
   emptyCta: { width: '100%', maxWidth: 280, marginTop: 22 },
+  // One quiet line instead of the old three-action pile. Text-only so it reads
+  // as a pointer, not a second primary button competing with Create a Drop.
+  emptyExploreLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  emptyExploreText: { color: colors.accent, fontSize: 13, fontWeight: '600' },
   // Secondary to "Create a Drop": lighter, so posting stays the primary action
   // while inviting is still one tap away on the screen that needs it most.
   inviteCta: {

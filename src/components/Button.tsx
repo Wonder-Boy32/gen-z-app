@@ -1,7 +1,11 @@
 import React, { useRef } from 'react';
 import { ActivityIndicator, Animated, Pressable, StyleSheet, Text } from 'react-native';
 import { colors, radius } from '../theme';
-import NeonGradientFill from './ui/NeonGradient';
+
+// Ink for the solid primary fill. Near-black rather than white: #FFFFFF on
+// #FF9A2E is 2.1:1 and unreadable at 16px, #0B0A14 on it is 8.9:1. Set once
+// here so the label and the spinner can never drift apart.
+const ON_PRIMARY = '#0B0A14';
 
 type Props = {
   title: string;
@@ -44,12 +48,15 @@ export default function Button({
           pressed && !blocked && styles.pressed,
         ]}
       >
-        {/* The primary action is the brand ramp, not a solid accent: every
-            primary button in the app now matches the dock and the Edit Profile
-            CTA, which is what makes the identity read as one system. */}
-        {variant === 'primary' && <NeonGradientFill radius={radius.pill} />}
+        {/* The brand ramp stays on decorative surfaces (the dock outline, the
+            story ring, the Edit Profile hero) where nothing has to be read on
+            top of it. A BUTTON is not decorative: the ramp's light end is
+            #22D3EE, and white text over it measured 2.1:1 — which is why
+            "Create account" and "Log in" read as a blurred smudge in White
+            theme. Solid accent with near-black ink is 8.9:1 in both themes and
+            cannot fail if the SVG fill ever fails to draw. */}
         {loading ? (
-          <ActivityIndicator color={variant === 'primary' ? '#FFFFFF' : colors.accent} />
+          <ActivityIndicator color={variant === 'primary' ? ON_PRIMARY : colors.accent} />
         ) : (
           <Text
             style={[styles.text, styles[`text_${variant}`]]}
@@ -82,16 +89,18 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   primary: {
-    // the fill is the SVG gradient drawn inside the Pressable; a background
-    // colour here would cap the corners of it
-    backgroundColor: 'transparent',
+    // A real fill, not a transparent window onto an SVG. The gradient used to
+    // draw here, and when it did not the button still claimed 48px of height
+    // and reported itself as a control — an invisible tap target with a purple
+    // glow underneath it.
+    backgroundColor: colors.accent,
     overflow: 'hidden',
     ...({
-      shadowColor: '#8B5CF6',
-      shadowOpacity: 0.45,
-      shadowRadius: 14,
+      shadowColor: colors.accent,
+      shadowOpacity: 0.28,
+      shadowRadius: 10,
       shadowOffset: { width: 0, height: 3 },
-      elevation: 8,
+      elevation: 4,
     } as object),
   },
   secondary: {
@@ -114,7 +123,7 @@ const styles = StyleSheet.create({
     opacity: 0.85,
   },
   text_primary: {
-    color: colors.onAccent,
+    color: ON_PRIMARY,
   },
   text_secondary: {
     color: colors.text,
