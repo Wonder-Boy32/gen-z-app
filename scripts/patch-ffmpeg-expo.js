@@ -120,6 +120,23 @@ async function main() {
 }
 
 main().catch((e) => {
+  console.error('');
+  console.error('============================================================');
   console.error('[patch-ffmpeg] FAILED:', e.message);
-  process.exit(0); // never block installs — EAS cloud reruns on next build
+  console.error('');
+  console.error('  The install will continue with the BROKEN npm 0.1.0 binary,');
+  console.error('  whose filtergraph handling is the documented cause of:');
+  console.error('    - saved downloads with NO GEN Z watermark');
+  console.error('    - "amix"/"aresample" filter-not-present errors');
+  console.error('    - an ffmpeg error dialog on every save');
+  console.error('');
+  console.error('  Any build made from this tree will ship without branding.');
+  console.error('  Re-run `npm install` with network access, or set');
+  console.error('  GENZ_ALLOW_FFMPEG_PATCH_FAILURE=1 to accept that knowingly.');
+  console.error('============================================================');
+  console.error('');
+  // This used to be exit(0) "because EAS reruns on the next build". It does
+  // not: a failed fetch here is silent, the build succeeds, and the resulting
+  // APK brands nothing. Failing loudly is the only way this stays fixed.
+  process.exit(process.env.GENZ_ALLOW_FFMPEG_PATCH_FAILURE === '1' ? 0 : 1);
 });

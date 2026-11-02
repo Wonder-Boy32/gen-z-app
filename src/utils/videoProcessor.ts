@@ -423,6 +423,60 @@ export async function processDropVideo(uri: string, opts: ProcessOptions): Promi
 }
 
 // ============================================================
+// ============================================================
+// Capability probe — ask THIS phone's binary, do not assume
+// ============================================================
+//
+// The plan ladder below used to be written against a belief about what the
+// shipped libavfilter contains ("it has aresample, it lacks amix"). A device
+// report proved that belief wrong: ffmpeg said `'aresample' filter not present`
+// on a build we had documented as having it. Every plan then failed for a
+// reason the ladder could not see, and the user got an unbranded video with a
+// wall of demuxer output.
+//
+// `-filters` is cheap (no input, no encode), prints one line per filter, and
+// answers the question authoritatively. Cached for the process lifetime: the
+// binary cannot change under us between two downloads.
+type Capabilities = { filters: Set<string> };
+
+let capsPromise: Promise<Capabilities | null> | null = null;
+
+async function probeCapabilities(): Promise<Capabilities | null> {
+  if (capsPromise) return capsPromise;
+  capsPromise = (async (): Promise<Capabilities | null> => {
+    const m = ffModule;
+    if (!m) return null;
+    try {
+      const lines: string[] = [];
+      const session = m.run(['-hide_banner', '-filters'], {
+        logLevel: 'info',
+        onLog: (log: any) => {
+          const line = String(log?.message ?? '');
+          if (line.trim()) lines.push(line);
+        },
+      });
+      const r = await session.result;
+      if (!r || r.returnCode !== 0) {
+        console.warn('[bakeVideo] capability probe returned', r?.returnCode);
+        return null;
+      }
+      const filters = new Set<string>();
+      for (const line of lines) {
+        // " ... overlay           VV->V   Overlay a video source on top of ..."
+        // three flag chars, then the name
+        const match = /^\s*[TSC.]{3}\s+([A-Za-z0-9_]+)\s+/.exec(line);
+        if (match) filters.add(match[1]);
+      }
+      console.log(`[bakeVideo] probe: ${filters.size} filters`);
+      return filters.size ? { filters } : null;
+    } catch (e: any) {
+      console.warn('[bakeVideo] capability probe failed:', e?.message);
+      return null;
+    }
+  })();
+  return capsPromise;
+}
+
 // Download-to-gallery bakes (TikTok-style): corner GENZ watermark
 // (+ GENZ jingle outro on videos). The ORIGINAL file is never
 // modified — a watermarked COPY is produced and saved.
@@ -581,6 +635,24 @@ export async function bakeDownloadVideo(
   // Neither is a good reason to refuse the download the user asked for.
   const wm = await resolveWatermark(watermarkUri);
   const jingle = await bundledAssetPath(JINGLE_SRC as any);
+
+  // What this binary can ACTUALLY do. Null means the probe could not run, in
+  // which case every filter is assumed present and behaviour is unchanged —
+  // an unprobed device must not lose features to a failed diagnostic.
+  const caps = await probeCapabilities();
+  const hasFilter = (name: string) => (caps ? caps.filters.has(name) : true);
+  const missing: string[] = [];
+  const need = (name: string) => {
+    if (hasFilter(name)) return true;
+    if (!missing.includes(name)) missing.push(name);
+    return false;
+  };
+  /** true when this device has every filter the mode asks for */
+  const modeUsable = (mode: AudioMode): boolean => {
+    if (mode === 'mix-music' || mode === 'mix-orig') return need('amix') && need('aformat');
+    if (mode === 'jingle-concat') return need('concat') && need('aformat') && need('atrim');
+    return true; // 'orig' / 'music' / 'jingle' map an existing stream: no filter
+  };
   const durSec =
     durationSec && durationSec > 0
       ? durationSec
@@ -903,7 +975,18 @@ export async function bakeDownloadVideo(
   const deadline = Date.now() + 300000;
 
   for (const plan of plans) {
-    const modes: (AudioMode | null)[] = plan.audio.length ? plan.audio : [null];
+    // An overlay plan on a binary with no `overlay` filter is a guaranteed
+    // failure with a confusing message. Skip it and say why.
+    if (plan.overlay && !need('overlay')) {
+      attempts.push(`${plan.label}: skipped - this build has no 'overlay' filter`);
+      continue;
+    }
+    const usableModes = plan.audio.filter(modeUsable);
+    if (plan.audio.length && usableModes.length === 0) {
+      attempts.push(`${plan.label}: skipped - none of its audio filters exist here`);
+      continue;
+    }
+    const modes: (AudioMode | null)[] = plan.audio.length ? usableModes : [null];
     for (const mode of modes) {
       if (plan.reencode && Date.now() > deadline) {
         console.warn(`[bakeVideo] skipping plan ${plan.label} - out of time budget`);
@@ -986,6 +1069,19 @@ export async function bakeDownloadVideo(
           .filter(Boolean)
           .join(' and ') +
         ' could not be added on this phone — ' +
-        (attempts.length ? attempts.slice(0, 3).join(' | ') : 'no encoder available'),
+        // A missing filter is the CAUSE, so it leads. The attempt list is
+        // supporting detail and is capped hard: the old version pasted three
+        // full ffmpeg logs into a dialog.
+        // Order is by how far upstream the cause sits. If `!wm` the mark was
+        // never in the command at all — resolveWatermark discarded it because
+        // this binary could not read the image — so blaming a filter would be
+        // a lie even when filters are also missing.
+        (!wm
+          ? 'this build of ffmpeg could not read the watermark image, so no mark was attempted'
+          : missing.length
+          ? `this build of ffmpeg has no ${missing.map((f) => `'${f}'`).join(', ')} filter, so the branded copy cannot be produced here`
+          : attempts.length
+          ? attempts.slice(0, 2).join(' | ')
+          : 'no encoder available'),
   };
 }
