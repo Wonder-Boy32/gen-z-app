@@ -107,9 +107,36 @@ to claim them:
 | Item | Why it is yours |
 |---|---|
 | Rotate the Giphy key | **Done 2026-11-01.** See below. |
-| Revoke the GitHub PAT pasted in an earlier session | Only you can revoke it. |
+| Revoke the GitHub PAT pasted in an earlier session | **Done 2026-11-02.** See below. |
 | Real Android device pass | Section 4 above. |
 | APK / Play Store prep | Needs the release keystore and Play Console access. |
+
+### GitHub token — revoked
+
+The credential pasted into chat was a **fine-grained** PAT named `genz`
+(id `21670809`): access to **all repositories owned by the account**,
+Contents read/write, Metadata read-only, created 2026-10-23, expiring
+2026-11-22, last used within two weeks. It was the only live token on the
+account, so that single secret carried write access to every repo.
+
+Revoked 2026-11-02 through the settings UI ("Delete" → "I understand, delete
+this token"). Verified twice, because the UI flashed "Your token was unable to
+be deleted" and then showed an empty list — a contradiction not worth trusting
+either way:
+
+- `/settings/personal-access-tokens` renders "No fine-grained tokens created"
+- `/settings/personal-access-tokens/21670809` returns GitHub's `Page not found`
+
+Git pushes over SSH (`git@github.com:Wonder-Boy32/gen-z-app.git`), so revoking
+an HTTPS token cannot break this repo's remote.
+
+**Left in place, deliberately:** one classic token `metric-energy-deploy`
+(`repo` scope) that expired 2026-09-10 and was never used. It is inert, so
+removing it changes nothing security-wise. It stays until the owner deletes it,
+to avoid touching an unrelated project's record.
+
+**If a replacement is ever needed,** scope it to the one repository rather than
+all repositories — this one did not need account-wide reach to push one app.
 
 ### Giphy key — rotated, with a correction
 
