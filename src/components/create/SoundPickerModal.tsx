@@ -45,6 +45,8 @@ type Track = {
   /** used to sort newest-first, so "latest" is literally the top of the list */
   releaseDate?: string | null;
   genre?: string | null;
+  /** position in today's Nigerian list (1 = the sound to use) */
+  rank?: number;
 };
 
 const ITUNES_SEARCH = 'https://itunes.apple.com/search';
@@ -52,10 +54,10 @@ const ITUNES_SEARCH = 'https://itunes.apple.com/search';
 // ------------------------------------------------------------
 // Chart feed
 //
-// Verified alive and CURRENT on 2026-09-25: this feed returned Taylor Swift's
-// "The Life of a Showgirl: The Encore" (released 2026-09-24) and a 2026-09-25
-// Nickelback single. So the freshness complaint was not the source — it was
-// that we asked for 25 tracks from ONE country.
+// The feed itself has always been alive and current (it was returning same-day
+// releases as far back as 2026-09-25). The problem was never freshness — it
+// was WHICH charts were asked for and what happened to their order. See
+// CHART_SOURCES below.
 //
 // Each entry also carries its preview audio inline at
 // `link[].attributes.title === 'Preview'` — a 30s .m4a:
@@ -71,10 +73,121 @@ const ITUNES_SEARCH = 'https://itunes.apple.com/search';
 // `forceMute={!!post.sound_url}` === false and left the video's ORIGINAL audio
 // playing. That is the "sound won't replace the original" bug.
 // ------------------------------------------------------------
-const CHART_REGIONS = ['us', 'gb', 'ng', 'za', 'fr', 'in'] as const;
+// NIGERIA ONLY.
+//
+// This used to ask six storefronts (us, gb, ng, za, fr, in) for 50 tracks each
+// and then sort the 300-row pile by RELEASE DATE. Two things were wrong with
+// that, and together they are why the trending list did not look like Nigeria:
+//
+//   * the chart position — the only real signal that a sound is being used —
+//     was thrown away, so the newest import outranked the #1 record in Lagos;
+//   * five of the six storefronts had nothing to do with this app.
+//
+// What ships instead: the Nigerian storefront, two charts, and the positions
+// fused instead of discarded. A record inside Nigeria's top 50 today is what
+// "actively used" means for this feed — these are the songs under the dance
+// challenges here, not a copy of the US chart.
+//
+// Verified live on 2026-11-06 against /ng/rss/topsongs/limit=10/json: Asake &
+// Wizkid #4, Tems, Fireboy DML, Greatman Takit & Nathaniel Bassey, FOLA — the
+// storefront really does return the local scene. Still carries its 30s preview
+// inline at `link[].attributes.title === 'Preview'`.
+const STOREFRONT = 'ng';
 const CHART_LIMIT = 50;
-const chartUrl = (region: string) =>
-  `https://itunes.apple.com/${region}/rss/topsongs/limit=${CHART_LIMIT}/json`;
+
+/**
+ * Two Nigerian AUDIO charts, fused. Both were checked live on 2026-11-06 and
+ * both return 30s `.m4a` previews inline:
+ *
+ *   topsongs              — the country chart (Asake, Tems, Fireboy, FOLA…)
+ *   topsongs genre=1203   — "Top Songs in African", same storefront (Rema,
+ *                           Davido, Wizkid, Darkoo, P-Square, Tems "Damages"…)
+ *
+ * The second one is the useful half for this feature: it is the local genre
+ * chart, so the evergreen Afrobeats records that Nigerian creators actually
+ * cut videos to are in it even when they are not in today's national top 10.
+ *
+ * `topmusicvideos` was tried and deliberately dropped: in the NG storefront it
+ * still lists R. Kelly (2000) and Taylor Swift (2014) — an abandoned chart —
+ * and its "Preview" is a `.m4v` VIDEO file, not audio. Feeding that to the
+ * audio player would have downloaded a 1080p clip to play three seconds of
+ * sound.
+ *
+ * Weights: the national chart leads, the genre chart boosts. A record on both
+ * collects both contributions, which is exactly the "everyone is using this"
+ * signal we cannot get from either chart alone.
+ */
+const CHART_SOURCES = [
+  {
+    key: 'ng',
+    weight: 1,
+    url: `https://itunes.apple.com/${STOREFRONT}/rss/topsongs/limit=${CHART_LIMIT}/json`,
+  },
+  {
+    key: 'ng-african',
+    weight: 0.85,
+    url: `https://itunes.apple.com/${STOREFRONT}/rss/topsongs/limit=${CHART_LIMIT}/genre=1203/json`,
+  },
+] as const;
+
+/**
+ * Reciprocal-rank fusion: weight/rank from every chart a record appears on.
+ *
+ * #1 in the country chart = 1.0, so it leads. #1 in the genre chart = 0.85.
+ * A record at #9 nationally and #6 in the genre chart scores 0.11 + 0.14 =
+ * 0.25, which beats #5 on the genre chart alone (0.17) — being adopted in both
+ * places is the thing being measured. Cheap, order-stable, and it never
+ * invents a score for a record it did not see.
+ */
+const fuseScore = (hits: { rank: number; weight: number }[]) =>
+  hits.reduce((sum, h) => sum + h.weight / h.rank, 0);
+
+/**
+ * What counts as "a Nigerian sound".
+ *
+ * The NG storefront chart is not purely local — today it carries a Thai drama
+ * soundtrack and Adele — so "trending in Nigeria" alone lets global releases
+ * onto a list that is meant to sound like Lagos. A record is kept when either:
+ *
+ *   - it is in the NG *African* chart (that chart is local by construction), or
+ *   - its genre is one of the styles Nigerian creators actually cut videos to.
+ *
+ * Gospel/Christian are in the list on purpose: church music is one of the
+ * biggest sound categories on Nigerian TikTok, and a record like "YOU ARE GOOD"
+ * sits in the national top 10 without ever entering the genre chart.
+ *
+ * Compared lower-cased; Apple's own labels have mixed case across feeds.
+ */
+const LOCAL_GENRES = new Set(
+  [
+    'African',
+    'Afrobeats',
+    'Afro-Beat',
+    'Afro-Pop',
+    'Afro-fusion',
+    'Afro-fusion',
+    'Alté',
+    'Alte',
+    'Amapiano',
+    'Gospel',
+    'Christian',
+    'R&B/Soul',
+    'Hip-Hop/Rap',
+    'Hip-Hop',
+    'Rap',
+    'Dancehall',
+    'Reggae',
+    'Worldwide',
+    'World',
+  ].map((g) => g.toLowerCase())
+);
+
+/** the chart key that proves a record is part of the local scene */
+const LOCAL_CHART = 'ng-african';
+
+/** the list is the same for every user, so one fetch per 10 minutes is enough */
+const TREND_TTL_MS = 10 * 60 * 1000;
+let trendCache: { at: number; tracks: Track[] } | null = null;
 
 /** One shape for the raw RSS entry, so parsing is typed rather than `any`. */
 type RssEntry = {
@@ -206,66 +319,98 @@ export default function SoundPickerModal({ visible, onClose, onSelect, initial }
   }, [status.duration]);
 
   // ---------- data ----------
-  useEffect(() => {
-    if (!visible) return;
+  const loadTrending = useCallback(async (force = false) => {
+    if (!force && trendCache && Date.now() - trendCache.at < TREND_TTL_MS) {
+      setTrending(trendCache.tracks);
+      setErr(null);
+      setLoading(false);
+      return;
+    }
     setErr(null);
     setLoading(true);
-    (async () => {
-      try {
-        // allSettled, not all: one unreachable region must not blank the list.
-        const settled = await Promise.allSettled(
-          CHART_REGIONS.map(async (region) => {
-            const res = await fetch(chartUrl(region));
-            const feed = await res.json();
-            return ((feed?.feed?.entry ?? []) as RssEntry[]).map((e, i) => {
-              const t: Track = {
-                id: e.id?.attributes?.['im:id'] ?? e.id?.label ?? `${region}-${i}`,
-                name: e['im:name']?.label ?? 'Unknown',
-                artist: e['im:artist']?.label ?? '',
-                // Read the preview straight out of the feed. No lookup request.
-                url: previewUrlOf(e),
-                artwork: bigger(e['im:image']?.[2]?.label ?? e['im:image']?.[1]?.label ?? null),
-                releaseDate: e['im:releaseDate']?.label ?? null,
-                genre: e.category?.attributes?.label ?? null,
-              };
-              return t;
-            });
-          })
-        );
+    try {
+      // allSettled, not all: one dead chart must not blank the list.
+      const settled = await Promise.allSettled(
+        CHART_SOURCES.map(async (src) => {
+          const res = await fetch(src.url);
+          const j = await res.json();
+          const entries = (j?.feed?.entry ?? []) as RssEntry[];
+          // The array order IS the chart position. It used to be indexed only
+          // so entries had some id; now the number is the point.
+          return entries.map((e, i) => ({
+            e,
+            rank: i + 1,
+            weight: src.weight,
+            chart: src.key,
+          }));
+        })
+      );
 
-        const merged: Track[] = [];
-        for (const r of settled) if (r.status === 'fulfilled') merged.push(...r.value);
+      // Keep the chart POSITION, not just the track. A record that appears on
+      // both charts collects both ranks.
+      type Hit = { chart: string; rank: number; weight: number };
+      const byId = new Map<string, { hits: Hit[]; track: Track }>();
 
-        // The same hit charts in several countries — keep it once.
-        const seen = new Set<string>();
-        const unique = merged.filter((t) => {
-          if (seen.has(t.id)) return false;
-          seen.add(t.id);
-          return true;
-        });
+      for (const r of settled) {
+        if (r.status !== 'fulfilled') continue;
+        for (const { e, rank, weight, chart } of r.value) {
+          const url = previewUrlOf(e);
+          // A track with no preview cannot be a sound. Dropping it here is the
+          // guard against the original bug: it used to be selectable, saved
+          // sound_url = null, and the post silently kept its own audio.
+          if (!url) continue;
 
-        // Newest first, so "latest" is literally the top of the list.
-        unique.sort((a, b) => (b.releaseDate ?? '').localeCompare(a.releaseDate ?? ''));
-
-        // Drop anything without a playable preview.
-        //
-        // This is the guard against the original bug coming back: a track with
-        // url === null used to be selectable, saved sound_url = null, and the
-        // post silently kept its own audio. Better to show 40 playable songs
-        // than 350 that half-work.
-        const playable = unique.filter((t) => !!t.url);
-
-        setTrending(playable);
-        if (playable.length === 0) {
-          setErr("Couldn't load trending songs. Check your connection.");
+          const id = e.id?.attributes?.['im:id'] ?? e.id?.label ?? `${rank}-${url}`;
+          const already = byId.get(id);
+          if (already) {
+            already.hits.push({ chart, rank, weight });
+            continue;
+          }
+          byId.set(id, {
+            hits: [{ chart, rank, weight }],
+            track: {
+              id,
+              name: e['im:name']?.label ?? 'Unknown',
+              artist: e['im:artist']?.label ?? '',
+              // The preview comes straight out of the feed. No lookup request.
+              url,
+              artwork: bigger(e['im:image']?.[2]?.label ?? e['im:image']?.[1]?.label ?? null),
+              releaseDate: e['im:releaseDate']?.label ?? null,
+              genre: e.category?.attributes?.label ?? null,
+            },
+          });
         }
-      } catch {
-        setErr("Couldn't load trending songs. Check your connection.");
-      } finally {
-        setLoading(false);
       }
-    })();
-  }, [visible]);
+
+      const ranked: Track[] = [...byId.values()]
+        // Local only: proven by the African chart, or by a genre Nigerian
+        // creators actually use. See LOCAL_GENRES for why imports are dropped.
+        .filter(
+          (v) =>
+            v.hits.some((h) => h.chart === LOCAL_CHART) ||
+            LOCAL_GENRES.has((v.track.genre ?? '').trim().toLowerCase())
+        )
+        .map((v) => ({ t: v.track, score: fuseScore(v.hits) }))
+        // highest score first; ties broken by title so the order never flickers
+        .sort((a, b) => b.score - a.score || a.t.name.localeCompare(b.t.name))
+        .map(({ t }, i) => ({ ...t, rank: i + 1 }));
+
+      trendCache = { at: Date.now(), tracks: ranked };
+      setTrending(ranked);
+      if (ranked.length === 0) {
+        setErr("Couldn't load trending songs. Check your connection.");
+      }
+    } catch {
+      setErr("Couldn't load trending songs. Check your connection.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!visible) return;
+    void loadTrending();
+  }, [visible, loadTrending]);
 
   // ---------- favourites ----------
   const [favs, setFavs] = useState<Record<string, Track>>({});
@@ -333,7 +478,12 @@ export default function SoundPickerModal({ visible, onClose, onSelect, initial }
     setSearching(true);
     setErr(null);
     try {
-      const res = await fetch(`${ITUNES_SEARCH}?term=${encodeURIComponent(q.trim())}&entity=song&limit=50`);
+      // country=ng, because without it the search runs against the US
+      // storefront: searching "Asake" returned US results and left the local
+      // catalogue out entirely.
+      const res = await fetch(
+        `${ITUNES_SEARCH}?term=${encodeURIComponent(q.trim())}&entity=song&limit=50&country=${STOREFRONT}`
+      );
       const j = await res.json();
       setResults(
         ((j.results ?? []) as any[]).map((r) => ({
@@ -509,6 +659,26 @@ export default function SoundPickerModal({ visible, onClose, onSelect, initial }
                 ))}
               </View>
 
+              {tab === 'trending' && (
+                <View style={styles.trendHead}>
+                  <View style={styles.trendHeadLeft}>
+                    <Icon name="location" size={12} color={colors.accent} />
+                    <Text style={styles.trendHeadText}>Trending in Nigeria</Text>
+                    {trending.length > 0 && (
+                      <Text style={styles.trendHeadSub}>· top {trending.length}</Text>
+                    )}
+                  </View>
+                  <Pressable
+                    onPress={() => void loadTrending(true)}
+                    hitSlop={12}
+                    accessibilityRole="button"
+                    accessibilityLabel="Refresh trending sounds"
+                  >
+                    <Icon name="refresh" size={15} color={colors.textMuted} />
+                  </Pressable>
+                </View>
+              )}
+
               {tab === 'search' && (
                 <View style={styles.searchRow}>
                   <TextInput
@@ -560,6 +730,9 @@ export default function SoundPickerModal({ visible, onClose, onSelect, initial }
                         applyInitial(t);
                       }}
                     >
+                      {tab === 'trending' && t.rank ? (
+                        <Text style={styles.rowRank}>{t.rank}</Text>
+                      ) : null}
                       {t.artwork ? (
                         <Image source={{ uri: t.artwork }} style={styles.artwork} />
                       ) : (
@@ -786,6 +959,26 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     backgroundColor: '#0A1220',
     marginBottom: 14,
+  },
+  // "Trending in Nigeria" strip: says which country the list is from, and that
+  // it is a chart, so a #1 is believable rather than a lucky sort order.
+  trendHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: -2,
+    marginBottom: 8,
+    paddingHorizontal: 2,
+  },
+  trendHeadLeft: { flexDirection: 'row', alignItems: 'center', gap: 5, flex: 1 },
+  trendHeadText: { color: colors.text, fontSize: 12, fontWeight: '800', letterSpacing: 0.2 },
+  trendHeadSub: { color: colors.textMuted, fontSize: 12, fontWeight: '600' },
+  rowRank: {
+    width: 18,
+    textAlign: 'center',
+    color: colors.textFaint,
+    fontSize: 13,
+    fontWeight: '800',
   },
   rowBody: { flex: 1 },
   songName: { color: colors.text, fontSize: 14, fontWeight: '700' },
