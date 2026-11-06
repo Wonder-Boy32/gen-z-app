@@ -10,6 +10,8 @@
 // (playback-time trim/speed/filters via DropVideoView).
 // ============================================================
 
+import { coverWindows, pickBestCover } from './coverPicker';
+
 let ffModule: any = null;
 let ffChecked = false;
 let expoGoChecked = false;
@@ -320,9 +322,110 @@ async function probeMediaMeta(uri: string): Promise<{
   });
 }
 
-// Extracts a cover frame (0.5s in) from a local video — used to auto-fill
-// the profile tile when the creator didn't pick a cover. Native builds only.
-export async function extractVideoCover(uri: string, outputName = 'cover'): Promise<string> {
+// Runs one command and hands back its log lines.
+//
+// exec() deliberately throws them away — its contract is success/failure. The
+// cover scorer needs to READ the output, because that is where ffmpeg's
+// signalstats filter prints the frame's average luma.
+function execCapture(
+  args: string[],
+  timeoutMs = 20000
+): Promise<{ returnCode: number; lines: string[] }> {
+  const m = ffModule;
+  if (!m) return Promise.reject(new Error('ffmpeg not available'));
+  return new Promise((resolve, reject) => {
+    let session: any;
+    let settled = false;
+    const lines: string[] = [];
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try {
+        session?.cancel?.();
+      } catch {
+        // ignore
+      }
+      reject(new Error('ffmpeg timed out'));
+    }, timeoutMs);
+    try {
+      // 'info', not 'warning': metadata=print emits at info level and would be
+      // suppressed before it ever reached us.
+      session = m.run(args, {
+        logLevel: 'info',
+        onLog: (log: any) => {
+          try {
+            const line = String(log?.message ?? '');
+            if (line.trim()) lines.push(line.trim().slice(0, 300));
+          } catch {
+            // ignore
+          }
+        },
+      });
+      session.result.then(
+        (r: any) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve({ returnCode: r?.returnCode ?? -1, lines });
+        },
+        (e: any) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          reject(e instanceof Error ? e : new Error('ffmpeg error'));
+        }
+      );
+    } catch (e) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(e instanceof Error ? e : new Error('ffmpeg error'));
+    }
+  });
+}
+
+// Average luma of a still, 0-255. NaN when this build has no signalstats —
+// the caller treats that as "unmeasurable", not as "black".
+async function lumaOf(jpgPath: string): Promise<number> {
+  try {
+    const { lines } = await execCapture([
+      '-hide_banner',
+      '-i',
+      cleanPath(jpgPath),
+      '-vf',
+      'signalstats,metadata=print',
+      '-frames:v',
+      '1',
+      '-f',
+      'null',
+      '-',
+    ]);
+    for (const line of lines) {
+      const hit = line.match(/signalstats\.YAVG=([\d.]+)/);
+      if (hit) return parseFloat(hit[1]);
+    }
+  } catch {
+    // no signalstats in this build, or a still ffmpeg would not decode
+  }
+  return NaN;
+}
+
+// Picks the best-looking frame of a local video as its cover — used whenever
+// the creator has not chosen one, which is the normal case.
+//
+// The previous version took a single frame at a fixed 0.5s. On any clip that
+// opens on black or a fade-in that produced a black cover tile, which is the
+// reported "the cover is just black". This version follows the policy in
+// utils/coverPicker.ts: scan several windows, let the `thumbnail` filter pick a
+// representative frame inside each, then keep the one whose average luma is
+// closest to well-exposed.
+//
+// Native builds only. The Expo Go path is a view-shot, handled by the caller.
+export async function extractVideoCover(
+  uri: string,
+  outputName = 'cover',
+  opts: { durationSec?: number } = {}
+): Promise<string> {
   if (!modulePresent()) throw new Error('ffmpeg unavailable');
   const fs: any = await import('expo-file-system/legacy');
   const dir = `${fs.cacheDirectory}drop-edit/`;
@@ -331,9 +434,73 @@ export async function extractVideoCover(uri: string, outputName = 'cover'): Prom
   } catch {
     // dir may already exist
   }
-  const out = `${dir}${outputName}-${Date.now()}.jpg`;
-  await exec(['-y', '-ss', '0.5', '-i', cleanPath(uri), '-frames:v', '1', '-q:v', '3', cleanPath(out)], 30000);
-  return out;
+
+  let durationSec = opts.durationSec ?? 0;
+  if (!durationSec) {
+    // Header-only probe: cheap, and it cannot fail on a decode problem.
+    const meta = await probeMediaMeta(uri).catch(() => null);
+    durationSec = meta?.durationSec ?? 0;
+  }
+
+  const stamp = Date.now();
+  const windows = coverWindows(durationSec);
+  const cands: { at: number; path: string; yavg: number }[] = [];
+
+  for (let i = 0; i < windows.length; i++) {
+    const at = windows[i];
+    const path = `${dir}${outputName}-${stamp}-${i}.jpg`;
+    try {
+      await exec(
+        [
+          '-y',
+          // -ss before -i seeks the container instead of decoding up to the
+          // point, which is the difference between fast and unusable here.
+          '-ss',
+          String(at),
+          '-i',
+          cleanPath(uri),
+          '-vf',
+          // 30 frames is ~1s of a normal clip: enough for the filter to judge
+          // what is typical, short enough to stay quick on a phone.
+          'thumbnail=30',
+          '-frames:v',
+          '1',
+          '-q:v',
+          '3',
+          cleanPath(path),
+        ],
+        45000
+      );
+    } catch {
+      continue; // a window ffmpeg cannot seek to is simply not a candidate
+    }
+    cands.push({ at, path, yavg: await lumaOf(path) });
+  }
+
+  if (!cands.length) {
+    // Nothing decoded at all. Fall back to the old behaviour rather than throw:
+    // a plain seek still beats a post with no cover image.
+    const fallback = `${dir}${outputName}-${stamp}.jpg`;
+    await exec(
+      ['-y', '-ss', '0.5', '-i', cleanPath(uri), '-frames:v', '1', '-q:v', '3', cleanPath(fallback)],
+      30000
+    );
+    return fallback;
+  }
+
+  const best = pickBestCover(cands) ?? cands[0];
+
+  // The losing frames are temp files nobody will read.
+  for (const c of cands) {
+    if (c.path === best.path) continue;
+    try {
+      fs.deleteAsync(c.path, { idempotent: true });
+    } catch {
+      // cache dir; the OS reclaims it
+    }
+  }
+
+  return best.path;
 }
 
 // Encodes a NEW video file with trim/speed/rotation/filter/voiceover

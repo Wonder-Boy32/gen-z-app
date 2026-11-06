@@ -675,29 +675,9 @@ export default function CreateDropScreen({
     replyToDropId || initialMediaUri || initialSound ? 'create' : 'hub'
   );
 
-  // Android back control for the create wizard.
-  //
-   // A wizard is not one screen: 'hub' | 'create' | 'editor' | 'preview' are four
-   // navigation levels sharing one component, and the arrow buttons move between
-   // them. Without this the hardware back press skipped all of them and dropped
-   // the user out of the whole flow — losing an in-progress post. Walking one step
-   // back mirrors the on-screen back arrow exactly. 'hub' is the entry level, so
-   // it declines and lets the tab host decide.
-   useAndroidBack(() => {
-     if (step === 'preview') {
-      setStep('editor');
-      return true;
-    }
-    if (step === 'editor') {
-      setStep('create');
-      return true;
-    }
-    if (step === 'create') {
-      setStep('hub');
-      return true;
-    }
-    return false;
-  });
+  // The Android back control is wired further down, to stepBack() — the same
+  // function the on-screen back arrows call, so the two can never disagree
+  // about what "back" means. See the note there.
   const [mode, setMode] = useState<Mode>('media');
   const [assets, setAssets] = useState<ImagePicker.ImagePickerAsset[]>([]);
   const [caption, setCaption] = useState('');
@@ -717,6 +697,13 @@ export default function CreateDropScreen({
   const [trimActive, setTrimActive] = useState(false);
   const [coverUri, setCoverUri] = useState<string | null>(null);
   const [coverBusy, setCoverBusy] = useState(false);
+  // Did WE choose this cover, or did the creator? Drives the "Auto" tag and
+  // lets a re-pick replace an automatic choice without ever replacing a
+  // deliberate one.
+  const [coverAuto, setCoverAuto] = useState(false);
+  // Bumped every time a new video is picked, so a slow pick for the previous
+  // clip cannot land on the new one's panel.
+  const coverGenRef = useRef(0);
   const [textLayers, setTextLayers] = useState<TextLayer[]>([]);
   const [stickers, setStickers] = useState<Sticker[]>([]);
   const [collage, setCollage] = useState('single');
@@ -937,6 +924,70 @@ export default function CreateDropScreen({
     }
   }, [capturePlayer, coverSource]);
 
+  /**
+   * Choose a cover without being asked.
+   *
+   * Two engines, best first:
+   *   1. Native builds — ffmpeg scans several windows of the clip and scores
+   *      the candidate frames, so the cover is the most representative,
+   *      best-exposed one rather than whatever was on screen at 0.5s.
+   *   2. Expo Go / an ffmpeg failure — the frame-aware view-shot still beats
+   *      leaving the tile empty.
+   *
+   * Returns null only when both routes fail, which is the one case where the
+   * caller must not clear whatever cover is already there.
+   */
+  const autoPickCover = useCallback(async (): Promise<string | null> => {
+    if (!coverSource) return null;
+    setCoverBusy(true);
+    try {
+      if (hasNativeFFmpeg()) {
+        try {
+          const best = await extractVideoCover(coverSource, 'cover', {
+            durationSec: player?.duration ?? 0,
+          });
+          if (best) return best;
+        } catch (e: any) {
+          console.warn('[cover] best-frame pick failed', e?.message);
+        }
+      }
+      return await captureCoverNow();
+    } finally {
+      setCoverBusy(false);
+    }
+  }, [coverSource, player, captureCoverNow]);
+
+  // Nobody should have to remember to pick a cover.
+  //
+  // This runs the moment a video is attached, in the background, and puts the
+  // result straight into the Cover panel — so the automatic choice is visible
+  // and overridable instead of being a silent promise made at publish time.
+  // It deliberately does NOT run when a cover already exists: resuming a draft
+  // must not discard the frame the creator chose for it.
+  useEffect(() => {
+    if (!coverSource) return;
+    if (coverUri) return;
+
+    const gen = ++coverGenRef.current;
+    void (async () => {
+      // Let the player above open the file first. Scoring three windows means
+      // decoding roughly three seconds of video, and starting that in the same
+      // frame as the preview's own decoder is how you get a stuttering first
+      // play of the clip you just picked.
+      await new Promise((r) => setTimeout(r, 600));
+      const best = await autoPickCover();
+      // A newer clip was attached while this one was being scored. Its run owns
+      // the panel now; writing here would put the previous video's frame on it.
+      if (gen !== coverGenRef.current) return;
+      if (best) {
+        setCoverUri(best);
+        setCoverAuto(true);
+      }
+    })();
+    // coverUri is intentionally read once, at attach time
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [coverSource]);
+
   // create-intent: reply-to-drop chain link
   useEffect(() => {
     if (replyToDropId) setParentDropId(replyToDropId);
@@ -1046,6 +1097,7 @@ export default function CreateDropScreen({
     setCaption('');
     setContent('');
     setCoverUri(null);
+    setCoverAuto(false);
     setSound(null);
     setFilter('original');
     setEffect('none');
@@ -1101,6 +1153,7 @@ export default function CreateDropScreen({
     textColor,
     sound,
     coverUri,
+    coverAuto,
     filter,
     effect,
     speed,
@@ -1231,6 +1284,33 @@ export default function CreateDropScreen({
     setStep('hub');
   };
 
+  /**
+   * One level back, and nothing else.
+   *
+   * THIS IS THE FIX FOR "I'm in the caption and I can't go back".
+   *
+   * The ✕ in the editor and the preview both went straight to the hub, from
+   * every level. So a creator who reached the caption step, remembered they
+   * wanted a sound, and pressed it did not go back a step — they lost their
+   * place entirely and had to walk the whole wizard again. The hardware back
+   * button walked correctly, but nothing on screen did, so in practice the
+   * flow looked like a dead end.
+   *
+   * preview → editor → create → hub, one level at a time, flushing the draft
+   * on the way out so leaving a step never costs work. Tapping ✕ to abandon
+   * the whole thing is still available on the preview and the hub.
+   */
+  const stepBack = useCallback(() => {
+    if (step === 'hub') return false; // entry level: let the tab host decide
+    flushDraft();
+    player?.pause();
+    setStep(step === 'preview' ? 'editor' : step === 'editor' ? 'create' : 'hub');
+    return true;
+  }, [step, flushDraft, player]);
+
+  // Android back runs through the same function as the on-screen arrows.
+  useAndroidBack(stepBack);
+
   useEffect(() => {
     if (!draftReadyRef.current) return;
     if (!hasAnyContent || uploading) return;
@@ -1296,6 +1376,7 @@ export default function CreateDropScreen({
     setTextColor(p.textColor ?? TEXT_DROP_COLORS[0]);
     setSound(p.sound ?? null);
     setCoverUri(p.coverUri ?? null);
+    setCoverAuto(!!p.coverAuto);
     setFilter(p.filter ?? 'original');
     setEffect(p.effect ?? 'none');
     setSpeed(p.speed ?? 1);
@@ -2302,8 +2383,16 @@ export default function CreateDropScreen({
       {step === 'editor' && (
         <View style={styles.flex}>
           <View style={styles.editorTop}>
-            <Pressable onPress={leaveDrafting} hitSlop={8} style={styles.editorTopBtn}>
-              <Text style={styles.editorTopText}>✕</Text>
+            {/* Back, not close. This used to be a ✕ that jumped to the hub,
+                so there was no way to return to the media step and swap the
+                clip — the same dead end the preview had. */}
+            <Pressable
+              onPress={stepBack}
+              hitSlop={10}
+              style={styles.editorTopBtn}
+              accessibilityLabel="Back to media"
+            >
+              <Icon name="chevron-back" size={20} color={colors.text} />
             </Pressable>
             <View style={styles.editorCenter}>
               <Text style={styles.editorTitle}>Edit drop</Text>
@@ -2466,48 +2555,78 @@ export default function CreateDropScreen({
             {overlay === 'cover' && (
               <View style={styles.panelColumn}>
                 <Text style={styles.panelHint}>
-                  Pick a photo as this video's cover — it shows on your profile grid and everywhere the Drop is listed.
+                  {coverAuto
+                    ? 'We picked this frame for you — the clearest, most representative one in the clip. Change it if you want to.'
+                    : 'This still is what shows on your profile grid and everywhere the Drop is listed.'}
                 </Text>
+
                 {coverUri ? (
                   <View style={styles.coverPreviewRow}>
-                    <Image source={{ uri: coverUri }} style={styles.coverPreview} />
-                    <Pressable onPress={() => setCoverUri(null)} hitSlop={8}>
-                      <Text style={styles.coverRemove}>✕ Remove cover</Text>
-                    </Pressable>
-                  </View>
-                ) : (
-                  <View style={styles.panelRow}>
-                    <Button
-                      variant="secondary"
-                      title="📁 Pick from gallery"
-                      disabled={coverBusy}
+                    <View style={styles.coverThumbWrap}>
+                      <Image source={{ uri: coverUri }} style={styles.coverPreview} />
+                      {coverAuto && (
+                        <View style={styles.coverAutoTag}>
+                          <Text style={styles.coverAutoTagText}>AUTO</Text>
+                        </View>
+                      )}
+                    </View>
+                    <Pressable
                       onPress={async () => {
-                        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-                        if (!perm.granted) return;
-                        const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8 });
-                        if (res.canceled || !res.assets[0]) return;
-                        setCoverUri(res.assets[0].uri);
-                      }}
-                    />
-                    <Button
-                      variant="secondary"
-                      title={coverBusy ? 'Generating…' : 'Auto (first frame)'}
-                      disabled={coverBusy}
-                      onPress={async () => {
-                        setCoverBusy(true);
-                        try {
-                          const local = await captureCoverNow();
-                          if (local) setCoverUri(local);
-                        } finally {
-                          setCoverBusy(false);
+                        // Another automatic frame, never an empty slot: a video
+                        // with no cover renders as a broken tile in every grid
+                        // it appears in, so there is no "none" to go back to.
+                        const better = await autoPickCover();
+                        if (better) {
+                          setCoverUri(better);
+                          setCoverAuto(true);
                         }
                       }}
-                    />
+                      hitSlop={8}
+                      disabled={coverBusy}
+                    >
+                      <Text style={styles.coverRemove}>
+                        {coverBusy ? 'Looking…' : '↻ Try another frame'}
+                      </Text>
+                    </Pressable>
                   </View>
-                )}
-                {!coverUri && (
+                ) : null}
+
+                {/* Always available, cover or no cover: the point is that
+                    choosing one is optional, so "change it" has to be exactly
+                    as easy to reach as "pick it" was. */}
+                <View style={styles.panelRow}>
+                  <Button
+                    variant="secondary"
+                    title="📁 Pick from gallery"
+                    disabled={coverBusy}
+                    onPress={async () => {
+                      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+                      if (!perm.granted) return;
+                      const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8 });
+                      if (res.canceled || !res.assets[0]) return;
+                      setCoverUri(res.assets[0].uri);
+                      // A deliberate choice outranks ours from here on.
+                      setCoverAuto(false);
+                    }}
+                  />
+                  <Button
+                    variant="secondary"
+                    title={coverBusy ? 'Choosing…' : coverUri ? '↻ Best frame' : 'Auto (best frame)'}
+                    disabled={coverBusy}
+                    onPress={async () => {
+                      const better = await autoPickCover();
+                      if (better) {
+                        setCoverUri(better);
+                        setCoverAuto(true);
+                      }
+                    }}
+                  />
+                </View>
+
+                {!coverUri && !coverBusy && (
                   <Text style={styles.panelHint}>
-                    No cover chosen? We auto-capture the first frame at publish — or use Auto now.
+                    Nothing chosen yet — we pick the best frame for you either way, so you cannot end
+                    up without one.
                   </Text>
                 )}
               </View>
@@ -2557,13 +2676,31 @@ export default function CreateDropScreen({
           <ScrollView contentContainerStyle={styles.previewContent} keyboardShouldPersistTaps="handled">
             {/* ---------- top bar ---------- */}
             <View style={styles.pvTop}>
-              <Pressable onPress={leaveDrafting} hitSlop={8} style={styles.pvClose}>
-                <Icon name="close" size={16} color={colors.text} />
+              {/* Back to the editor — the reported dead end. Being on the
+                  caption step is not the same as being finished with the post,
+                  and there was no way to return to sound, trim or filters. */}
+              <Pressable
+                onPress={stepBack}
+                hitSlop={10}
+                style={styles.pvClose}
+                accessibilityLabel="Back to editor"
+              >
+                <Icon name="chevron-back" size={18} color={colors.text} />
               </Pressable>
               <Text style={styles.pvTitle}>Preview</Text>
-              <View style={styles.pvBadge}>
-                <Icon name="hourglass-outline" size={11} color={colors.accent} />
-                    <Text style={styles.pvBadgeText}>7D</Text>
+              <View style={styles.pvTopRight}>
+                <View style={styles.pvBadge}>
+                  <Icon name="hourglass-outline" size={11} color={colors.accent} />
+                  <Text style={styles.pvBadgeText}>7D</Text>
+                </View>
+                <Pressable
+                  onPress={leaveDrafting}
+                  hitSlop={10}
+                  style={styles.pvClose}
+                  accessibilityLabel="Close and keep the draft"
+                >
+                  <Icon name="close" size={15} color={colors.text} />
+                </Pressable>
               </View>
             </View>
             <Text style={styles.pvHint}>This is exactly how it lands in the feed.</Text>
@@ -2654,6 +2791,34 @@ export default function CreateDropScreen({
                 </View>
               </View>
             </View>
+
+            {/* ---------- sound ----------
+                The other half of the reported dead end. The example the user
+                gave was "I forgot to put a sound", and the only way to fix it
+                used to be walking all the way back. Now it is one tap from
+                here, in the step where you notice the problem. */}
+            {mode === 'media' && (
+              <Press
+                containerStyle={styles.pvSoundRow}
+                onPress={() => setSoundOpen(true)}
+                shrink={0.99}
+              >
+                <View style={styles.pvSoundIcon}>
+                  <Icon name="musical-notes" size={15} color={colors.accent} />
+                </View>
+                <View style={styles.pvSoundBody}>
+                  <Text style={styles.pvSoundTitle} numberOfLines={1}>
+                    {sound?.name ?? 'Add a sound'}
+                  </Text>
+                  <Text style={styles.pvSoundSub} numberOfLines={1}>
+                    {sound?.name
+                      ? sound.artist || 'Your chosen track'
+                      : 'Nothing chosen — the video keeps its own audio'}
+                  </Text>
+                </View>
+                <Text style={styles.pvSoundCta}>{sound ? 'Change' : 'Add'}</Text>
+              </Press>
+            )}
 
             {/* ---------- caption ---------- */}
             <Text style={styles.pvSection}>Caption</Text>
@@ -3006,11 +3171,12 @@ export default function CreateDropScreen({
       )}
 
       {/* The "Save as draft?" dialog that used to live here is gone with the
-          manual save it belongs to. Work is saved as it happens: the ✕ in the
-          editor flushes and returns to the hub, where the draft is shown. A
-          dialog asking whether to keep work would now be asking about
-          something already done — and its Discard button was the only way to
-          lose a draft, which the hub banner does better. */}
+          manual save it belongs to. Work is saved as it happens, and every way
+          out of a step — the ‹ in the editor and preview, the ✕ on the preview,
+          the hardware back button — flushes before it moves. A dialog asking
+          whether to keep work would now be asking about something already
+          done, and its Discard button was the only way to lose a draft, which
+          the hub banner does better. */}
     </View>
   );
 
@@ -3369,6 +3535,19 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     backgroundColor: colors.surfaceAlt,
   },
+  // the thumbnail and its AUTO tag share one box, so the tag sits on the corner
+  // of the frame rather than beside it
+  coverThumbWrap: { position: 'relative' },
+  coverAutoTag: {
+    position: 'absolute',
+    left: 5,
+    bottom: 5,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: radius.sm,
+    backgroundColor: 'rgba(7,6,26,0.78)',
+  },
+  coverAutoTagText: { color: colors.accent, fontSize: 8.5, fontWeight: '800', letterSpacing: 0.8 },
   coverRemove: {
     color: colors.danger,
     fontSize: 13,
@@ -3699,7 +3878,6 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   editorTopBtn: { padding: 6 },
-  editorTopText: { color: colors.text, fontSize: 18 },
   editorTitle: { color: colors.text, fontSize: 16, fontWeight: '800' },
   nextText: { color: colors.accent, fontSize: 14, fontWeight: '800' },
   canvas: { alignSelf: 'stretch', marginHorizontal: 12, borderRadius: radius.lg, overflow: 'hidden', backgroundColor: '#000' },
@@ -3783,6 +3961,9 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   pvTitle: { color: colors.text, fontSize: 16, fontWeight: '800' },
+  // badge + close share the right-hand slot so the title stays centred between
+  // the back arrow and this pair
+  pvTopRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   pvBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3796,6 +3977,32 @@ const styles = StyleSheet.create({
   },
   pvBadgeText: { color: colors.accent, fontSize: 10, fontWeight: '800', letterSpacing: 1 },
   pvHint: { color: colors.textMuted, fontSize: 12.5, marginTop: 10, marginBottom: 4 },
+
+  // sound row on the preview — reachable in the step where you notice it
+  pvSoundRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  pvSoundIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.accentSoft,
+  },
+  pvSoundBody: { flex: 1, minWidth: 0 },
+  pvSoundTitle: { color: colors.text, fontSize: 13.5, fontWeight: '800' },
+  pvSoundSub: { color: colors.textMuted, fontSize: 11.5, marginTop: 2 },
+  pvSoundCta: { color: colors.accent, fontSize: 12, fontWeight: '800' },
 
   // the live post card
   pvCard: {
