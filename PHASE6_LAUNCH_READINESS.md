@@ -182,3 +182,39 @@ node --env-file=.env --env-file=scripts/.secrets.env scripts/migrate-private-med
 The service-role key lives in `scripts/.secrets.env` (git-ignored). It was moved
 out of `.env.local` because Expo auto-loads that file into the dev process, so
 the key sat in the bundler's environment for no reason.
+
+## 7. Installable APK (internal preview)
+
+| | |
+|---|---|
+| Build id | `77b8860d-c065-45cb-b1df-95e1ecb06469` |
+| Commit | `288b155` (`dev/phase2-stability`) |
+| Profile | `preview` — `distribution: internal`, `android.buildType: apk` |
+| Artifact | https://expo.dev/artifacts/eas/qQRXv3RhBMmRrBB9C24kk8Uyro17qAshF9ZQfBuLeG0.apk |
+| Size | 129,256,546 bytes |
+| Build page | https://expo.dev/accounts/wonderboy23/projects/gen-z-app/builds/77b8860d-c065-45cb-b1df-95e1ecb06469 |
+
+This is a standalone signed APK, not a Metro/dev-client build: it runs with no
+packager attached.
+
+**Why the ffmpeg payload in this APK is the fixed one.** `npm postinstall` runs
+`scripts/patch-ffmpeg-expo.js`, and that script now exits `1` when it cannot
+fetch the upstream binaries — so a green build is itself the proof that the
+patch ran. Verified independently rather than inferred, by opening the APK and
+comparing `lib/arm64-v8a/*.so` against the patched local tree: `libavfilter.so`
+181,696 / `libavcodec.so` 3,174,648 / `libavformat.so` 698,864 /
+`libswresample.so` 78,136 — identical byte lengths in both.
+
+**What that binary actually contains.** Read out of the `.so` shipped inside the
+APK, not from documentation:
+
+- present: `overlay`, `concat`, `aformat`, `atrim`, `aresample`, `scale`,
+  `format`, `volume`
+- absent: `amix`, `anullsrc`, `adelay`, `drawtext`
+- codecs: `mpeg4`, `aac`, `png`, `mjpeg`, `h264`
+
+That is the whole reason the jingle is appended with `concat` instead of mixed
+with `amix`, and why the older build — which lacked `aresample` — failed with
+`'aresample' filter not present`. The app no longer relies on this table at
+runtime: `probeCapabilities()` runs `-filters` on the phone's own binary and
+skips any plan that asks for a filter that is not there, recording the reason.
