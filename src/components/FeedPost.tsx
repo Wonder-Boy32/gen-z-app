@@ -30,6 +30,10 @@ export type FeedPost = {
   media_url: string | null;
   media_type: 'video' | 'image' | null;
   media_items: { url: string; type: string }[] | null;
+  /** cover frame for a video post. The feed has always received this — the
+   *  column is on `posts` and the query is `select('*')` — but nothing typed
+   *  or drew it, so every cell was black until the first frame decoded. */
+  cover_url?: string | null;
   content: string | null;
   audio: string | null;
   sound: string | null;
@@ -80,6 +84,8 @@ type Props = {
   /** true when this page is the NEXT one in the pager — its video is
    *  loaded (muted) ahead of time so playback starts instantly on swipe */
   preload?: boolean;
+  /** true two pages ahead: fetch the bytes, paint nothing */
+  warm?: boolean;
   height: number;
   contentTop?: number;
   contentBottom?: number;
@@ -109,6 +115,7 @@ function FeedPostInner({
   post,
   isActive,
   preload = false,
+  warm = false,
   height,
   contentTop = 0,
   contentBottom = 0,
@@ -257,6 +264,7 @@ function FeedPostInner({
             post={post}
             isActive={isActive}
             preload={preload}
+            warm={warm}
             paused={holdPause || tapPaused}
             onTap={handleTap}
             onHoldStart={() => setHoldPause(true)}
@@ -592,6 +600,7 @@ function MediaArea({
   post,
   isActive,
   preload = false,
+  warm = false,
   paused,
   onTap,
   onHoldStart,
@@ -600,6 +609,7 @@ function MediaArea({
   post: FeedPost;
   isActive: boolean;
   preload?: boolean;
+  warm?: boolean;
   paused: boolean;
   onTap?: () => void;
   onHoldStart?: () => void;
@@ -611,6 +621,7 @@ function MediaArea({
         post={post}
         isActive={isActive}
         preload={preload}
+        warm={warm}
         paused={paused}
         forceMute={!!post.sound_url}
         onTap={onTap}
@@ -714,6 +725,7 @@ function VideoMedia({
   post,
   isActive,
   preload = false,
+  warm = false,
   paused,
   forceMute = false,
   onTap,
@@ -723,6 +735,7 @@ function VideoMedia({
   post: FeedPost;
   isActive: boolean;
   preload?: boolean;
+  warm?: boolean;
   paused: boolean;
   forceMute?: boolean;
   onTap?: () => void;
@@ -732,12 +745,14 @@ function VideoMedia({
   return (
     <DropVideoView
       url={post.media_url!}
+      poster={post.cover_url ?? null}
       effects={post.effects}
       filters={post.filters}
       textLayers={post.text_layers}
       stickers={post.stickers}
       isActive={isActive}
       preload={preload}
+      warm={warm}
       paused={paused}
       showProgress
       showMute
@@ -1309,10 +1324,14 @@ function areEqualProps(prev: Props, next: Props): boolean {
 
   if (!samePost(prev.post, next.post)) return false;
 
-  // These five drive the video surface and the layout, so they must be exact.
+  // These drive the video surface and the layout, so they must be exact.
+  // `warm` belongs here for the same reason as `preload`: it decides whether
+  // the player fetches a source, and a memo that ignored it would leave the
+  // two-ahead item permanently cold.
   return (
     prev.isActive === next.isActive &&
     prev.preload === next.preload &&
+    prev.warm === next.warm &&
     prev.height === next.height &&
     prev.contentTop === next.contentTop &&
     prev.contentBottom === next.contentBottom

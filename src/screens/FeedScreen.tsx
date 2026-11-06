@@ -21,6 +21,7 @@ import LogoHeader from '../components/LogoHeader';
 import { TOP_INSET, useInsets } from '../utils/useInsets';
 import DropCountdown from '../components/DropCountdown';
 import Icon, { IconName } from '../components/ui/Icon';
+import VideoLoader from '../components/ui/VideoLoader';
 import VerifiedBadge from '../components/ui/VerifiedBadge';
 import Avatar from '../components/Avatar';
 import Button from '../components/Button';
@@ -71,6 +72,10 @@ type FeedPostRow = {
   media_url: string | null;
   media_type: 'video' | 'image' | null;
   media_items: { url: string; type: string }[] | null;
+  /** cover frame for a video post — what the cell shows while the video
+   *  fetches, instead of black. Present on the row already (`select('*')`);
+   *  it was simply never typed or passed down. */
+  cover_url: string | null;
   content: string | null;
   audio: string | null;
   sound: string | null;
@@ -209,6 +214,20 @@ export default function FeedScreen({
   });
   // No spinner when we already have something real to show.
   const [loading, setLoading] = useState(posts.length === 0);
+  // The boot loader must be able to give up. `loading` is cleared on every
+  // path in load() we know about, but if one of them ever throws before
+  // setLoading(false) the ring would sit there forever — a spinner as the
+  // last word is worse than the empty state it replaced. After 12s the
+  // normal empty state takes over regardless.
+  const [bootExpired, setBootExpired] = useState(false);
+  useEffect(() => {
+    if (!loading || posts.length > 0) {
+      setBootExpired(false);
+      return;
+    }
+    const t = setTimeout(() => setBootExpired(true), 12000);
+    return () => clearTimeout(t);
+  }, [loading, posts.length]);
   const [refreshing, setRefreshing] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [commentPost, setCommentPost] = useState<FeedPostFull | null>(null);
@@ -1358,7 +1377,14 @@ export default function FeedScreen({
         <FeedPost
           post={item}
           isActive={!swiping && index === effectiveIndex}
+          // The next page loads fully (muted, buffering). The one after that
+          // is only "warmed": its source is prepared so ExoPlayer pulls the
+          // opening segment, but it never plays, so it holds no decoder.
+          // Together they turn a cold network fetch into a near-instant start
+          // without ever having three videos decoding at once — which is what
+          // breaks on phones with two hardware decoder slots.
           preload={index === effectiveIndex + 1}
+          warm={index === effectiveIndex + 2}
       height={height}
       contentTop={feedTop}
       contentBottom={feedBottom}
@@ -1857,6 +1883,16 @@ export default function FeedScreen({
           getItemLayout={(_, index) => ({ length: height, offset: height * index, index })}
           windowSize={5}
           ListEmptyComponent={
+            // Cold start used to show the empty state — "nothing here yet,
+            // create a Drop" — for as long as the first page took to arrive,
+            // then swap to video. That reads as a broken feed, and it is the
+            // moment the app is slowest. While the first page is genuinely in
+            // flight, show the same loader the videos use instead.
+            loading && posts.length === 0 && !bootExpired ? (
+              <View style={[styles.bootWrap, { height }]}>
+                <VideoLoader />
+              </View>
+            ) : (
             <View style={[styles.emptyBox, { paddingTop: feedTop + 30 }]}>
               {mode === 'following' && (
                 <View style={styles.emptyIconWrap}>
@@ -1881,6 +1917,7 @@ export default function FeedScreen({
                 <Text style={styles.emptyExploreText}>Find people and live Drops in Explore</Text>
               </Pressable>
             </View>
+            )
           }
         />
       )}
@@ -2183,6 +2220,12 @@ function FeedPrefsModal({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
+  // first-page boot: the same loader the videos use, at full height so the
+  // ring sits where the first video's ring will appear
+  bootWrap: {
+    width: '100%',
+    backgroundColor: colors.bg,
+  },
   topScrim: {
     position: 'absolute',
     top: 0,

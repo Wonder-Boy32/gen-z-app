@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+﻿import React, { useEffect, useRef, useState } from 'react';
+import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { colors } from '../theme';
 import Icon from './ui/Icon';
+import VideoLoader from './ui/VideoLoader';
 import { getFilterGlow, getFilterTint } from './create/FilterCarousel';
 
 // ============================================================
@@ -61,6 +62,11 @@ type Props = {
    *  played MUTED ahead of time so that when it becomes active the video is
    *  already buffered and starts instantly */
   preload?: boolean;
+  /** true for the item two pages ahead: fetch its bytes but never take a
+   *  decoder to render them. See the note on `warm` in the component. */
+  warm?: boolean;
+  /** the post's cover image — held on screen until the first frame paints */
+  poster?: string | null;
   paused?: boolean;
   showProgress?: boolean;
   showMute?: boolean;
@@ -83,6 +89,8 @@ export default function DropVideoView({
   stickers,
   isActive = true,
   preload = false,
+  warm = false,
+  poster = null,
   paused = false,
   showProgress = false,
   showMute = true,
@@ -113,7 +121,104 @@ export default function DropVideoView({
   const player = useVideoPlayer(null, (p) => {
     p.loop = true;
     p.playbackRate = speed;
+    // Start-first buffer tuning.
+    //
+    // Android's default is to wait for ~2.5s of buffer before the first frame
+    // and to keep 20s ahead. For a feed of 15-30s vertical clips that is the
+    // wrong trade: it makes every swipe pay a startup delay to guarantee
+    // smoothness nobody needs. Asking for 0.75s to start (still above the
+    // stutter floor on a phone screen) and 10s ahead cuts time-to-first-frame
+    // without going back to the demuxer for a refill mid-clip.
+    //
+    // Verified against expo-video 57's own typings (BufferOptions): all four
+    // keys exist; `minBufferForPlayback` is Android-only and is ignored when
+    // `preferredForwardBufferDuration` is lower, so the two are set together
+    // and deliberately ordered (duration 10 > min 0.75).
+    try {
+      p.bufferOptions = {
+        preferredForwardBufferDuration: 10,
+        minBufferForPlayback: 0.75,
+        prioritizeTimeOverSizeThreshold: true,
+      };
+    } catch {
+      // Older native builds reject the object — the defaults still work.
+    }
   });
+
+  // ---- load state -------------------------------------------------------
+  //
+  // 'idle' | 'loading' | 'readyToPlay' | 'error', straight from the player.
+  // `ready` is what hides the loader; `error` stops it, because a spinner that
+  // never ends is the worst thing this component can do.
+  const [status, setStatus] = useState<string>('idle');
+  const [bufferP, setBufferP] = useState(0);
+  const [hidden, setHidden] = useState(false);
+  const fade = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const sub = player.addListener('statusChange', ({ status: next }: any) => {
+      setStatus(next);
+    });
+    return () => sub.remove();
+  }, [player]);
+
+  // The real buffered fraction, polled — NOT taken from timeUpdate.
+  //
+  // timeUpdate is driven by playback position, so while a clip is still
+  // fetching there is nothing to report and the events are sparse. A loader
+  // fed from them would sit at 0% and then jump to gone. bufferedPosition is
+  // a plain getter that ExoPlayer keeps current whether or not it is playing,
+  // so a 200ms tick while loading is both accurate and cheap (it stops the
+  // moment the video is ready).
+  useEffect(() => {
+    if (status === 'readyToPlay' || status === 'error' || !url) return;
+    const tick = () => {
+      const dur = player.duration;
+      const buf = player.bufferedPosition;
+      if (dur && dur > 0 && buf >= 0) setBufferP(Math.min(1, buf / dur));
+    };
+    tick();
+    const id = setInterval(tick, 200);
+    return () => clearInterval(id);
+  }, [status, url, player]);
+
+  // Fade the loader out a beat AFTER readyToPlay.
+  //
+  // ExoPlayer reports readyToPlay when it can decode, which is one frame
+  // before the first frame is actually on the surface — hiding on the event
+  // itself still shows a black flash. 140ms covers that hand-off, and the
+  // fade means the cover never disappears in one hard cut.
+  useEffect(() => {
+    if (!url) return;
+    if (status === 'error') {
+      fade.setValue(0);
+      setHidden(true);
+      return;
+    }
+    if (status !== 'readyToPlay') return;
+    const t = setTimeout(() => {
+      Animated.timing(fade, {
+        toValue: 0,
+        duration: 220,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }).start(({ finished }) => {
+        if (finished) setHidden(true);
+      });
+    }, 140);
+    return () => clearTimeout(t);
+  }, [status, url, fade]);
+
+  const retry = () => {
+    if (!url) return;
+    setHidden(false);
+    setStatus('loading');
+    setBufferP(0);
+    fade.setValue(1);
+    loadedUrlRef.current = url;
+    player.replace({ uri: url });
+    player.play();
+  };
 
   // load the source when this item is active OR is the next (preload)
   // target. If it's only being preloaded, play it MUTED so the data
@@ -122,9 +227,19 @@ export default function DropVideoView({
   // Never re-replace() a source we already loaded (that would restart it).
   useEffect(() => {
     if (!url) return;
-    if (loadedUrlRef.current !== url && (isActive || preload)) {
+    // `warm` (two pages ahead) is admitted to the same branch: replacing the
+    // source makes ExoPlayer prepare and buffer the opening segment even while
+    // paused. It fetches bytes without holding a decoder to paint them, which
+    // is what keeps a third simultaneous decoder from being allocated on the
+    // phones that only have two.
+    if (loadedUrlRef.current !== url && (isActive || preload || warm)) {
       loadedUrlRef.current = url;
       player.replace({ uri: url });
+      // a fresh source means the old load state is meaningless
+      setHidden(false);
+      setStatus('loading');
+      setBufferP(0);
+      fade.setValue(1);
     }
     if (!isActive && !preload) {
       player.pause();
@@ -133,7 +248,7 @@ export default function DropVideoView({
       player.muted = true;
       player.play();
     }
-  }, [isActive, preload, url, player]);
+  }, [isActive, preload, warm, url, player, fade]);
 
   // trim loop + progress
   //
@@ -242,6 +357,25 @@ export default function DropVideoView({
         {effectTint && <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: effectTint }]} />}
         {filterTint && <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: filterTint }]} />}
         {filterGlow && <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: filterGlow }]} />}
+
+        {/* Loader sits ABOVE the video surface on purpose. On Android the
+            surface is opaque, so a cover image behind it would be invisible
+            the moment the surface exists — which is exactly when it is black.
+            Above it, the cover is what you see until the first frame paints. */}
+        {!hidden && (
+          <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity: fade }]}>
+            <VideoLoader progress={bufferP} poster={poster} />
+          </Animated.View>
+        )}
+
+        {/* A spinner must never be the last word. If the source genuinely
+            failed, say so and make the retry a tap. */}
+        {status === 'error' && (
+          <Pressable style={styles.errorWrap} onPress={retry} hitSlop={12}>
+            <Icon name="refresh" size={22} color={colors.logoWhite} />
+            <Text style={styles.errorText}>Tap to retry</Text>
+          </Pressable>
+        )}
       </View>
 
       {onTap && (
@@ -330,5 +464,21 @@ const styles = StyleSheet.create({
   },
   muteText: {
     fontSize: 16,
+  },
+  errorWrap: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(6,7,15,0.55)',
+  },
+  errorText: {
+    color: colors.logoWhite,
+    fontSize: 13,
+    fontWeight: '600',
   },
 });
