@@ -29,6 +29,7 @@ import Button from '../components/Button';
 import Draggable from '../components/create/Draggable';
 import MediaPickerSheet from '../components/create/MediaPickerSheet';
 import SoundPickerModal from '../components/create/SoundPickerModal';
+import SoundTrack from '../components/SoundTrack';
 import FilterCarousel, { getFilterLabel, getFilterTint } from '../components/create/FilterCarousel';
 import StickerPicker from '../components/create/StickerPicker';
 import TextLayerEditor, { TextLayer } from '../components/create/TextLayerEditor';
@@ -800,6 +801,34 @@ export default function CreateDropScreen({
     p.playbackRate = 1;
   });
 
+  // Is the picked video actually running right now?
+  //
+  // Needed because the chosen sound has to start and stop with it. Subscribed
+  // rather than polled: this fires on transitions only, so it never re-renders
+  // the editor while a clip is playing.
+  const [videoPlaying, setVideoPlaying] = useState(false);
+  useEffect(() => {
+    if (!player) return;
+    const sub = player.addListener('playingChange', (e: any) => setVideoPlaying(!!e.isPlaying));
+    return () => sub.remove();
+  }, [player]);
+
+  // A chosen sound REPLACES the video's own audio — here, not only after
+  // publishing.
+  //
+  // This was the reported bug: you pick a sound, hit play to check it, and
+  // hear the original TikTok audio instead. The preview drew a bare <VideoView>
+  // and nothing ever muted it, so the chosen track was invisible until the post
+  // reached the feed. Silencing the video the moment a sound exists makes what
+  // you hear while editing the same thing you will hear after.
+  useEffect(() => {
+    try {
+      player.muted = !!sound?.url;
+    } catch {
+      // player disposed mid-swap
+    }
+  }, [player, sound?.url]);
+
   // trim loop — seek back to trimStart when the playhead crosses trimEnd
   useEffect(() => {
     if (!player) return;
@@ -1281,30 +1310,40 @@ export default function CreateDropScreen({
       row.audio = sound?.name ?? null; // feed chip + audio mode read `audio`
       row.sound_artist = sound?.artist ?? null;
       row.sound_url = sound?.url ?? null;
-      row.sound_start = sound?.start ?? 0;
-      // Cap the sound to the length of the video.
+      // The sound window, stored in seconds.
       //
-      // The feed loops the sound inside [sound_start, sound_end] with its own
-      // effect, independently of the video's native loop=true. Two independent
-      // loops that cover different spans restart at different moments, so the
-      // sound and the picture drift apart and the seam between passes lands
-      // somewhere different each time. Trimming the sound to the video's own
-      // length keeps the two spans equal, which is what makes them stay in step.
+      // The feed plays [sound_start, sound_end] and wraps back to the start when
+      // it gets there, so the sound covers the whole video however long the post
+      // runs.
       //
-      // expo-image-picker reports video duration in MILLISECONDS; sound_end is
-      // stored in seconds. assets[0] is the video (assets[0] is the only asset
-      // that reaches processDropVideo, and video posts are single-asset).
+      // This window is a property of the TRACK, not of the video, and that is
+      // the fix: it used to be capped to the video's length. A cue picked at
+      // 0:20 for a 12s clip was reset to 0:00, and a 30s window on a 12s clip
+      // became 0–12. Picking "the exact part of the song" silently turned into
+      // "pick from the top" — which is exactly what was reported. Where in the
+      // song you start has nothing to do with how long your clip is.
+      //
+      // Only the stored value's playability is checked here: start >= 0, end
+      // after start, and a window too short to hear is widened to the rest of
+      // the track instead of looping every fifth of a second. Clamping to the
+      // REAL file length cannot happen here — the file has not been measured at
+      // this point, and the length changes when the picker re-trims — so it
+       // lives in SoundTrack, which does measure it.
+       //
+       // The old cap existed to keep the sound's loop and the video's loop on the
+       // same span. That trade was the wrong way round: it bought a seam that
+       // only lined up when the window happened to equal the clip length, and it
+       // paid for that with the cue the user picked. The sound is a bed under the
+       // picture, so a periodic seam of its own is acceptable; losing the chosen
+       // part of the song is not.
+       const round1 = (n: number) => Math.round(n * 10) / 10;
       if (sound) {
-        const rawDur = assets[0]?.duration;
-        const videoSec = typeof rawDur === 'number' && rawDur > 0 ? rawDur / 1000 : null;
-        const wantedEnd = sound.end ?? null;
-        row.sound_end =
-          videoSec == null
-            ? wantedEnd
-            : wantedEnd == null
-              ? videoSec
-              : Math.min(wantedEnd, videoSec);
+        const s = Math.max(0, sound.start ?? 0);
+        const e = sound.end != null && sound.end - s >= 0.5 ? sound.end : null;
+        row.sound_start = round1(s);
+        row.sound_end = e == null ? null : round1(e);
       } else {
+        row.sound_start = 0;
         row.sound_end = null;
       }
       row.visibility = visibility;
@@ -2619,6 +2658,16 @@ export default function CreateDropScreen({
         onClose={() => setPickerOpen(false)}
         onPicked={(a) => setAssets(a)}
       />
+      {/* The chosen sound, playing over the video you are editing — the same
+          component the feed uses, so the window and the loop behave identically
+          before and after publishing. Renders nothing. */}
+      <SoundTrack
+        url={sound?.url ?? null}
+        start={sound?.start ?? 0}
+        end={sound?.end ?? null}
+        active={!!sound?.url && videoPlaying}
+      />
+
       <SoundPickerModal
         visible={soundOpen}
         onClose={() => setSoundOpen(false)}

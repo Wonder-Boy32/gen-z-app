@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+﻿import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -15,7 +15,7 @@ import {
   ViewToken,
 } from 'react-native';
 import DropVideoView, { DropEffects, DropSticker, DropTextLayer } from './DropVideoView';
-import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
+import SoundTrack from './SoundTrack';
 import { colors, shadows, getThemeEpoch } from '../theme';
 import Avatar from './Avatar';
 import VerifiedBadge from './ui/VerifiedBadge';
@@ -168,9 +168,8 @@ function FeedPostInner({
   // (only FeedPostInner is memoized). That render work competes with video
   // decode and shows up as the picture breaking up.
   //
-  // All of that logic now lives in <SoundTrackSync>, mounted below.
+  // All of that logic now lives in <SoundTrack>, mounted below.
   const soundUrl = post.sound_url;
-  const soundPlayer = useAudioPlayer(soundUrl ?? null);
   const soundActive = isActive && !holdPause && !tapPaused && !!post.sound_url;
 
   // creator interaction toggles (missing flag = allowed, for older posts)
@@ -229,13 +228,12 @@ function FeedPostInner({
     <View style={[styles.post, { height }]}>
       {/* Plays the attached sound. Deliberately its own component so its
           high-frequency status ticks re-render only itself — never the video
-          surface below. SoundTrackSync carries the full reasoning. */}
+          surface below. SoundTrack carries the full reasoning. */}
       {soundUrl ? (
-        <SoundTrackSync
-          player={soundPlayer}
+        <SoundTrack
+          url={soundUrl}
           start={post.sound_start ?? 0}
           end={post.sound_end ?? null}
-          url={soundUrl}
           active={soundActive}
         />
       ) : null}
@@ -642,83 +640,6 @@ function MediaArea({
       <Text style={[styles.textPostContent, post.text_color ? { color: post.text_color } : null]}>{post.content}</Text>
     </View>
   );
-}
-
-/**
- * SoundTrackSync — plays a post's attached sound. Renders null.
- *
- * It is a component ONLY so that useAudioPlayerStatus() lives here instead of
- * inside FeedPostInner.
- *
- * useAudioPlayerStatus() hands back a fresh status object continuously while
- * audio plays (currentTime ticks). Reading it in FeedPostInner re-rendered that
- * entire component on every tick, and its subtree contains the video surface:
- * VideoMedia and DropVideoView are plain function components, so the re-render
- * reached the native player and competed with video decode for the JS thread —
- * which is what "the picture breaking up" is. FeedPostInner is memoized, but
- * that does not help when the thing re-rendering it is its OWN hook.
- *
- * This only ever happened on posts WITH a sound attached, since a silent player
- * produces no ticks — which is exactly the reported symptom: "after I added a
- * sound the picture cracks".
- *
- * Keeping the subscription one component deeper means a tick re-renders this
- * null component alone. The video surface is never touched.
- */
-function SoundTrackSync({
-  player,
-  start,
-  end,
-  url,
-  active,
-}: {
-  player: ReturnType<typeof useAudioPlayer>;
-  start: number;
-  end: number | null;
-  url: string | null;
-  active: boolean;
-}) {
-  const status = useAudioPlayerStatus(player);
-
-  // Start / stop with the post's active state. Re-arms at the clip start when
-  // this post comes back into view.
-  useEffect(() => {
-    if (active) {
-      const ct = status.currentTime;
-      if (ct < start || (end != null && ct >= end)) player.seekTo(start);
-      player.play();
-    } else {
-      player.pause();
-    }
-    // status.currentTime is READ but deliberately not tracked: depending on it
-    // would re-seek on every tick. Mirrors the dependency list this code had
-    // before it moved here.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, start, end, url, player]);
-
-  // Loop the attached sound in step with the video.
-  //
-  // Two bugs lived here. First, it pause()d at the trimmed end and never
-  // resumed, so an added sound played exactly once and then went silent while
-  // the video (loop = true) kept repeating. Second, there was no guard:
-  // `playing` stays true for a tick or two after pause(), so inside the
-  // [end-0.15, end] window the effect could pause+seek on consecutive status
-  // updates — which is audible as crackle and burns the JS thread that video
-  // decode needs. The ref makes it fire once per pass.
-  const loopedRef = useRef(false);
-  useEffect(() => {
-    if (end == null) return;
-    const atEnd = status.currentTime >= end - 0.15;
-    if (status.playing && atEnd && !loopedRef.current) {
-      loopedRef.current = true;
-      player.seekTo(start);
-      player.play();
-    } else if (!atEnd) {
-      loopedRef.current = false;
-    }
-  }, [status.currentTime, status.playing, end, start, player]);
-
-  return null;
 }
 
 function VideoMedia({

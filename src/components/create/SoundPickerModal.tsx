@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+﻿import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -99,6 +99,17 @@ const fmt = (s: number) => {
   return `${m}:${String(sec).padStart(2, '0')}`;
 };
 
+/** the same clock, with tenths — a trim point is worth being exact about */
+const fmtPrecise = (s: number) => {
+  const safe = Math.max(0, s);
+  const m = Math.floor(safe / 60);
+  const sec = safe % 60;
+  return `${m}:${sec.toFixed(1).padStart(4, '0')}`;
+};
+
+/** shortest window the handles will allow, in seconds */
+const MIN_WINDOW = 0.5;
+
 export default function SoundPickerModal({ visible, onClose, onSelect, initial }: Props) {
   const insets = useInsets();
 
@@ -144,6 +155,15 @@ export default function SoundPickerModal({ visible, onClose, onSelect, initial }
   const trimEndRef = useRef(30);
   const durationRef = useRef(30);
   const barWRef = useRef(0);
+  // Where the trim bar starts on SCREEN, not inside its parent.
+  //
+  // The pan used to divide the finger's page X by the bar width, which silently
+  // assumed the bar began at x=0. It does not — the sheet has 18px of padding —
+  // so every trim point was shifted right by that margin, and the first ~1.5
+  // seconds of a track could not be selected at all. That is the "I can't put
+  // it exactly where I want" half of the bug.
+  const barXRef = useRef(0);
+  const trackRef = useRef<View | null>(null);
   const durRef = useRef(0);
   const setTrimStartBoth = useCallback((v: number) => {
     trimStartRef.current = v;
@@ -154,15 +174,36 @@ export default function SoundPickerModal({ visible, onClose, onSelect, initial }
     setTrimEnd(v);
   }, []);
 
-  // preview duration once the player loads
+  // The track's real length, once the preview has measured it.
+  //
+  // Everything below used to assume 30s. A window that reaches past the real
+  // end is not a cosmetic problem: the preview stops at the file end, and the
+  // saved `sound_end` pointed past the audio, so on a post the loop could
+  // never fire and the sound went silent while the video kept playing. Measure
+  // once, then clamp what is already on screen to what actually exists.
+  const [trackDur, setTrackDur] = useState(0);
+  // true once the window came from somewhere other than this modal's default —
+  // a saved re-trim, or the user dragging a handle.
+  const touchedRef = useRef(false);
+
   useEffect(() => {
-    if (status.duration > 0) {
-      durationRef.current = status.duration;
-      if (!selected && durRef.current !== status.duration) {
-        durRef.current = status.duration;
-      }
+    const d = status.duration;
+    if (!(d > 0)) return;
+    durationRef.current = d;
+    setTrackDur(d);
+    if (!touchedRef.current) {
+      // a fresh pick: the default window is the whole track
+      setTrimStartBoth(0);
+      setTrimEndBoth(d);
+      return;
     }
-  }, [status.duration, selected]);
+    // an existing window: keep it, but not past the end of this file
+    if (trimEndRef.current > d - 0.05) setTrimEndBoth(d);
+    if (trimStartRef.current > Math.max(0, d - 0.5)) {
+      setTrimStartBoth(Math.max(0, d - 0.5));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status.duration]);
 
   // ---------- data ----------
   useEffect(() => {
@@ -315,7 +356,10 @@ export default function SoundPickerModal({ visible, onClose, onSelect, initial }
     setSelected(t);
     setPlayingUrl(t.url);
     setTrimStartBoth(0);
-    setTrimEndBoth(30);
+    // 0 = "the whole track", resolved to the measured length a moment later.
+    // Defaulting to a hard 30s cut the tail off every longer song.
+    setTrimEndBoth(0);
+    touchedRef.current = false;
   };
 
   // if reopening to re-trim, apply saved window after the preview loads
@@ -323,8 +367,11 @@ export default function SoundPickerModal({ visible, onClose, onSelect, initial }
   const applyInitial = (t: Track) => {
     if (initial && initial.id === t.id && !initialApplied) {
       setTrimStartBoth(initial.start);
-      setTrimEndBoth(initial.end > initial.start ? initial.end : 30);
+      setTrimEndBoth(initial.end > initial.start ? initial.end : 0);
       setInitialApplied(true);
+      // the window came from the user's earlier trim — do not replace it with
+      // the full track when the duration arrives
+      touchedRef.current = true;
     }
   };
 
@@ -356,6 +403,14 @@ export default function SoundPickerModal({ visible, onClose, onSelect, initial }
     }
   };
 
+  // Audition the window you just set, from its start. Dragging used to be
+  // silent, so "pick the exact moment" meant guess-and-close.
+  const audition = () => {
+    if (!selected?.url) return;
+    player.seekTo(trimStartRef.current);
+    player.play();
+  };
+
   const mkHandle = (which: 'start' | 'end') =>
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -363,16 +418,28 @@ export default function SoundPickerModal({ visible, onClose, onSelect, initial }
       onPanResponderMove: (_e, g) => {
         const w = barWRef.current;
         if (!w) return;
-        const f = Math.min(1, Math.max(0, g.moveX / w));
+        touchedRef.current = true;
+        // page X minus the bar's own page X — the finger is ON the bar
+        const f = Math.min(1, Math.max(0, (g.moveX - barXRef.current) / w));
         const dur = durationRef.current || 30;
+        // tenth-of-a-second snapping. Whole seconds were all this could
+        // express before, so the exact beat you wanted was often one press
+        // away on either side of where it saved.
+        const at = Math.round(f * dur * 10) / 10;
         if (which === 'start') {
-          const max = trimEndRef.current - 2;
-          setTrimStartBoth(Math.min(max, Math.max(0, f * dur)));
+          const end = trimEndRef.current || dur;
+          const max = Math.max(0, end - MIN_WINDOW);
+          setTrimStartBoth(Math.min(max, Math.max(0, at)));
         } else {
-          const min = trimStartRef.current + 2;
-          setTrimEndBoth(Math.max(min, Math.min(dur, f * dur)));
+          const min = trimStartRef.current + MIN_WINDOW;
+          setTrimEndBoth(Math.max(min, Math.min(dur, at)));
         }
       },
+      // Let go and hear it: the window you just framed plays from its start,
+      // and stops itself at its end (the effect above), so the cue is confirmed
+      // by ear instead of by arithmetic.
+      onPanResponderRelease: () => audition(),
+      onPanResponderTerminate: () => audition(),
     });
 
   const startPan = useRef(mkHandle('start')).current;
@@ -380,18 +447,27 @@ export default function SoundPickerModal({ visible, onClose, onSelect, initial }
 
   const useIt = () => {
     if (!selected) return;
+    const dur = durationRef.current || trimEndRef.current || 30;
+    const end = trimEndRef.current > 0 ? Math.min(trimEndRef.current, dur) : dur;
     onSelect({
       id: selected.id,
       name: selected.name,
       artist: selected.artist || null,
       url: selected.url,
-      start: Math.round(trimStartRef.current),
-      end: Math.round(trimEndRef.current),
+      // tenths, not whole seconds — this value is what the post loops on
+      start: Math.round(Math.max(0, Math.min(trimStartRef.current, end - MIN_WINDOW)) * 10) / 10,
+      end: Math.round(end * 10) / 10,
     });
     setSelected(null);
     setPlayingUrl(null);
     onClose();
   };
+
+  // The window shown and saved. `trimEnd` is 0 until the file has been
+  // measured (or when the user has not touched a handle yet), meaning "the
+  // whole track" — not a 30s guess that cuts the tail off longer songs.
+  const effEnd = trimEnd > 0 ? trimEnd : trackDur || 30;
+  const durDen = durationRef.current || trackDur || 30;
 
   const shown =
     tab === 'trending' ? trending : tab === 'favorites' ? Object.values(favs) : results;
@@ -553,9 +629,16 @@ export default function SoundPickerModal({ visible, onClose, onSelect, initial }
               </Pressable>
 
               <View
+                ref={trackRef}
                 style={styles.trackWrap}
                 onLayout={(e) => {
                   barWRef.current = e.nativeEvent.layout.width;
+                  // measureInWindow, not layout.x: layout.x is relative to the
+                  // parent, and the pan needs page coordinates.
+                  trackRef.current?.measureInWindow?.((x, _y, w) => {
+                    if (typeof x === 'number') barXRef.current = x;
+                    if (typeof w === 'number' && w > 0) barWRef.current = w;
+                  });
                 }}
               >
                 <View style={styles.track} />
@@ -563,19 +646,19 @@ export default function SoundPickerModal({ visible, onClose, onSelect, initial }
                   style={[
                     styles.trackSel,
                     {
-                      left: (trimStart / (durationRef.current || 30)) * barWRef.current,
-                      width: ((trimEnd - trimStart) / (durationRef.current || 30)) * barWRef.current,
+                      left: (trimStart / durDen) * barWRef.current,
+                      width: (Math.max(0, effEnd - trimStart) / durDen) * barWRef.current,
                     },
                   ]}
                 />
                 <View
-                  style={[styles.trimHandle, { left: (trimStart / (durationRef.current || 30)) * barWRef.current - 10 }]}
+                  style={[styles.trimHandle, { left: (trimStart / durDen) * barWRef.current - 10 }]}
                   {...startPan.panHandlers}
                 >
                   <View style={styles.handleDot} />
                 </View>
                 <View
-                  style={[styles.trimHandle, { left: (trimEnd / (durationRef.current || 30)) * barWRef.current - 10 }]}
+                  style={[styles.trimHandle, { left: (effEnd / durDen) * barWRef.current - 10 }]}
                   {...endPan.panHandlers}
                 >
                   <View style={styles.handleDot} />
@@ -583,11 +666,13 @@ export default function SoundPickerModal({ visible, onClose, onSelect, initial }
               </View>
 
               <View style={styles.trimLabels}>
-                <Text style={styles.trimLabel}>{fmt(trimStart)}</Text>
-                <Text style={styles.trimLabel}>{fmt(trimEnd)}</Text>
+                <Text style={styles.trimLabel}>starts {fmtPrecise(trimStart)}</Text>
+                <Text style={styles.trimLabel}>ends {fmtPrecise(effEnd)}</Text>
               </View>
               <Text style={styles.trimHint}>
-                Drag the handles to choose where the sound plays. Duration: {fmt(Math.max(0, trimEnd - trimStart))}
+                Drag the handles to pick the exact moment. This window plays for{' '}
+                {fmtPrecise(Math.max(0, effEnd - trimStart))}
+                {trackDur > 0 ? ` of ${fmt(trackDur)}` : ''}, then loops for as long as your video runs.
               </Text>
 
               <Pressable style={styles.useBtn} onPress={useIt}>
