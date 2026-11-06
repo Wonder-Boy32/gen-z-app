@@ -63,9 +63,11 @@ type Props = {
   tab: DockTab;
   onChange: (t: DockTab) => void;
   badges?: Partial<Record<DockTab, number>>;
+  /** there is saved work waiting on the create tab */
+  hasDraft?: boolean;
 };
 
-export default function NeonDock({ tab, onChange, badges }: Props) {
+export default function NeonDock({ tab, onChange, badges, hasDraft }: Props) {
   const [w, setW] = useState(0);
   const inner = Math.max(0, w - PAD_X * 2);
   const path = useMemo(() => (inner > 200 ? capsulePath(inner) : ''), [inner]);
@@ -148,6 +150,10 @@ export default function NeonDock({ tab, onChange, badges }: Props) {
         accessibilityState={{ selected: tab === 'post' }}
         accessibilityLabel="Create a Drop"
       >
+        {/* Saved work waiting behind this button. A dot rather than a count:
+            there is one draft, and "2" would suggest a queue. Hidden while you
+            are already on the create tab — you can see the draft itself there. */}
+        {hasDraft && tab !== 'post' && <View style={styles.draftDot} />}
         <Svg width={40} height={24} viewBox="0 0 40 24">
           <Defs>
             <LinearGradient id="inf" x1="0" y1="0" x2="1" y2="1">
@@ -173,6 +179,17 @@ const styles = StyleSheet.create({
   wrap: { height: HEIGHT, marginTop: -14, marginHorizontal: 6, justifyContent: 'flex-end' },
   hit: { position: 'absolute', width: WELL_R * 2, height: WELL_R * 2, alignItems: 'center', justifyContent: 'center' },
   center: { position: 'absolute', width: CENTER_R * 2, height: CENTER_R * 2, alignItems: 'center', justifyContent: 'center' },
+  draftDot: {
+    position: 'absolute',
+    top: 4,
+    right: 8,
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: '#FFB24B',
+    borderWidth: 1.5,
+    borderColor: '#07061A',
+  },
   badge: {
     position: 'absolute',
     top: -2,

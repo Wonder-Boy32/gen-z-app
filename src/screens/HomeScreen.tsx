@@ -15,11 +15,14 @@ import UploadBar from '../components/ui/UploadBar';
 import { colors } from '../theme';
 import { useAndroidBack } from '../utils/useAndroidBack';
 import { useUploads } from '../utils/uploadManager';
+import { useHasDraft } from '../utils/draftStore';
 
 export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySignal?: number }) {
   const [tab, setTab] = useState<Tab>('feed');
   const [feedKey, setFeedKey] = useState(0);
   const [chatUnread, setChatUnread] = useState(0);
+  // saved create work, so the + button can say so from any tab
+  const hasDraft = useHasDraft();
 
   // The dock is a navigation surface, not furniture: while a keyboard is up it
   // has no business occupying the bottom of the screen, and on a short phone it
@@ -189,8 +192,10 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
           onJoinDrop={() => setTab('post')}
         />
       </View>
-      {/* the create tab stays lazy-mounted (camera/audio init) — it keeps its
-          draft while open, and remounts fresh when reopened */}
+      {/* the create tab stays lazy-mounted (camera/audio init). It unmounts on
+          tab switch, so the draft is not held in component state: CreateDropScreen
+          flushes to AsyncStorage before it dies (debounce / app-background /
+          unmount / ✕) and hydrates back from it on the next mount. */}
       {tab === 'post' && (
         <CreateDropScreen
           onPosted={handlePosted}
@@ -222,7 +227,12 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
 
       {/* unread badge hidden while you're already in the Chat tab (WhatsApp style) */}
       {!keyboardUp && (
-        <NeonDock tab={tab} onChange={setTab} badges={{ chat: tab === 'chat' ? 0 : chatUnread }} />
+        <NeonDock
+          tab={tab}
+          onChange={setTab}
+          badges={{ chat: tab === 'chat' ? 0 : chatUnread }}
+          hasDraft={hasDraft}
+        />
       )}
 
       {/* Explore: the Drop banner, Create, Invite and people suggestions that

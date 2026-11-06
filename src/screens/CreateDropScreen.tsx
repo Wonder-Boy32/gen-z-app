@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Animated,
+  AppState,
   Image,
   KeyboardAvoidingView,
   Modal,
@@ -39,6 +40,14 @@ import { uploadMediaWithProgress } from '../utils/upload';
 import { startUploadJob, type UploadReport } from '../utils/uploadManager';
 import { extractVideoCover, hasNativeFFmpeg, processDropVideo } from '../utils/videoProcessor';
 import { useAndroidBack } from '../utils/useAndroidBack';
+import {
+  adoptDraft,
+  clearDraft,
+  draftAge,
+  hydrateDraft,
+  writeDraft,
+  type Draft,
+} from '../utils/draftStore';
 
 // ============================================================
 // GEN Z — ADVANCED UPLOAD / CREATE
@@ -737,8 +746,27 @@ export default function CreateDropScreen({
   const [textLayerOpen, setTextLayerOpen] = useState(false);
   const [stickerOpen, setStickerOpen] = useState(false);
   const [photoEditorOpen, setPhotoEditorOpen] = useState(false);
-  const [exitAsk, setExitAsk] = useState(false);
-  const [draft, setDraft] = useState<{ id: string; updated_at: string } | null>(null);
+  // The draft is no longer a "did you remember to save?" question — it is
+  // written as you work. These are the bookkeeping pieces.
+  const [draft, setDraft] = useState<Draft | null>(null);
+  /** false until the stored draft has been read: writing before that would
+   *  overwrite real work with the empty initial state */
+  const draftReadyRef = useRef(false);
+  /** the last payload written, so an unmount does not re-save identical bytes */
+  const lastSigRef = useRef('');
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** throttles the cloud mirror; the local write is on every change */
+  const cloudAtRef = useRef(0);
+  const [draftStatus, setDraftStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [draftSavedAt, setDraftSavedAt] = useState(0);
+  /** false once this component is unmounted, so the final save stops touching state */
+  const aliveRef = useRef(true);
+  useEffect(
+    () => () => {
+      aliveRef.current = false;
+    },
+    []
+  );
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hubFilter, setHubFilter] = useState<HubFilter>('For you');
@@ -941,17 +969,51 @@ export default function CreateDropScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialSound]);
 
-  // live drop fetch + draft fetch on mount
+  // live drop fetch + draft on mount
+  //
+  // The draft comes from the local store first — synchronously-ish, offline, and
+  // it is the copy the auto-save writes. The `drafts` row is only consulted when
+  // this device has none (fresh install), because a stored payload is a list of
+  // `file://` URIs that mean nothing on another phone anyway.
   useEffect(() => {
     (async () => {
+      const local = await hydrateDraft();
+      if (local) {
+        setDraft(local);
+        draftReadyRef.current = true;
+      }
+
       const [{ data: dropRows }, { data: draftRows }] = await Promise.all([
         supabase.from('drops').select('*').eq('status', 'live').order('ends_at', { ascending: true }).limit(1),
-        supabase.from('drafts').select('id, updated_at').order('updated_at', { ascending: false }).limit(1),
+        local
+          ? Promise.resolve({ data: null })
+          : supabase.from('drafts').select('updated_at, payload').order('updated_at', { ascending: false }).limit(1),
       ]);
+
       const drop = (dropRows?.[0] as Drop) ?? null;
       setLiveDrop(drop);
       setPostToDrop(!!drop);
-      setDraft((draftRows?.[0] as { id: string; updated_at: string }) ?? null);
+
+      if (!local) {
+        const row = draftRows?.[0] as { updated_at: string; payload: any } | undefined;
+        if (row?.payload) {
+          const adopted: Draft = {
+            meta: {
+              updatedAt: Date.parse(row.updated_at) || Date.now(),
+              mode: row.payload.mode === 'text' ? 'text' : 'media',
+              mediaCount: Array.isArray(row.payload.assets) ? row.payload.assets.length : 0,
+              thumb: row.payload.coverUri ?? row.payload.assets?.[0]?.uri ?? null,
+              caption: String(row.payload.caption ?? row.payload.content ?? '').slice(0, 80),
+            },
+            payload: row.payload,
+          };
+          adoptDraft(adopted);
+          setDraft(adopted);
+        }
+      }
+      // Only now may the auto-save write: before this point the state is empty
+      // and would overwrite the very draft we are about to offer.
+      draftReadyRef.current = true;
     })();
   }, []);
 
@@ -1030,19 +1092,6 @@ export default function CreateDropScreen({
     setStep('preview');
   };
 
-  const backFromEditor = () => {
-    if (hasAnyContent) setExitAsk(true);
-    else {
-      player?.pause();
-      setStep('create');
-    }
-  };
-
-  const backFromPreview = () => {
-    if (hasAnyContent) setExitAsk(true);
-    else setStep('create');
-  };
-
   // ---- drafts ----
   const draftPayload = () => ({
     mode,
@@ -1059,6 +1108,7 @@ export default function CreateDropScreen({
     rotation,
     trimStart,
     trimEnd,
+    trimActive,
     textLayers,
     stickers,
     collage,
@@ -1075,23 +1125,169 @@ export default function CreateDropScreen({
     allowMentions,
   });
 
-  const saveDraft = async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-    await supabase.from('drafts').upsert({ user_id: user.id, payload: draftPayload() }, { onConflict: 'user_id' });
-    setExitAsk(false);
-    onPosted();
+  // The save runs from timers, an AppState listener and an unmount cleanup —
+  // none of which are inside this render — so it reads the newest state through
+  // refs rather than closed-over values that would be one keystroke stale.
+  const draftPayloadRef = useRef(draftPayload);
+  draftPayloadRef.current = draftPayload;
+  const hasContentRef = useRef(false);
+  hasContentRef.current = hasAnyContent;
+  const uploadingRef = useRef(false);
+  uploadingRef.current = uploading;
+
+  /**
+   * Write the draft that is on screen right now.
+   *
+   * Called from a 1.2s idle debounce, on app background, on leaving the editor,
+   * and on unmount. It never navigates and never shows a dialog — that is the
+   * whole point: the save is not an event the user has to attend to.
+   *
+   * `quiet` skips the "Saving…/Saved" pill, for the saves that happen while
+   * nothing is on screen to show it (background, unmount).
+   */
+  const persistDraft = useCallback(
+    async (quiet = false) => {
+      if (!draftReadyRef.current) return;
+      if (uploadingRef.current) return; // the post is on its way; a draft would be resurrected
+      if (!hasContentRef.current) return; // nothing to keep
+
+      const payload = draftPayloadRef.current();
+      const sig = JSON.stringify(payload);
+      if (sig === lastSigRef.current) return;
+      lastSigRef.current = sig;
+
+      if (!quiet) setDraftStatus('saving');
+
+      const next = await writeDraft(payload, {
+        mode: payload.mode === 'text' ? 'text' : 'media',
+        mediaCount: Array.isArray(payload.assets) ? payload.assets.length : 0,
+        thumb: (payload.coverUri as string) ?? (payload.assets as any[])?.[0]?.uri ?? null,
+        caption: String(payload.caption || payload.content || '').slice(0, 80),
+      });
+
+      // The unmount save runs when this component is already gone; touching
+      // state there would be pointless.
+      if (aliveRef.current) {
+        setDraft(next);
+        if (!quiet) {
+          setDraftStatus('saved');
+          setDraftSavedAt(next.meta.updatedAt);
+        }
+      }
+
+      // Best-effort cloud mirror, throttled. The local write above is the one
+      // that matters; this keeps the `drafts` row roughly current for anything
+      // reading it server-side, and costs one request per 20s at most.
+      const now = Date.now();
+      if (now - cloudAtRef.current > 20_000) {
+        cloudAtRef.current = now;
+        void (async () => {
+          try {
+            const { data: auth } = await supabase.auth.getUser();
+            if (!auth?.user) return;
+            await supabase
+              .from('drafts')
+              .upsert({ user_id: auth.user.id, payload, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+          } catch {
+            // offline, or the table is unavailable: the local draft stands
+          }
+        })();
+      }
+    },
+    []
+  );
+
+  /** run a save right now, cancelling any pending debounce */
+  const flushDraft = useCallback(
+    (quiet = false) => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      void persistDraft(quiet);
+    },
+    [persistDraft]
+  );
+
+  // ---- when the save happens ----------------------------------------------
+  //
+  // Nothing here is a button. The four triggers below are the four ways work
+  // used to be lost:
+  //
+  //   1. you pause typing                  -> 1.2s idle debounce
+  //   2. something comes up (call, lock)   -> AppState background/inactive
+  //   3. you leave the create tab          -> unmount (the tab unmounts!)
+  //   4. you tap ✕ in the editor/preview   -> leaveDrafting()
+
+  // Leaving the editor or the preview no longer asks "save as draft?".
+  //
+  // The draft has been saved the whole time you were typing. A dialog there
+  // would be asking the user to confirm something already true, and it used to
+  // be the ONLY way work survived leaving the tab. Now it saves, and drops you
+  // on the hub where the draft is visible.
+  const leaveDrafting = () => {
+    flushDraft();
+    player?.pause();
+    setStep('hub');
   };
 
+  useEffect(() => {
+    if (!draftReadyRef.current) return;
+    if (!hasAnyContent || uploading) return;
+
+    const sig = JSON.stringify(draftPayload());
+    if (sig === lastSigRef.current) return;
+
+    setDraftStatus('saving');
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      saveTimerRef.current = null;
+      void persistDraft();
+    }, 1200);
+    // No dependency array on purpose: this has to see every state change, and
+    // the signature comparison is what makes it cheap. It is the same reason
+    // the payload is serialised here rather than in a useMemo — a dependency
+    // list that misses one of thirty fields fails silently.
+  });
+
+  useEffect(() => {
+    // A phone call, a lock, the user swiping away: Android may never run another
+    // frame, so this cannot wait for the debounce.
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'background' || next === 'inactive') flushDraft(true);
+    });
+    return () => sub.remove();
+  }, [flushDraft]);
+
+  useEffect(() => {
+    // The create tab is lazy-mounted — `{tab === 'post' && <CreateDropScreen/>}`
+    // — so switching tabs UNMOUNTS this whole component. Without this cleanup the
+    // draft would be gone at exactly the moment the user glanced away.
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      void persistDraft(true);
+    };
+    // persistDraft is stable and reads live state through refs
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const loadDraft = async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-    const { data } = await supabase.from('drafts').select('payload').eq('id', draft?.id).maybeSingle();
-    const p = data?.payload as any;
+    // Local first: it is the copy the auto-save keeps current. Fall back to the
+    // stored row only if this device has nothing.
+    const local = draft ?? (await hydrateDraft());
+    let p: any = local?.payload ?? null;
+    if (!p) {
+      const { data } = await supabase
+        .from('drafts')
+        .select('payload')
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      p = (data?.payload as any) ?? null;
+    }
     if (!p) return;
     setMode(p.mode ?? 'media');
     setAssets((p.assets ?? []).map((a: any) => ({ uri: a.uri, mimeType: a.mimeType, fileName: a.fileName, width: a.width, height: a.height })));
@@ -1121,17 +1317,42 @@ export default function CreateDropScreen({
     setAllowReposts(p.allowReposts ?? true);
     setAllowDownloads(p.allowDownloads ?? true);
     setAllowMentions(p.allowMentions ?? true);
-    setDraft(null);
+    setTrimActive(!!p.trimActive);
+
+    // The draft stays in the store while it is being worked on — it IS the work.
+    // Resuming used to clear it, which made the banner vanish and the dock dot
+    // go out the moment you picked a draft back up.
+    draftReadyRef.current = true;
+    // Land on the create step, not the hub: a resumed draft that leaves you on a
+    // menu looks like it did not load. Not the editor either — its trim range is
+    // taken from the video's duration, which has not been measured yet at this
+    // point, so opening there could restore a window the file cannot reach.
+    setStep('create');
+    if (local) setDraft(local);
+    setDraftStatus('saved');
+    setDraftSavedAt(local?.meta.updatedAt ?? Date.now());
   };
 
   const discardDraft = async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (user && draft) await supabase.from('drafts').delete().eq('id', draft.id);
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    // Tell the auto-save to stand down BEFORE resetAll() empties the state, or
+    // the empty state itself becomes the next save.
+    draftReadyRef.current = false;
+    lastSigRef.current = '';
+    await clearDraft();
     setDraft(null);
-    setExitAsk(false);
+    setDraftStatus('idle');
     resetAll();
+    try {
+      const { data: auth } = await supabase.auth.getUser();
+      if (auth?.user) await supabase.from('drafts').delete().eq('user_id', auth.user.id);
+    } catch {
+      // the local copy is gone, which is what the user asked for
+    }
+    draftReadyRef.current = true;
   };
 
   // ---- publish ----
@@ -1380,7 +1601,13 @@ export default function CreateDropScreen({
       if (err) throw new Error(err.message);
       report(1);
 
-      // clean up the draft (if any) — the drop is live now
+      // The work is a post now, so it stops being a draft — locally AND in the
+      // mirror. This also stands the auto-save down: without the flag the
+      // unmount cleanup would write the draft straight back, and the user would
+      // see a banner for a drop they just published.
+      draftReadyRef.current = false;
+      lastSigRef.current = '';
+      await clearDraft();
       await supabase.from('drafts').delete().eq('user_id', user.id);
 
       // No 'live' step and no animation any more: this screen is already gone and
@@ -1576,6 +1803,22 @@ export default function CreateDropScreen({
     return `${m}:${String(sec).padStart(2, '0')}`;
   };
 
+  // "Saving…" / "Saved just now" — shown in the header of each working step.
+  // The save is automatic, so it says so quietly; it is a status, not a button.
+  const draftChip =
+    hasAnyContent && draftStatus !== 'idle' ? (
+      <View style={styles.draftChip}>
+        <Icon
+          name={draftStatus === 'saving' ? 'cloud-upload-outline' : 'checkmark-circle'}
+          size={11}
+          color={draftStatus === 'saving' ? colors.textMuted : colors.accent}
+        />
+        <Text style={styles.draftChipText}>
+          {draftStatus === 'saving' ? 'Saving draft…' : `Draft saved · ${draftAge(draftSavedAt)}`}
+        </Text>
+      </View>
+    ) : null;
+
   return (
     <View style={styles.container}>
       {step === 'hub' && (
@@ -1659,7 +1902,9 @@ export default function CreateDropScreen({
               </View>
               <Text style={styles.hbActionTitle}>Drafts</Text>
               <Text style={styles.hbActionSub} numberOfLines={2}>
-                {draft ? 'Continue something you saved' : 'Nothing saved yet'}
+                {draft
+                  ? `Pick up where you left off · ${draftAge(draft.meta.updatedAt)}`
+                  : 'Edits save themselves as you go'}
               </Text>
             </Press>
 
@@ -1790,6 +2035,8 @@ export default function CreateDropScreen({
                   : 'One thought, no edits. It lives for 7 days.'}
             </Text>
 
+            {!!draftChip && <View style={styles.draftChipRow}>{draftChip}</View>}
+
             {parentDropId && (
               <View style={styles.replyBanner}>
                 <Text style={styles.replyBannerText}>
@@ -1800,14 +2047,50 @@ export default function CreateDropScreen({
 
             <Segmented value={mode} onChange={setMode} />
 
+            {/* The draft, always visible on the hub: what is in it, when it was
+                last written, and the way back into it. No "save as draft"
+                button anywhere — this is just where the saved work is shown. */}
             {draft && (
-              <Press style={styles.draftBanner} onPress={loadDraft}>
-                <Icon name="bookmark-outline" size={14} color={colors.accent} />
-                <Text style={styles.draftBannerText} numberOfLines={1}>
-                  Draft from {new Date(draft.updated_at).toLocaleDateString()}
-                </Text>
-                <Text style={styles.draftBannerCta}>Resume</Text>
-              </Press>
+              <View style={styles.draftBanner}>
+                {draft.meta.thumb ? (
+                  draft.meta.mode === 'text' ? (
+                    <View style={[styles.draftThumb, styles.draftThumbPh]}>
+                      <Icon name="text" size={15} color={colors.accent} />
+                    </View>
+                  ) : (
+                    <Image source={{ uri: draft.meta.thumb }} style={styles.draftThumb} />
+                  )
+                ) : (
+                  <View style={[styles.draftThumb, styles.draftThumbPh]}>
+                    <Icon name="bookmark-outline" size={15} color={colors.accent} />
+                  </View>
+                )}
+
+                {/* flex must be on containerStyle: Press puts containerStyle on
+                    the Pressable and `style` on the inner Animated.View */}
+                <Press containerStyle={styles.draftBannerBody} onPress={loadDraft} shrink={0.99}>
+                  <Text style={styles.draftBannerTitle} numberOfLines={1}>
+                    {draft.meta.caption?.trim() ? draft.meta.caption.trim() : 'Untitled draft'}
+                  </Text>
+                  <Text style={styles.draftBannerText} numberOfLines={1}>
+                    {draft.meta.mode === 'text'
+                      ? 'Text drop'
+                      : draft.meta.mediaCount > 1
+                        ? `${draft.meta.mediaCount} clips`
+                        : '1 clip'}
+                    {' · saved '}
+                    {draftAge(draft.meta.updatedAt)}
+                  </Text>
+                </Press>
+
+                <Press style={styles.draftBannerResume} onPress={loadDraft} shrink={0.96}>
+                  <Text style={styles.draftBannerCta}>Resume</Text>
+                </Press>
+
+                <Press style={styles.draftBannerX} onPress={discardDraft} shrink={0.9}>
+                  <Icon name="close" size={15} color={colors.textFaint} />
+                </Press>
+              </View>
             )}
 
             {mode === 'media' ? (
@@ -2019,10 +2302,13 @@ export default function CreateDropScreen({
       {step === 'editor' && (
         <View style={styles.flex}>
           <View style={styles.editorTop}>
-            <Pressable onPress={backFromEditor} hitSlop={8} style={styles.editorTopBtn}>
+            <Pressable onPress={leaveDrafting} hitSlop={8} style={styles.editorTopBtn}>
               <Text style={styles.editorTopText}>✕</Text>
             </Pressable>
-            <Text style={styles.editorTitle}>Edit drop</Text>
+            <View style={styles.editorCenter}>
+              <Text style={styles.editorTitle}>Edit drop</Text>
+              {draftChip}
+            </View>
             <Pressable onPress={goPreview} hitSlop={8} style={styles.editorTopBtn}>
               <Text style={styles.nextText}>NEXT →</Text>
             </Pressable>
@@ -2271,7 +2557,7 @@ export default function CreateDropScreen({
           <ScrollView contentContainerStyle={styles.previewContent} keyboardShouldPersistTaps="handled">
             {/* ---------- top bar ---------- */}
             <View style={styles.pvTop}>
-              <Pressable onPress={backFromPreview} hitSlop={8} style={styles.pvClose}>
+              <Pressable onPress={leaveDrafting} hitSlop={8} style={styles.pvClose}>
                 <Icon name="close" size={16} color={colors.text} />
               </Pressable>
               <Text style={styles.pvTitle}>Preview</Text>
@@ -2281,6 +2567,7 @@ export default function CreateDropScreen({
               </View>
             </View>
             <Text style={styles.pvHint}>This is exactly how it lands in the feed.</Text>
+            {!!draftChip && <View style={styles.draftChipRow}>{draftChip}</View>}
 
             {/* ---------- live post preview ---------- */}
             <View style={styles.pvCard}>
@@ -2718,20 +3005,12 @@ export default function CreateDropScreen({
         </View>
       )}
 
-      {/* exit → save draft? */}
-      <Modal visible={exitAsk} animationType="fade" transparent onRequestClose={() => setExitAsk(false)}>
-        <View style={styles.exitOverlay}>
-          <View style={styles.exitSheet}>
-            <Text style={styles.exitTitle}>Save as draft?</Text>
-            <Text style={styles.exitSub}>Drafts never start the 7-day timer. Your drop only goes live when you hit DROP IT.</Text>
-            <Button title="💾 Save draft" onPress={saveDraft} style={{ marginTop: 16 }} />
-            <Button variant="secondary" title="🗑 Discard" onPress={discardDraft} style={{ marginTop: 10 }} />
-            <Pressable style={styles.exitCancel} onPress={() => setExitAsk(false)}>
-              <Text style={styles.exitCancelText}>Keep editing</Text>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
+      {/* The "Save as draft?" dialog that used to live here is gone with the
+          manual save it belongs to. Work is saved as it happens: the ✕ in the
+          editor flushes and returns to the hub, where the draft is shown. A
+          dialog asking whether to keep work would now be asking about
+          something already done — and its Discard button was the only way to
+          lose a draft, which the hub banner does better. */}
     </View>
   );
 
@@ -2809,6 +3088,23 @@ function ToggleRow({ label, value, onChange }: { label: string; value: boolean; 
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
+  // the auto-save status chip — inline in each step's header rather than
+  // floating, because every edge of this screen already has a control on it
+  draftChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginTop: 3,
+  },
+  draftChipRow: { flexDirection: 'row', marginTop: 8, marginBottom: 2 },
+  draftChipText: { color: colors.textMuted, fontSize: 10.5, fontWeight: '700' },
+  editorCenter: { alignItems: 'center' },
   flex: { flex: 1 },
   createContent: { padding: 20, paddingTop: TOP_INSET + 14, paddingBottom: 40 },
 
@@ -3118,8 +3414,24 @@ const styles = StyleSheet.create({
     marginTop: 12,
     marginBottom: 4,
   },
-  draftBannerText: { color: colors.text, fontSize: 12, flex: 1 },
-  draftBannerCta: { color: colors.accent, fontSize: 12.5, fontWeight: '800' },
+  draftThumb: {
+    width: 38,
+    height: 38,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surfaceInput,
+  },
+  draftThumbPh: { alignItems: 'center', justifyContent: 'center' },
+  draftBannerBody: { flex: 1 },
+  draftBannerTitle: { color: colors.text, fontSize: 13, fontWeight: '800' },
+  draftBannerText: { color: colors.textMuted, fontSize: 11.5 },
+  draftBannerResume: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: colors.accentSoft,
+  },
+  draftBannerCta: { color: colors.accent, fontSize: 12, fontWeight: '800' },
+  draftBannerX: { padding: 4 },
   textDropCardSm: { borderRadius: radius.lg, padding: 18, minHeight: 130, ...shadows.md },
   textDropBody: { fontSize: 20, fontWeight: '800' },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10, alignItems: 'center' },
