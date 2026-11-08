@@ -381,6 +381,48 @@ async function makePost(ownerId, fields) {
     }
   }
 
+  // ------------------------------------------------ P16 premium is a server fact
+  //
+  // genzplus.sql shipped in the repo but was never applied to production, so
+  // every one of these three calls was hitting a missing table or a missing
+  // function. This check exists so that can never silently happen again: it
+  // asserts the entitlement is present AND unwritable, in one place.
+  {
+    const active = await api('/rest/v1/rpc/genzplus_is_active', {
+      method: 'POST',
+      token: A.token,
+      body: '{}',
+    });
+    // The client has no write policy, so RLS must reject the insert outright.
+    const selfGrant = await api('/rest/v1/genzplus_members', {
+      method: 'POST',
+      token: A.token,
+      headers: { Prefer: 'return=representation' },
+      body: JSON.stringify({ user_id: A.id, amount_kobo: 0 }),
+    });
+    // The badge view is the one thing that must stay readable.
+    const badge = await api(`/rest/v1/genzplus_badge?select=user_id&user_id=eq.${A.id}`, {
+      token: A.token,
+    });
+    const stillNot = await api('/rest/v1/rpc/genzplus_is_active', {
+      method: 'POST',
+      token: A.token,
+      body: '{}',
+    });
+    check(
+      'P16',
+      'a normal user cannot make itself GenZ+',
+      active.ok &&
+        active.json === false &&
+        !selfGrant.ok &&
+        stillNot.json === false &&
+        Array.isArray(badge.json),
+      `is_active=${JSON.stringify(active.json)} (http ${active.status}); ` +
+        `self-grant http ${selfGrant.status}; badge view http ${badge.status}; ` +
+        `is_active after=${JSON.stringify(stillNot.json)}`
+    );
+  }
+
   // ------------------------------------------------ report
   const failed = results.filter((r) => !r.passed);
   console.log(`\n  ${results.length - failed.length}/${results.length} passed`);
