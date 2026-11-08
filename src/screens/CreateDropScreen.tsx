@@ -36,6 +36,7 @@ import StickerPicker from '../components/create/StickerPicker';
 import TextLayerEditor, { TextLayer } from '../components/create/TextLayerEditor';
 import VoiceoverRecorder from '../components/create/VoiceoverRecorder';
 import PhotoEditorModal from '../components/create/PhotoEditorModal';
+import CaptureScreen, { type CapturedAsset } from './CaptureScreen';
 import { uploadMediaWithProgress } from '../utils/upload';
 import { startUploadJob, type UploadReport } from '../utils/uploadManager';
 import { extractVideoCover, hasNativeFFmpeg, processDropVideo } from '../utils/videoProcessor';
@@ -728,6 +729,8 @@ export default function CreateDropScreen({
 
   // ui state
   const [pickerOpen, setPickerOpen] = useState(false);
+  // the in-app camera. Its own surface, because a capture is not a file pick.
+  const [cameraOpen, setCameraOpen] = useState(false);
   const [soundOpen, setSoundOpen] = useState(false);
   const [trimSound, setTrimSound] = useState<Sound | null>(null);
   const [textLayerOpen, setTextLayerOpen] = useState(false);
@@ -1866,6 +1869,41 @@ export default function CreateDropScreen({
     if (t.openPicker) setTimeout(() => setPickerOpen(true), 240);
   };
 
+  /**
+   * A capture comes back as a bare uri. Everything downstream — cover
+   * extraction, video detection, the uploader's mime handling — expects an
+   * ImagePicker asset, so the missing fields are filled here rather than
+   * scattered through four call sites.
+   */
+  const handleCaptured = (a: CapturedAsset) => {
+    const asset = {
+      uri: a.uri,
+      width: a.width,
+      height: a.height,
+      type: a.type,
+      fileName: a.fileName,
+      mimeType: a.mimeType,
+      duration: a.durationMs != null ? Math.round(a.durationMs / 1000) : null,
+      assetId: null,
+      base64: null,
+      exif: null,
+      fileSize: undefined,
+      file: undefined,
+      pairedVideoAsset: null,
+    } as unknown as ImagePicker.ImagePickerAsset;
+
+    setMode('media');
+    setCameraOpen(false);
+    if (a.type === 'video') {
+      // One clip only — the app does not mix a video with photos — and go
+      // straight to the editor, because a fresh recording always needs trim.
+      setAssets([asset]);
+      setStep('editor');
+    } else {
+      setAssets((prev) => [...prev, asset].slice(0, 6));
+    }
+  };
+
   const addTagToCaption = (tag: string) => {
     setCaption((c) => {
       if (c.includes(`#${tag}`)) return c;
@@ -1945,15 +1983,21 @@ export default function CreateDropScreen({
                   <Text style={styles.hbHeroMetaText}>Live for 7 days</Text>
                 </View>
               </View>
-              <View style={styles.hbHeroBtn}>
+              {/* The + was decorative. It shoots now: the card says "capture
+                  what's happening right now", so that is what its button does. */}
+              <Pressable
+                style={styles.hbHeroBtn}
+                onPress={() => setCameraOpen(true)}
+                accessibilityLabel="Open camera"
+              >
                 <GradientFill
                   from={colors.accent}
                   to={colors.accentStrong}
                   steps={10}
                   style={FILL}
                 />
-                <Icon name="add" size={26} color={colors.bg} />
-              </View>
+                <Icon name="camera" size={24} color={colors.bg} />
+              </Pressable>
             </View>
           </Press>
 
@@ -2208,14 +2252,7 @@ export default function CreateDropScreen({
                         </View>
                       </View>
                       <Text style={styles.cvZoneTitle}>Add your media</Text>
-                      <Text style={styles.cvZoneHint}>Pick up to 6 photos or one video</Text>
-                      <View style={styles.cvChips}>
-                        {['Photos', 'Video', 'Camera'].map((t) => (
-                          <View key={t} style={styles.cvChip}>
-                            <Text style={styles.cvChipText}>{t}</Text>
-                          </View>
-                        ))}
-                      </View>
+                      <Text style={styles.cvZoneHint}>Shoot it now, or pick up to 6 photos</Text>
                     </View>
                   )}
                 </Press>
@@ -2275,11 +2312,20 @@ export default function CreateDropScreen({
                   </>
                 )}
 
+                {/* The passive "Photos / Video / Camera" chips that used to sit
+                    inside the drop zone looked like actions and were not. The
+                    camera is a real surface now, so it gets a real button, and
+                    picking an existing file keeps its own. */}
+                <Button
+                  title="Open camera"
+                  onPress={() => setCameraOpen(true)}
+                  style={{ marginTop: 14 }}
+                />
                 <Button
                   variant="secondary"
-                  title={hasMedia ? 'Change / add media' : 'Choose media'}
+                  title={hasMedia ? 'Change / add media' : 'Choose from gallery'}
                   onPress={() => setPickerOpen(true)}
-                  style={{ marginTop: 14 }}
+                  style={{ marginTop: 10 }}
                 />
 
                 {hasMedia && (
@@ -3120,6 +3166,30 @@ export default function CreateDropScreen({
         active={!!sound?.url && videoPlaying}
       />
 
+      {/* The camera. Rendered at the root of the wizard, not inside a step, so
+          it survives the step changes that a capture triggers. */}
+      <CaptureScreen
+        visible={cameraOpen}
+        onClose={() => setCameraOpen(false)}
+        onCaptured={handleCaptured}
+        onAddSound={() => {
+          // The sound sheet is a sibling Modal; Android stacks them by render
+          // order, so the camera has to step aside rather than fight it.
+          setCameraOpen(false);
+          setSoundOpen(true);
+        }}
+        soundName={sound?.name ?? null}
+        onOpenGallery={() => {
+          setCameraOpen(false);
+          setPickerOpen(true);
+        }}
+        onTextMode={() => {
+          setCameraOpen(false);
+          setMode('text');
+          setStep('create');
+        }}
+      />
+
       <SoundPickerModal
         visible={soundOpen}
         onClose={() => setSoundOpen(false)}
@@ -3367,16 +3437,6 @@ const styles = StyleSheet.create({
   },
   cvZoneTitle: { color: colors.text, fontSize: 17, fontWeight: '800', marginTop: 18 },
   cvZoneHint: { color: colors.textMuted, fontSize: 12.5, marginTop: 5 },
-  cvChips: { flexDirection: 'row', gap: 7, marginTop: 16 },
-  cvChip: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.chrome,
-    borderRadius: radius.pill,
-    paddingHorizontal: 11,
-    paddingVertical: 5,
-  },
-  cvChipText: { color: colors.textMuted, fontSize: 11, fontWeight: '700' },
   cvCountBadge: {
     position: 'absolute',
     top: 12,
