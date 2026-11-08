@@ -36,6 +36,14 @@ admin/node_modules/
 # --- the admin console is a separate app and is not part of the mobile build ---
 admin/
 
+# --- the service-role key must never enter a build archive ---
+# scripts/ is uploaded on purpose (tooling the build may need), which means this
+# file inside it was being uploaded too. EAS keeps archives and they are
+# downloadable, so the key that bypasses every RLS policy was sitting in one.
+# Metro never loads it, so excluding it cannot break the bundle - that is a
+# different file, .env, which stays uploaded for the reasons recorded below.
+scripts/.secrets.env
+
 # --- build / tooling caches ---
 node-compile-cache/
 .expo/

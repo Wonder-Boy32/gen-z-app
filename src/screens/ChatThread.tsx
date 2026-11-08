@@ -1,6 +1,7 @@
-﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   FlatList,
   Image,
@@ -28,6 +29,7 @@ import { TOP_INSET } from '../utils/useInsets';
 import LogoHeader from '../components/LogoHeader';
 import GifPicker from '../components/GifPicker';
 import { uploadPrivateMedia } from '../utils/upload';
+import { consumeViewOnce } from '../messaging/api';
 import { resolveMediaRefs } from '../utils/privateMedia';
 import Avatar from '../components/Avatar';
 import VerifiedBadge from '../components/ui/VerifiedBadge';
@@ -77,6 +79,8 @@ type Message = {
   created_at: string;
   view_once?: boolean | null;
   viewed_by?: string[] | null;
+  /** set server-side by consume_view_once() — the authority for "Opened" */
+  view_once_consumed_at?: string | null;
   sender: { username: string; verified?: boolean } | null;
   reply: { content: string | null; media_url: string | null; msg_type: string } | null;
 };
@@ -747,7 +751,12 @@ const oldestRef = useRef<string | null>(null);
     if (message.sender_id !== me || !other || message.deleted_at) return null;
     // view-once: WhatsApp-style "Opened" once any other participant viewed it
     if (message.view_once) {
-      const opened = (message.viewed_by ?? []).some((id) => id !== me);
+      // Consumed-ness is decided by the server. `viewed_by` was only ever the
+      // client's own note, and that note could not be written (the guard blocks
+      // a non-author PATCH), so "Opened" was previously always "Sent".
+      const opened =
+        !!message.view_once_consumed_at ||
+        (message.viewed_by ?? []).some((id) => id !== me);
       return opened ? 'Opened' : 'Sent';
     }
     const readAt = other.last_read_at ? new Date(other.last_read_at).getTime() : 0;
@@ -757,30 +766,47 @@ const oldestRef = useRef<string | null>(null);
   const openOnce = async (m: Message) => {
     if (!m.media_url) return;
     const meId = myIdRef.current;
-    // reveal full-screen ONCE
-    setViewer({ uri: m.media_url, video: m.msg_type === 'video', once: true });
-    // the media dies the moment it's opened: viewed_by marks it, media_url
-    // and content are nulled so NOBODY (including the sender) can ever see
-    // it again, and the uploaded file is deleted from storage.
-    const cur = m.viewed_by ?? [];
-    const next = meId && !cur.includes(meId) ? [...cur, meId] : cur;
-    await supabase
-      .from('messages')
-      .update({ viewed_by: next, media_url: null, content: null })
-      .eq('id', m.id);
-    // Bytes are now removed server-side by consume_view_once()'s sweep.
-    // Kept as a best-effort immediate delete for a private reference;
-    // a legacy public URL is left to the migration script, because a
-    // public object is not ours to delete from here any more.
+
+    // The sender can look at their own moment without spending it — the server
+    // refuses to let them consume it, and that refusal is the point.
+    if (m.sender_id === meId) {
+      setViewer({ uri: m.media_url, video: m.msg_type === 'video', once: true });
+      return;
+    }
+
+    // Consumption is a SERVER call, not a local flag.
+    //
+    // This used to PATCH the message row itself ({media_url: null, ...}).
+    // messages_guard_update() refuses to let a non-author change a message, so
+    // that write failed silently: view_once_consumed_at was never set, the
+    // five-minute byte sweep never matched the row, and the media stayed
+    // readable forever. consume_view_once() is the only path that can do all
+    // three things atomically — mark it, move the pointer out of the row, and
+    // hand back a one-time reference to display.
     try {
-      const ref = m.media_url;
-      if (ref.startsWith('sb://')) {
-        const [bucket, ...rest] = ref.slice(5).split('/');
-        if (bucket && rest.length) {
-          await supabase.storage.from(bucket).remove([rest.join('/')]);
-        }
+      const url = await consumeViewOnce(m.id);
+      if (!url) {
+        setViewer(null);
+        Alert.alert('Already opened', 'This moment has already been opened and removed.');
+        return;
       }
-    } catch {}
+      setViewer({ uri: url, video: m.msg_type === 'video', once: true });
+    } catch (e: any) {
+      const msg = String(e?.message ?? '');
+      if (/already_viewed/.test(msg)) {
+        setViewer(null);
+        Alert.alert('Already opened', 'This moment has already been opened and removed.');
+      } else if (/sender_cannot_consume/.test(msg)) {
+        // the sender's own moment — show it, do not spend it
+        setViewer({ uri: m.media_url, video: m.msg_type === 'video', once: true });
+      } else if (/not_view_once|not_found/.test(msg)) {
+        // sent before view-once was enforced; the row still carries the media
+        setViewer({ uri: m.media_url, video: m.msg_type === 'video', once: true });
+      } else {
+        setViewer(null);
+        Alert.alert('Could not open', 'Check your connection and try again.');
+      }
+    }
   };
 
   // ---- per-user settings, theming + call helpers ----------------------
