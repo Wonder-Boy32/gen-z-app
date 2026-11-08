@@ -253,7 +253,20 @@ begin
          view_once_consumed_by = v_uid,
          -- the pointer leaves the client-readable row immediately, so a second
          -- read cannot replay it; the sweep below deletes the bytes
-         media_url = null
+         media_url = null,
+         -- Belt and braces. The app does not put the URL in body for media
+         -- messages, so this clears nothing today — but body is writable by the
+         -- sender, and leaving a second copy of the pointer in a column the
+         -- recipient can read would mean the next client change quietly
+          -- re-opens the hole. Only image/video are touched: every other kind
+          -- has a shape contract that must survive (message_body_valid()).
+          --
+          -- It must be '{}' and NOT null: messages.body is `jsonb not null
+          -- default '{}'`, so a null here raises 23502 and the whole consume
+          -- fails — which is exactly what happened on the first attempt at this
+          -- hardening. message_body_valid() returns true for image/video, so an
+          -- empty object satisfies the shape check.
+          body = case when msg_type in ('image', 'video') then '{}'::jsonb else body end
    where id = p_message;
 
   insert into public.message_views (message_id, user_id)
