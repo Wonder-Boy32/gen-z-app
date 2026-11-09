@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Keyboard, Linking, Platform, StyleSheet, Text, View } from 'react-native';
 import { supabase } from '../supabase/client';
 import { parseAnonLink } from '../utils/deeplink';
@@ -193,6 +193,19 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
    * "On screen" therefore means the tab is selected AND nothing is covering
    * it. Every tab is told the same thing, so they cannot disagree about who
    * owns the speakers.
+   *
+   * PAUSING IS NOT ENOUGH — THE TAB HAS TO LEAVE THE WINDOW.
+   * expo-video renders through a native SurfaceView, which lives in a compositor
+   * layer of its own rather than inside the React view tree. An opaque screen
+   * painted on top of it (the camera, now a plain sibling view) does not
+   * reliably cover it, so the feed's video stayed visible straight through the
+   * viewfinder. It only started when the camera stopped being a <Modal>: a Modal
+   * is its own window, and nothing in the activity can out-paint a window.
+   *
+   * display:none detaches the view from the window, which destroys the surface —
+   * no layer left to show through. The tab stays MOUNTED, so scroll position,
+   * drafts and chat state all survive; it is simply not in the window while an
+   * overlay owns the screen.
    */
   const tabsCovered = createOpen || exploreOpen || !!anonDraft || !!anonRecipient;
   const tabOnScreen = (t: Tab) => tab === t && !tabsCovered;
@@ -202,7 +215,7 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
       {/* Keep-alive tabs: every main tab stays mounted and loads ONCE.
           Inactive tabs are hidden (display:none) instead of unmounted, so
           switching is instant and state (scroll, drafts, chat) survives. */}
-      <View style={[styles.content, tab !== 'feed' && styles.hiddenTab]}>
+      <View style={[styles.content, (tab !== 'feed' || tabsCovered) && styles.hiddenTab]}>
         <FeedScreen
           key={feedKey}
           initialUserMode={pendingUser}
@@ -219,7 +232,7 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
            chatUnread={tab === 'chat' ? 0 : chatUnread}
          />
       </View>
-      <View style={[styles.content, tab !== 'discover' && styles.hiddenTab]}>
+      <View style={[styles.content, (tab !== 'discover' || tabsCovered) && styles.hiddenTab]}>
         <DiscoverScreen
           focused={tabOnScreen('discover')}
           onOpenUser={(id) => openFiltered(id, null, null)}
@@ -229,7 +242,7 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
            onJoinDrop={() => openCreate(null)}
          />
       </View>
-      <View style={[styles.content, tab !== 'chat' && styles.hiddenTab]}>
+      <View style={[styles.content, (tab !== 'chat' || tabsCovered) && styles.hiddenTab]}>
         <ChatsScreen
           onOpenUser={(id) => openFiltered(id, null, null)}
           onOpenCreate={() => handleCreateIntent({})}
@@ -237,7 +250,7 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
           onUnreadChange={setChatUnread}
         />
       </View>
-      <View style={[styles.content, tab !== 'profile' && styles.hiddenTab]}>
+      <View style={[styles.content, (tab !== 'profile' || tabsCovered) && styles.hiddenTab]}>
         <ProfileScreen
           // the profile is kept alive like the other tabs, so it has to be told
           // when it is no longer the one on screen — an open video viewer would
