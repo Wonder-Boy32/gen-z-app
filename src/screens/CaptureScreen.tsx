@@ -24,11 +24,16 @@
 // real text while you record, Mute really silences the recording.
 //
 // HONEST LIMITS
-//   * Ratio is a GUIDE, not a sensor crop. The capture is taken in the camera's
-//     native ratio; the guide shows what the editor will keep. Claiming to crop
-//     at capture would mean re-encoding on device for a preview-only benefit.
+//   * Ratio cannot change what the sensor records — one stream, one shape. So the
+//     guide is drawn live AND the ratio travels to the exporter, which
+//     centre-crops the file to exactly that frame (processDropVideo `crop`).
+//     The post therefore ships in the shape the user framed, which is the part
+//     that matters; the temp clip on disk is still full-frame.
 //   * Retouch is a look, not a face warp: it warms and softens the preview and
-//     records the intent so the editor can bake it. There is no ML beauty pass.
+//     records the level so the exporter bakes the same eq chain. No ML pass.
+//   * Split screen: a phone camera exposes one stream at a time, so a live split
+//     cannot be recorded. It is not offered as a chip; the panel says so and
+//     points at the route that does work (separate clips, combined in the editor).
 //   * None of this has been run on a phone yet — see the note in the report.
 // ============================================================
 
@@ -54,6 +59,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { colors, radius } from '../theme';
 import Icon from '../components/ui/Icon';
 import { useInsets } from '../utils/useInsets';
+import { concatClips } from '../utils/videoProcessor';
 
 // The camera is media: it stays dark in both themes, the same way the video
 // wells do. These are deliberately not theme tokens.
@@ -70,6 +76,19 @@ export type CapturedAsset = {
   fileName: string;
   mimeType: string;
   durationMs: number | null;
+  /**
+   * 0 off, 1 soft, 2 strong — the viewfinder's retouch, carried to the
+   * composer so it is applied for real at export (videoProcessor maps it to an
+   * eq chain). A look that only existed as an overlay on the preview would be
+   * a lie by the time the post was published.
+   */
+  retouch?: 0 | 1 | 2;
+  /**
+   * Width / height of the frame the user chose (9/16, 1, 16/9 …). The sensor
+   * records its own shape, so this is what lets the export crop to the frame
+   * instead of the Ratio tool being decoration.
+   */
+  aspect?: number;
 };
 
 // There is no camera "mode" any more. The viewfinder shoots video; PHOTO opens
@@ -79,7 +98,7 @@ export type CapturedAsset = {
 // look like it was going to take a picture instead of opening your photos.
 /** the two launchers that sit beside VIDEO at the bottom of the viewfinder */
 type Launcher = 'photo' | 'text';
-type ToolId = 'timer' | 'layout' | 'ratio' | 'retouch' | 'teleprompter';
+type ToolId = 'timer' | 'layout' | 'ratio' | 'retouch' | 'teleprompter' | 'flash';
 
 const RATIOS = [
   { id: '9:16', label: '9:16', r: 9 / 16 },
@@ -161,11 +180,16 @@ export default function CaptureScreen({
   const [timer, setTimer] = useState<(typeof TIMERS)[number]>(0);
   const [ratio, setRatio] = useState<(typeof RATIOS)[number]['id']>('9:16');
   const [layout, setLayout] = useState<(typeof LAYOUTS)[number]['id']>('free');
-  const [retouch, setRetouch] = useState(false);
+  // 0 = off, 1 = soft, 2 = strong. Not a boolean any more: "beauty on" with no
+  // way to say how much is a control you set once and never touch again.
+  const [retouch, setRetouch] = useState<0 | 1 | 2>(0);
   const [duration, setDuration] = useState<number>(15);
 
   const [tool, setTool] = useState<ToolId | null>(null);
   const [railOpen, setRailOpen] = useState(true);
+  // Rear sensor only. Front cameras have no torch on Android, so the button
+  // says so instead of silently doing nothing.
+  const [torch, setTorch] = useState(false);
 
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -174,9 +198,28 @@ export default function CaptureScreen({
   const [countdown, setCountdown] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // ---------- multi-clip session ----------
+  //
+  // One tap of the shutter used to be the whole video. Now a session is a list
+  // of clips: record, stop, record again, and the previous clips stay. They are
+  // separate files until Finish, where they are joined (see `finish` and
+  // concatClips) — a post is one video, but a take is not always one shot.
+  const [clips, setClips] = useState<{ uri: string; ms: number }[]>([]);
+  // how many ms the clips already hold, so the duration cap covers the whole
+  // session rather than each clip separately
+  const [committedMs, setCommittedMs] = useState(0);
+  const [finishing, setFinishing] = useState(false);
+
   const [script, setScript] = useState('');
   const [prompterOn, setPrompterOn] = useState(false);
+  // Readable is a choice: the same script needs a bigger size on a short phone
+  // and a slower crawl when it is long.
+  const [prompterSpeed, setPrompterSpeed] = useState(1);
+  const [prompterSize, setPrompterSize] = useState(18);
   const prompterY = useRef(new Animated.Value(0)).current;
+
+  // Pulse under the shutter while a clip is being recorded.
+  const pulse = useRef(new Animated.Value(0)).current;
 
   const [recent, setRecent] = useState<{ uri: string; isVideo: boolean }[]>([]);
 
@@ -241,8 +284,12 @@ export default function CaptureScreen({
   }, [visible]);
 
   // ---------------------------------------------------------------
-  // Teleprompter — a slow, looping scroll. Speed is fixed because a
-  // slider inside a camera view is a control you cannot see while acting.
+  // Teleprompter — a looping scroll, with the two things that decide whether
+  // you can actually read it: how fast it moves and how big the text is.
+  //
+  // The speed multiplies the auto duration, so "slow" is slower relative to the
+  // script's own length rather than a fixed number of pixels per second that
+  // reads differently on every phone.
   // ---------------------------------------------------------------
   useEffect(() => {
     prompterY.stopAnimation();
@@ -250,28 +297,54 @@ export default function CaptureScreen({
     if (!prompterOn || !script.trim() || !visible) return;
     const loop = Animated.loop(
       Animated.timing(prompterY, {
-        toValue: -Math.max(120, script.length * 1.6),
-        duration: Math.max(6000, script.length * 55),
+        // bigger text makes the block taller, so it has further to travel
+        toValue: -Math.max(120, script.length * (prompterSize / 11)),
+        duration:
+          Math.max(6000, script.length * 55) / Math.max(0.4, prompterSpeed),
         useNativeDriver: true,
       })
     );
     loop.start();
     return () => loop.stop();
-  }, [prompterOn, script, visible, prompterY]);
+  }, [prompterOn, script, visible, prompterY, prompterSpeed, prompterSize]);
+
+  // The breath under the shutter while a clip is running.
+  useEffect(() => {
+    if (!recording) {
+      pulse.stopAnimation();
+      pulse.setValue(0);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0, duration: 700, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [recording, pulse]);
 
   // ---------------------------------------------------------------
   // Recording clock
+  //
+  // `capMs` is the whole SESSION, not this clip: duration × 1000 is what the
+  // user chose, and it is spent by every clip in the take. Elapsed is this
+  // clip's clock; committedMs is what the earlier clips used.
   // ---------------------------------------------------------------
+  const capMs = duration * 1000;
+  const remainingMs = Math.max(0, capMs - committedMs);
+
   useEffect(() => {
     if (!recording) return;
     const id = setInterval(() => {
       const ms = Date.now() - startedAtRef.current;
       setElapsed(ms);
-      if (ms >= duration * 1000) void stopRecording();
+      if (committedMs + ms >= capMs) void stopRecording();
     }, 100);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recording, duration]);
+  }, [recording, capMs, committedMs]);
 
   // Leaving the app mid-recording would otherwise leave a camera session open.
   useEffect(() => {
@@ -298,6 +371,13 @@ export default function CaptureScreen({
     if (!camRef.current || busy || recordingRef.current) return;
     setError(null);
     setAudioNote(null);
+
+    // The cap belongs to the session. Hitting it mid-take must not start a new
+    // clip that the same rule would immediately cut off.
+    if (capMs - committedMs < 500) {
+      setError('That is the whole take — delete a clip or pick a longer length.');
+      return;
+    }
 
     /**
      * MICROPHONE, ASKED FOR.
@@ -343,22 +423,22 @@ export default function CaptureScreen({
       setElapsed(0);
       setRecording(true);
       const result = await camRef.current.recordAsync({
-        maxDuration: duration,
+        // what is LEFT of the chosen length, so clip 2 cannot overrun what
+        // clip 1 did not use
+        maxDuration: Math.max(1, Math.round((capMs - committedMs) / 1000)),
         mute,
       } as any);
       // recordAsync resolves when stopRecording() is called or maxDuration hits
       recordingRef.current = false;
       setRecording(false);
+      const ms = Date.now() - startedAtRef.current;
       if (result?.uri) {
-        onCaptured({
-          uri: result.uri,
-          width: 0,
-          height: 0,
-          type: 'video',
-          fileName: `capture-${Date.now()}.mp4`,
-          mimeType: 'video/mp4',
-          durationMs: Date.now() - startedAtRef.current,
-        });
+        // A clip JOINS the session instead of ending it. This is the whole
+        // difference between a camera that shoots a take and one that shoots a
+        // single shot.
+        setClips((prev) => [...prev, { uri: result.uri as string, ms }]);
+        setCommittedMs((prev) => prev + ms);
+        setElapsed(0);
       }
     } catch (e: any) {
       setError(e?.message ?? 'Recording failed');
@@ -367,7 +447,7 @@ export default function CaptureScreen({
     } finally {
       setBusy(false);
     }
-  }, [busy, duration, muted, onCaptured, micPermission, requestMicPermission, sound?.url]);
+  }, [busy, capMs, committedMs, muted, micPermission, requestMicPermission, sound?.url]);
 
   const stopRecording = useCallback(async () => {
     if (!recordingRef.current) return;
@@ -458,14 +538,116 @@ export default function CaptureScreen({
     }, 1000);
   }, [beep, fire, timer]);
 
-  const flip = () => setFacing((f) => (f === 'back' ? 'front' : 'back'));
+  /**
+   * Flip, but not mid-take.
+   *
+   * Switching the sensor while recordAsync is resolving tears the recording
+   * session out from under the recorder — the clip comes back empty or the call
+   * rejects. Refusing the tap and saying why is the honest version of
+   * "preserve recording state".
+   */
+  const flip = () => {
+    if (recordingRef.current) {
+      setError('Stop recording before you flip the camera.');
+      return;
+    }
+    setTorch(false); // the torch lives on the rear sensor
+    setFacing((f) => (f === 'back' ? 'front' : 'back'));
+  };
+
+  /** A take belongs to one visit. Leaving the camera drops the clips. */
+  const resetSession = () => {
+    setClips([]);
+    setCommittedMs(0);
+    setElapsed(0);
+    setError(null);
+  };
+
+  const closeCamera = () => {
+    resetSession();
+    onClose();
+  };
+
+  /** Throw away the clip you just shot. The session keeps its earlier clips. */
+  const deleteLastClip = () => {
+    if (recordingRef.current || clips.length === 0) return;
+    const last = clips[clips.length - 1];
+    setClips((prev) => prev.slice(0, -1));
+    setCommittedMs((prev) => Math.max(0, prev - last.ms));
+    setElapsed(0);
+    setError(null);
+  };
+
+  /**
+   * Done. One clip is handed over as it is; several are joined into one file
+   * first, because a post is one video and the composer edits one video.
+   *
+   * The join needs ffmpeg (a dev/production build). If it is missing — Expo Go,
+   * or a device where the native module did not link — saying so is better than
+   * silently posting the first clip and losing the rest.
+   */
+  const finish = async () => {
+    if (recordingRef.current || finishing || clips.length === 0) return;
+    setError(null);
+    if (clips.length === 1) {
+      const only = clips[0];
+      resetSession();
+      onCaptured({
+        uri: only.uri,
+        width: 0,
+        height: 0,
+        type: 'video',
+        fileName: `capture-${Date.now()}.mp4`,
+        mimeType: 'video/mp4',
+        durationMs: only.ms,
+        retouch,
+        aspect: ratioValue,
+      });
+      return;
+    }
+    setFinishing(true);
+    try {
+      const merged = await concatClips(clips.map((c) => c.uri));
+      const ms = clips.reduce((sum, c) => sum + c.ms, 0);
+      resetSession();
+      onCaptured({
+        uri: merged ?? clips[0].uri,
+        width: 0,
+        height: 0,
+        type: 'video',
+        fileName: `capture-${Date.now()}.mp4`,
+        mimeType: 'video/mp4',
+        durationMs: ms,
+        retouch,
+        aspect: ratioValue,
+      });
+    } catch (e: any) {
+      setError(
+        `Could not join the ${clips.length} clips on this build. Delete some and keep one, or update the app.`
+      );
+    } finally {
+      setFinishing(false);
+    }
+  };
+
+  /**
+   * Ratio, layout and length are composition settings for the TAKE, not for a
+   * clip. Changing them while clips exist would stitch two different shapes
+   * into one export, so they lock — and say why, rather than being a dead tap.
+   * Pausing between clips is not pausing the camera: the viewfinder stays live,
+   * the timer keeps its place, and recording simply resumes.
+   */
+  const takeLocked = clips.length > 0;
+  const lockedNudge = () =>
+    setError('Locked for this take — delete the clips to change ratio, layout or length.');
 
   const railTools: { id: ToolId; label: string; icon: string; on: boolean }[] = [
     { id: 'timer', label: 'Timer', icon: 'timer-outline', on: timer > 0 },
     { id: 'layout', label: 'Layout', icon: 'grid-outline', on: layout !== 'free' },
     { id: 'ratio', label: 'Ratio', icon: 'scan-outline', on: ratio !== '9:16' },
-    { id: 'retouch', label: 'Retouch', icon: 'sparkles-outline', on: retouch },
-    { id: 'teleprompter', label: 'Teleprompter', icon: 'document-text-outline', on: prompterOn },
+    { id: 'retouch', label: 'Retouch', icon: 'sparkles-outline', on: retouch > 0 },
+    { id: 'teleprompter', label: 'Prompt', icon: 'document-text-outline', on: prompterOn },
+    { id: 'flash', label: 'Flash', icon: 'flash-outline', on: torch },
   ];
 
   const fmtElapsed = (ms: number) => {
@@ -480,7 +662,7 @@ export default function CaptureScreen({
   // ---------------------------------------------------------------
   if (permission && !permission.granted) {
     return (
-      <Modal visible={visible} animationType="slide" statusBarTranslucent onRequestClose={onClose}>
+      <Modal visible={visible} animationType="slide" statusBarTranslucent onRequestClose={closeCamera}>
         <View style={[styles.root, styles.permWrap]}>
           <View style={styles.permCard}>
             <View style={styles.permIcon}>
@@ -493,7 +675,7 @@ export default function CaptureScreen({
             <Pressable style={styles.permBtn} onPress={requestPermission}>
               <Text style={styles.permBtnText}>Allow camera</Text>
             </Pressable>
-            <Pressable onPress={onClose} hitSlop={10} style={styles.permSkip}>
+            <Pressable onPress={closeCamera} hitSlop={10} style={styles.permSkip}>
               <Text style={styles.permSkipText}>Not now</Text>
             </Pressable>
           </View>
@@ -517,11 +699,22 @@ export default function CaptureScreen({
           facing={facing}
           mode="video"
           mute={muted}
+          // torch is a rear-sensor property; asking for it on the selfie camera
+          // throws on some devices and is ignored on the rest
+          enableTorch={torch && facing === 'back'}
           onCameraReady={() => setReady(true)}
         />
 
-        {/* Retouch: a look, applied over the feed, recorded for the editor. */}
-        {retouch && <View pointerEvents="none" style={styles.retouchVeil} />}
+        {/* Retouch. The veil is the preview of a grade that is handed to the
+            composer and applied at export (videoProcessor 'retouch-soft' /
+            'retouch-strong'), so what you see here is what ships. Nothing is
+            claimed when the level is off. */}
+        {retouch > 0 && (
+          <View
+            pointerEvents="none"
+            style={[styles.retouchVeil, { opacity: retouch === 2 ? 1 : 0.6 }]}
+          />
+        )}
 
         {/* The chosen sound, playing in sync with the take — so you can perform
             to it rather than guess. Same component the feed and the preview use,
@@ -562,14 +755,21 @@ export default function CaptureScreen({
         {prompterOn && !!script.trim() && (
           <View pointerEvents="none" style={styles.prompterWrap}>
             <Animated.View style={{ transform: [{ translateY: prompterY }] }}>
-              <Text style={styles.prompterText}>{script}</Text>
+              <Text
+                style={[
+                  styles.prompterText,
+                  { fontSize: prompterSize, lineHeight: Math.round(prompterSize * 1.45) },
+                ]}
+              >
+                {script}
+              </Text>
             </Animated.View>
           </View>
         )}
 
         {/* ---------- top bar ---------- */}
         <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
-          <Pressable onPress={onClose} hitSlop={12} style={styles.iconBtn} accessibilityLabel="Close camera">
+          <Pressable onPress={closeCamera} hitSlop={12} style={styles.iconBtn} accessibilityLabel="Close camera">
             <Icon name="close" size={20} color={WHITE} />
           </Pressable>
 
@@ -621,34 +821,35 @@ export default function CaptureScreen({
 
             <View style={styles.railRule} />
 
-            {railOpen &&
-              railTools.map((t) => (
-                <Pressable
-                  key={t.id}
-                  onPress={() => {
-                    if (t.id === 'retouch') {
-                      setRetouch((v) => !v);
-                      return;
-                    }
-                    if (t.id === 'teleprompter') {
-                      setTool('teleprompter');
-                      return;
-                    }
-                    setTool((cur) => (cur === t.id ? null : t.id));
-                  }}
-                  style={styles.railItem}
-                  accessibilityLabel={t.label}
-                >
-                  <Text style={[styles.railLabel, t.on && styles.railLabelOn]}>{t.label}</Text>
-                  <View style={[styles.railGlyph, t.on && styles.railGlyphOn]}>
-                    <Icon
-                      name={t.icon as any}
-                      size={17}
-                      color={t.on ? colors.accent : WHITE}
-                    />
-                  </View>
-                </Pressable>
-              ))}
+            {/* Scrollable on a short screen: six tools plus the collapse handle
+                is taller than a 640dp viewfinder once the top bar and the
+                shutter row are accounted for, and a tool you cannot reach is a
+                tool that does not exist. */}
+            {railOpen && (
+              <ScrollView
+                style={styles.railScroll}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.railScrollInner}
+              >
+                {railTools.map((t) => (
+                  <Pressable
+                    key={t.id}
+                    onPress={() => setTool((cur) => (cur === t.id ? null : t.id))}
+                    style={styles.railItem}
+                    accessibilityLabel={t.label}
+                  >
+                    <Text style={[styles.railLabel, t.on && styles.railLabelOn]}>{t.label}</Text>
+                    <View style={[styles.railGlyph, t.on && styles.railGlyphOn]}>
+                      <Icon
+                        name={t.icon as any}
+                        size={17}
+                        color={t.on ? colors.accent : WHITE}
+                      />
+                    </View>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            )}
 
             <View style={styles.railRule} />
 
@@ -693,8 +894,12 @@ export default function CaptureScreen({
                   {LAYOUTS.map((l) => (
                     <Pressable
                       key={l.id}
-                      onPress={() => setLayout(l.id)}
-                      style={[styles.chip, layout === l.id && styles.chipOn]}
+                      onPress={() => (takeLocked ? lockedNudge() : setLayout(l.id))}
+                      style={[
+                        styles.chip,
+                        layout === l.id && styles.chipOn,
+                        takeLocked && styles.lockedDim,
+                      ]}
                     >
                       <Text style={[styles.chipText, layout === l.id && styles.chipTextOn]}>
                         {l.label}
@@ -703,7 +908,21 @@ export default function CaptureScreen({
                   ))}
                 </View>
                 <Text style={styles.panelHint}>
-                  Frame it here, then cut it into a collage in the editor.
+                  Real guides, drawn over the live preview so you can place the
+                  frame before you shoot.
+                </Text>
+                {/* The spec asks for a split-screen/grid RECORDING mode "where
+                    technically supported". A phone camera exposes one sensor
+                    stream at a time, so a live split cannot be recorded here —
+                    and offering a chip that quietly recorded a single frame
+                    would be the exact thing the spec forbids. Split screen is
+                    still reachable honestly: shoot the pieces as separate clips
+                    and combine them in the editor. */}
+                <Text style={styles.panelSub}>Split screen</Text>
+                <Text style={styles.panelHint}>
+                  Live split capture needs two camera streams at once and this
+                  camera exposes one. Record the pieces as separate clips and
+                  combine them in the editor — that route is real.
                 </Text>
               </>
             )}
@@ -715,8 +934,12 @@ export default function CaptureScreen({
                   {RATIOS.map((r) => (
                     <Pressable
                       key={r.id}
-                      onPress={() => setRatio(r.id)}
-                      style={[styles.chip, ratio === r.id && styles.chipOn]}
+                      onPress={() => (takeLocked ? lockedNudge() : setRatio(r.id))}
+                      style={[
+                        styles.chip,
+                        ratio === r.id && styles.chipOn,
+                        takeLocked && styles.lockedDim,
+                      ]}
                     >
                       <Text style={[styles.chipText, ratio === r.id && styles.chipTextOn]}>
                         {r.label}
@@ -725,8 +948,52 @@ export default function CaptureScreen({
                   ))}
                 </View>
                 <Text style={styles.panelHint}>
-                  A guide, not a crop. The capture stays full-frame; the editor keeps
-                  what is inside the frame.
+                  The preview frames it and the export is cropped to it — the file
+                  you post is this shape, not just a mask over the sensor.
+                </Text>
+              </>
+            )}
+
+            {tool === 'retouch' && (
+              <>
+                <Text style={styles.panelTitle}>Retouch</Text>
+                <View style={styles.chipRow}>
+                  {([0, 1, 2] as const).map((lvl) => (
+                    <Pressable
+                      key={lvl}
+                      onPress={() => setRetouch(lvl)}
+                      style={[styles.chip, retouch === lvl && styles.chipOn]}
+                    >
+                      <Text style={[styles.chipText, retouch === lvl && styles.chipTextOn]}>
+                        {lvl === 0 ? 'Off' : lvl === 1 ? 'Soft' : 'Strong'}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <Text style={styles.panelHint}>
+                  Warmth, brightness and a light sharpen. Previewed here and applied
+                  for real when you export — not painted on and forgotten.
+                </Text>
+              </>
+            )}
+
+            {tool === 'flash' && (
+              <>
+                <Text style={styles.panelTitle}>Flash</Text>
+                <View style={styles.chipRow}>
+                  <Pressable
+                    onPress={() => setTorch((v) => !v)}
+                    style={[styles.chip, torch && styles.chipOn]}
+                  >
+                    <Text style={[styles.chipText, torch && styles.chipTextOn]}>
+                      {torch ? 'Torch on' : 'Torch off'}
+                    </Text>
+                  </Pressable>
+                </View>
+                <Text style={styles.panelHint}>
+                  {facing === 'front'
+                    ? 'The selfie camera has no torch — switch to the rear camera to use it.'
+                    : 'The torch stays on for the whole take, so it can be used as a light.'}
                 </Text>
               </>
             )}
@@ -743,23 +1010,55 @@ export default function CaptureScreen({
                   multiline
                   maxLength={600}
                 />
+                <Text style={styles.panelSub}>Speed</Text>
                 <View style={styles.chipRow}>
-                  <Pressable
-                    onPress={() => setPrompterOn((v) => !v)}
-                    style={[styles.chip, prompterOn && styles.chipOn]}
-                  >
-                    <Text style={[styles.chipText, prompterOn && styles.chipTextOn]}>
-                      {prompterOn ? 'Scrolling' : 'Start scroll'}
-                    </Text>
-                  </Pressable>
+                  {[
+                    { v: 0.6, l: 'Slow' },
+                    { v: 1, l: 'Normal' },
+                    { v: 1.6, l: 'Fast' },
+                  ].map((s) => (
+                    <Pressable
+                      key={s.l}
+                      onPress={() => setPrompterSpeed(s.v)}
+                      style={[styles.chip, prompterSpeed === s.v && styles.chipOn]}
+                    >
+                      <Text
+                        style={[styles.chipText, prompterSpeed === s.v && styles.chipTextOn]}
+                      >
+                        {s.l}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <Text style={styles.panelSub}>Text size</Text>
+                <View style={styles.chipRow}>
+                  {[
+                    { v: 15, l: 'S' },
+                    { v: 18, l: 'M' },
+                    { v: 23, l: 'L' },
+                  ].map((s) => (
+                    <Pressable
+                      key={s.l}
+                      onPress={() => setPrompterSize(s.v)}
+                      style={[styles.chip, prompterSize === s.v && styles.chipOn]}
+                    >
+                      <Text
+                        style={[styles.chipText, prompterSize === s.v && styles.chipTextOn]}
+                      >
+                        {s.l}
+                      </Text>
+                    </Pressable>
+                  ))}
                   <Pressable
                     onPress={() => {
                       setTool(null);
                       setPrompterOn(true);
                     }}
-                    style={styles.chip}
+                    style={[styles.chip, prompterOn && styles.chipOn]}
                   >
-                    <Text style={styles.chipText}>Scroll while recording</Text>
+                    <Text style={[styles.chipText, prompterOn && styles.chipTextOn]}>
+                      {prompterOn ? 'Scrolling — tap to stop' : 'Start scroll'}
+                    </Text>
                   </Pressable>
                 </View>
               </>
@@ -767,19 +1066,59 @@ export default function CaptureScreen({
           </View>
         )}
 
-        {/* ---------- recording HUD ---------- */}
-        {recording && (
+        {/* ---------- recording HUD ----------
+            A session, not a shot: the clock and the bar measure the clips that
+            are already safe PLUS the one being recorded, against the length the
+            user chose. The thin marks under the bar are where each earlier clip
+            ended, so "how much do I have left" is one glance. */}
+        {(recording || clips.length > 0) && (
           <View style={[styles.hud, { top: insets.top + 62 }]} pointerEvents="none">
-            <View style={styles.hudDot} />
-            <Text style={styles.hudText}>{fmtElapsed(elapsed)}</Text>
+            <View style={styles.hudTopRow}>
+              <View style={[styles.hudDot, !recording && styles.hudDotIdle]} />
+              <Text style={styles.hudText}>
+                {fmtElapsed(Math.min(capMs, committedMs + (recording ? elapsed : 0)))}
+                <Text style={styles.hudTextDim}> / {fmtElapsed(capMs)}</Text>
+              </Text>
+              {clips.length > 0 && (
+                <Text style={styles.hudClips}>
+                  {clips.length} {clips.length === 1 ? 'clip' : 'clips'}
+                </Text>
+              )}
+            </View>
             <View style={styles.hudTrack}>
               <View
                 style={[
                   styles.hudFill,
-                  { width: `${Math.min(100, (elapsed / (duration * 1000)) * 100)}%` },
+                  {
+                    width: `${Math.min(
+                      100,
+                      ((committedMs + (recording ? elapsed : 0)) / capMs) * 100
+                    )}%`,
+                  },
                 ]}
               />
             </View>
+            {clips.length > 0 && (
+              <View style={styles.segRow}>
+                {clips.map((c, i) => (
+                  <View
+                    key={`${c.uri}-${i}`}
+                    style={[styles.seg, { flex: Math.max(0.2, c.ms) }]}
+                  />
+                ))}
+                {recording && <View style={[styles.seg, styles.segLive, { flex: Math.max(0.2, elapsed) }]} />}
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Between takes: the take is safe on disk, say so, because a stopped
+            camera with a full bar looks like nothing happened. */}
+        {!recording && clips.length > 0 && (
+          <View style={[styles.resumeHint, { bottom: insets.bottom + 214 }]} pointerEvents="none">
+            <Text style={styles.resumeHintText}>
+              Tap the shutter to keep recording — or Next when you are done.
+            </Text>
           </View>
         )}
 
@@ -805,8 +1144,12 @@ export default function CaptureScreen({
             {DURATIONS.map((d) => (
               <Pressable
                 key={d.id}
-                onPress={() => setDuration(d.id)}
-                style={[styles.durChip, duration === d.id && styles.durChipOn]}
+                onPress={() => (takeLocked ? lockedNudge() : setDuration(d.id))}
+                style={[
+                  styles.durChip,
+                  duration === d.id && styles.durChipOn,
+                  takeLocked && styles.lockedDim,
+                ]}
                 accessibilityLabel={`Record up to ${d.label}`}
               >
                 <Text style={[styles.durText, duration === d.id && styles.durTextOn]}>
@@ -870,19 +1213,69 @@ export default function CaptureScreen({
               onPress={armShutter}
               disabled={!ready || busy}
               style={styles.shutterOuter}
-              accessibilityLabel={recording ? 'Stop recording' : 'Start recording'}
+              accessibilityLabel={
+                recording ? 'Stop recording' : clips.length > 0 ? 'Record another clip' : 'Start recording'
+              }
             >
               <View style={[styles.shutterRing, recording && styles.shutterRingRec]} />
-              <View style={[styles.shutterInner, recording && styles.shutterInnerRec]}>
+              <Animated.View
+                style={[
+                  styles.shutterInner,
+                  recording && styles.shutterInnerRec,
+                  // a slow breath under the button while it is live: the only
+                  // thing on this screen that says "this is still running"
+                  // without you reading a number
+                  {
+                    transform: [
+                      {
+                        scale: pulse.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [1, 1.12],
+                          extrapolate: 'clamp',
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+              >
                 {busy && !recording ? (
                   <ActivityIndicator color={INK} size="small" />
                 ) : recording ? (
                   <View style={styles.shutterStop} />
                 ) : null}
-              </View>
+              </Animated.View>
             </Pressable>
 
-            <View style={styles.shutterSpacer} />
+            {/* Right column: undo the last clip, and get out with the take. */}
+            <View style={styles.shutterSpacer}>
+              {clips.length > 0 && !recording && (
+                <>
+                  <Pressable
+                    onPress={deleteLastClip}
+                    hitSlop={8}
+                    style={styles.clipBtn}
+                    accessibilityLabel="Delete the last clip"
+                  >
+                    <Icon name="backspace-outline" size={18} color={WHITE} />
+                  </Pressable>
+                  <Pressable
+                    onPress={() => void finish()}
+                    disabled={finishing}
+                    style={[styles.nextBtn, finishing && styles.nextBtnBusy]}
+                    accessibilityLabel="Use this take"
+                  >
+                    {finishing ? (
+                      <ActivityIndicator size="small" color={INK} />
+                    ) : (
+                      <>
+                        <Text style={styles.nextText}>Next</Text>
+                        <Icon name="arrow-forward" size={15} color={INK} />
+                      </>
+                    )}
+                  </Pressable>
+                </>
+              )}
+            </View>
           </View>
         </View>
 
@@ -1048,6 +1441,10 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.10)',
     gap: 12,
   },
+  // The tool column scrolls inside the rail so six tools never run into the
+  // shutter row on a short screen.
+  railScroll: { maxHeight: 356, flexGrow: 0 },
+  railScrollInner: { alignItems: 'center', gap: 12 },
   railItem: { alignItems: 'flex-end', gap: 3 },
   railLabel: {
     color: 'rgba(255,255,255,0.62)',
@@ -1117,6 +1514,8 @@ const styles = StyleSheet.create({
   chipOn: { backgroundColor: colors.accentSoft, borderColor: 'rgba(255,154,46,0.6)' },
   chipText: { color: WHITE, fontSize: 12, fontWeight: '700' },
   chipTextOn: { color: colors.accent },
+  /** composition settings lock once a take has clips in it — visible, not inert */
+  lockedDim: { opacity: 0.45 },
   promptInput: {
     minHeight: 74,
     maxHeight: 120,
@@ -1136,20 +1535,40 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 18,
     right: 92,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    gap: 6,
   },
+  hudTopRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   hudDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.danger },
+  // between takes: the take exists, the camera is just not running
+  hudDotIdle: { backgroundColor: 'rgba(255,255,255,0.5)' },
   hudText: { color: WHITE, fontSize: 12, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  hudTextDim: { color: 'rgba(255,255,255,0.5)', fontWeight: '700' },
+  hudClips: {
+    color: colors.accent,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
   hudTrack: {
-    flex: 1,
     height: 3,
     borderRadius: 2,
     backgroundColor: 'rgba(255,255,255,0.22)',
     overflow: 'hidden',
   },
   hudFill: { height: 3, backgroundColor: colors.accent },
+  // one mark per clip, width proportional to its length
+  segRow: { flexDirection: 'row', gap: 3, height: 3 },
+  seg: { height: 3, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.55)' },
+  segLive: { backgroundColor: colors.accent },
+
+  resumeHint: { position: 'absolute', left: 24, right: 24, alignItems: 'center' },
+  resumeHintText: {
+    color: 'rgba(255,255,255,0.72)',
+    fontSize: 11,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
 
   // ---------------- countdown ----------------
   countWrap: {
@@ -1255,5 +1674,42 @@ const styles = StyleSheet.create({
   shutterInnerRec: { backgroundColor: colors.accentSoft },
 
   shutterStop: { width: 22, height: 22, borderRadius: 5, backgroundColor: colors.danger },
-  shutterSpacer: { width: 130 },
+  shutterSpacer: {
+    width: 130,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  clipBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.16)',
+  },
+  nextBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    minWidth: 96,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: radius.pill,
+    backgroundColor: colors.accent,
+  },
+  nextBtnBusy: { opacity: 0.7 },
+  nextText: { color: INK, fontSize: 14, fontWeight: '800' },
+  panelSub: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginTop: 8,
+    marginBottom: 4,
+  },
 });

@@ -736,6 +736,11 @@ export default function CreateDropScreen({
   const [effect, setEffect] = useState('none');
   const [speed, setSpeed] = useState(1);
   const [ratio, setRatio] = useState('original');
+  // What the viewfinder was set to. These are not editor choices — they are
+  // promises the camera made, so they travel separately from `filter` and
+  // `ratio` and are fed to the exporter as a grade and a centre-crop.
+  const [captureRetouch, setCaptureRetouch] = useState<0 | 1 | 2>(0);
+  const [captureAspect, setCaptureAspect] = useState<number | null>(null);
   const [rotation, setRotation] = useState(0);
   const [trimStart, setTrimStart] = useState(0);
   const [trimEnd, setTrimEnd] = useState(0);
@@ -1156,6 +1161,8 @@ export default function CreateDropScreen({
     setEffect('none');
     setSpeed(1);
     setRatio('original');
+    setCaptureRetouch(0);
+    setCaptureAspect(null);
     setRotation(0);
     setTrimStart(0);
     setTrimEnd(0);
@@ -1631,6 +1638,8 @@ export default function CreateDropScreen({
                 rotation,
                 filter,
                 voiceoverUri: voLocal,
+                retouch: captureRetouch,
+                crop: captureAspect,
               });
               bakedVideo = true;
             } catch {
@@ -2015,7 +2024,17 @@ export default function CreateDropScreen({
     if (a.type === 'video') {
       // One clip only — the app does not mix a video with photos — and go
       // straight to the editor, because a fresh recording always needs trim.
+      //
+      // Retouch and ratio come back from the viewfinder so the export can keep
+      // the promise the preview made: a real grade and a real crop, not a
+      // setting that was forgotten the moment the camera closed.
       setAssets([asset]);
+      setCaptureRetouch(a.retouch ?? 0);
+      setCaptureAspect(a.aspect ?? null);
+      const shaped = RATIOS.find(
+        (r) => r.ratio != null && a.aspect != null && Math.abs(r.ratio - a.aspect) < 0.001
+      );
+      if (shaped) setRatio(shaped.id);
       setStep('editor');
     } else {
       setAssets((prev) => [...prev, asset].slice(0, 6));
@@ -2034,6 +2053,10 @@ export default function CreateDropScreen({
     if (list.length === 0) return;
     const mapped = list.map(toPickedAsset);
     const video = mapped.find((m) => m.type === 'video');
+    // a file from the phone was never seen through the viewfinder: no grade,
+    // no camera crop. Carrying the last take's settings onto it would be a lie.
+    setCaptureRetouch(0);
+    setCaptureAspect(null);
     setMode('media');
     setCameraOpen(false);
     if (video) {

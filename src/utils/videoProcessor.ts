@@ -72,6 +72,19 @@ export type ProcessOptions = {
   filter?: string | null; // our filter id → mapped to an ffmpeg color-grading chain
   voiceoverUri?: string | null; // local audio file to mix into the video
   outputName?: string;
+  /**
+   * The viewfinder's retouch level (0 off, 1 soft, 2 strong). Kept separate
+   * from `filter` on purpose: retouch is a camera setting, the editor's filter
+   * carousel is an aesthetic choice, and a take can legitimately have both.
+   */
+  retouch?: 0 | 1 | 2 | null;
+  /**
+   * Target aspect ratio (width / height) picked in the camera, e.g. 9/16.
+   * The sensor records in its native ratio, so this is what makes the Ratio
+   * tool true: the exported file is centre-cropped to the frame the user
+   * framed in. null / undefined keeps the full frame.
+   */
+  crop?: number | null;
 };
 
 // Our UI filter ids → approximate ffmpeg color/grading chains.
@@ -89,6 +102,13 @@ function filterToVf(filter: string | null | undefined): string | null {
       return 'eq=brightness=0.04:saturation=1.2,unsharp=5:5:0.6';
     case 'vhs':
       return 'eq=saturation=1.3:contrast=1.1,hue=h=8';
+    // Camera retouch. These two ids are not in the editor's filter carousel;
+    // they exist so the viewfinder's Soft/Strong can be a promise the export
+    // actually keeps instead of a veil over the preview.
+    case 'retouch-soft':
+      return 'eq=brightness=0.04:contrast=1.02:saturation=1.04';
+    case 'retouch-strong':
+      return 'eq=brightness=0.07:contrast=1.05:saturation=1.08,unsharp=3:3:0.4';
     default:
       return null;
   }
@@ -503,6 +523,81 @@ export async function extractVideoCover(
   return best.path;
 }
 
+/**
+ * Joins the segments of one recording session into a single file.
+ *
+ * The camera records in clips: you shoot, you stop, you shoot again. Each stop
+ * leaves a complete mp4 behind, and a post is one video, so the pieces have to
+ * become one file before the editor ever sees them.
+ *
+ * Stream copy first (`-c copy`): every segment came from the same camera in the
+ * same session, so the codecs and parameters match and the join costs no
+ * re-encode and no quality. If that fails — segments can differ in resolution
+ * if the user flipped the camera mid-session — fall back to a re-encode so the
+ * take is still delivered rather than lost.
+ *
+ * Returns null when there is nothing to join (0 or 1 clip): the caller already
+ * has the file it wants and a pointless remux would only waste seconds.
+ */
+export async function concatClips(
+  uris: string[],
+  outputName = 'genz-clip'
+): Promise<string | null> {
+  if (uris.length === 0) return null;
+  if (uris.length === 1) return uris[0];
+  if (!modulePresent()) throw new Error('ffmpeg not available');
+
+  const fs: any = await import('expo-file-system/legacy');
+  const dir = `${fs.cacheDirectory}drop-clips/`;
+  try {
+    await fs.makeDirectoryAsync(dir, { intermediates: true });
+  } catch {
+    // may already exist
+  }
+
+  // concat demuxer list. Paths are file:// uris from the camera; the demuxer
+  // wants plain paths, and single quotes are escaped for it.
+  const listPath = `${dir}list-${Date.now()}.txt`;
+  const list = uris
+    .map((u) => `file '${cleanPath(u).replace(/'/g, "'\\''")}'`)
+    .join('\n');
+  await fs.writeAsStringAsync(listPath, `${list}\n`);
+
+  const out = `${dir}${outputName}-${Date.now()}.mp4`;
+
+  try {
+    await exec(
+      ['-y', '-f', 'concat', '-safe', '0', '-i', cleanPath(listPath), '-c', 'copy', cleanPath(out)],
+      180000
+    );
+  } catch {
+    // Different resolutions/codecs across segments: join by re-encoding.
+    await exec(
+      [
+        '-y',
+        '-f',
+        'concat',
+        '-safe',
+        '0',
+        '-i',
+        cleanPath(listPath),
+        '-c:v',
+        'mpeg4',
+        '-q:v',
+        '4',
+        '-c:a',
+        'aac',
+        '-b:a',
+        '128k',
+        cleanPath(out),
+      ],
+      240000
+    );
+  }
+
+  return out;
+}
+
 // Encodes a NEW video file with trim/speed/rotation/filter/voiceover
 // BAKED IN. Returns the output file uri. Throws if ffmpeg is
 // unavailable or the command fails.
@@ -525,7 +620,30 @@ export async function processDropVideo(uri: string, opts: ProcessOptions): Promi
   const hasAudioMix = !!opts.voiceoverUri;
   if (opts.voiceoverUri) args.push('-i', cleanPath(opts.voiceoverUri));
 
-  const hasVisualEdits = (opts.speed && opts.speed !== 1) || !!opts.rotation || !!filterToVf(opts.filter);
+  // Retouch: the camera's Soft/Strong, as a real grade — not a veil that dies
+  // when the preview closes.
+  const retouchVf =
+    opts.retouch === 1
+      ? filterToVf('retouch-soft')
+      : opts.retouch === 2
+        ? filterToVf('retouch-strong')
+        : null;
+
+  // Crop to the ratio the user framed. The expressions are quoted because the
+  // commas inside min() would otherwise be read as filter separators, and the
+  // even-dims scale is there because mpeg4 refuses odd frame sizes.
+  const cropVf =
+    opts.crop && opts.crop > 0
+      ? `crop='min(iw,ih*${opts.crop.toFixed(6)})':'min(ih,iw/${opts.crop.toFixed(6)})',` +
+        `scale='trunc(iw/2)*2':'trunc(ih/2)*2'`
+      : null;
+
+  const hasVisualEdits =
+    (opts.speed && opts.speed !== 1) ||
+    !!opts.rotation ||
+    !!filterToVf(opts.filter) ||
+    !!retouchVf ||
+    !!cropVf;
 
   // trim
   if (opts.trim && opts.trim.end > opts.trim.start) {
@@ -545,9 +663,15 @@ export async function processDropVideo(uri: string, opts: ProcessOptions): Promi
     else if (r === 270) vf.push('transpose=2');
   }
 
+  // ratio crop — after any rotation, so it crops the upright frame
+  if (cropVf) vf.push(cropVf);
+
   // filter
   const f = filterToVf(opts.filter);
   if (f) vf.push(f);
+
+  // retouch, on top of the chosen look
+  if (retouchVf) vf.push(retouchVf);
 
   const pureTrim = !hasVisualEdits && !hasAudioMix;
 
