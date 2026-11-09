@@ -29,7 +29,7 @@ import VerifiedBadge from '../components/ui/VerifiedBadge';
 import Button from '../components/Button';
 import Draggable from '../components/create/Draggable';
 import MediaPickerSheet from '../components/create/MediaPickerSheet';
-import SoundPickerModal from '../components/create/SoundPickerModal';
+import SoundPickerModal, { type PickedSound } from '../components/create/SoundPickerModal';
 import SoundTrack from '../components/SoundTrack';
 import FilterCarousel, { getFilterLabel, getFilterTint } from '../components/create/FilterCarousel';
 import StickerPicker from '../components/create/StickerPicker';
@@ -667,6 +667,7 @@ export default function CreateDropScreen({
   initialStep,
   initialCapture = null,
   initialText = null,
+  initialSoundPicked = null,
   openOnMount = null,
   resumeDraft = false,
   onExit,
@@ -685,6 +686,8 @@ export default function CreateDropScreen({
   initialCapture?: CapturedAsset | null;
   /** text written on the "Create a Drop" page */
   initialText?: string | null;
+  /** a sound chosen on the camera, carried in with the clip */
+  initialSoundPicked?: PickedSound | null;
   /** a sheet to open as soon as this mounts (the camera's gallery / sound tools) */
   openOnMount?: 'gallery' | 'sound' | null;
   /** restore the saved draft and land in the composer */
@@ -760,6 +763,12 @@ export default function CreateDropScreen({
   // the in-app camera. Its own surface, because a capture is not a file pick.
   const [cameraOpen, setCameraOpen] = useState(false);
   const [soundOpen, setSoundOpen] = useState(false);
+  // Was the sound sheet opened FROM the camera? The sheet is a sibling Modal, so
+  // the camera has to step aside to let it stack — but adding a sound is
+  // something you do *to* the viewfinder, not a way to leave it. Answering the
+  // sheet therefore has to put the camera back, or picking a sound silently
+  // drops the user onto the composer mid-take.
+  const [soundFromCamera, setSoundFromCamera] = useState(false);
   const [trimSound, setTrimSound] = useState<Sound | null>(null);
   const [textLayerOpen, setTextLayerOpen] = useState(false);
   const [stickerOpen, setStickerOpen] = useState(false);
@@ -1777,6 +1786,25 @@ export default function CreateDropScreen({
       { id: `s-${Date.now()}`, emoji, x: 60 + Math.random() * 140, y: 140 + Math.random() * 200, size: 52 },
     ]);
   };
+
+  // A sound picked on the camera arrives as a PickedSound; the rest of this
+  // screen works in `Sound`. Converting here, once, rather than widening either
+  // type — the composer also loads this from drafts and from the sound page.
+  useEffect(() => {
+    if (!initialSoundPicked) return;
+    setSound({
+      id: initialSoundPicked.id,
+      name: initialSoundPicked.name,
+      artist: initialSoundPicked.artist,
+      category: 'music',
+      usage_count: 0,
+      url: initialSoundPicked.url,
+      start: initialSoundPicked.start,
+      end: initialSoundPicked.end,
+    });
+    // mount-only: the sound travels with the clip, it is not a live binding
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // an incoming intent must never land behind the hub
   useEffect(() => {
@@ -3273,9 +3301,14 @@ export default function CreateDropScreen({
         visible={cameraOpen}
         onClose={() => setCameraOpen(false)}
         onCaptured={handleCaptured}
+        // the composer's own camera keeps the sound too: re-shooting a take must
+        // not lose the track it was performed to
+        sound={sound}
         onAddSound={() => {
           // The sound sheet is a sibling Modal; Android stacks them by render
-          // order, so the camera has to step aside rather than fight it.
+          // order, so the camera has to step aside rather than fight it. The
+          // flag is what brings it back afterwards.
+          setSoundFromCamera(true);
           setCameraOpen(false);
           setSoundOpen(true);
         }}
@@ -3293,7 +3326,14 @@ export default function CreateDropScreen({
 
       <SoundPickerModal
         visible={soundOpen}
-        onClose={() => setSoundOpen(false)}
+        onClose={() => {
+          setSoundOpen(false);
+          // dismissing without choosing still means "put me back where I was"
+          if (soundFromCamera) {
+            setSoundFromCamera(false);
+            setCameraOpen(true);
+          }
+        }}
         initial={
           trimSound
             ? {
@@ -3319,6 +3359,12 @@ export default function CreateDropScreen({
           });
           setTrimSound(null);
           setSoundOpen(false);
+          // the sound was chosen for the take that is about to be shot — go
+          // back to the viewfinder with it, not forward to the composer
+          if (soundFromCamera) {
+            setSoundFromCamera(false);
+            setCameraOpen(true);
+          }
         }}
       />
       <TextLayerEditor

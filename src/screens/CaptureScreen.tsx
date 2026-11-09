@@ -48,6 +48,7 @@ import {
   View,
 } from 'react-native';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
+import SoundTrack from '../components/SoundTrack';
 import * as MediaLibrary from 'expo-media-library';
 import { colors, radius } from '../theme';
 import Icon from '../components/ui/Icon';
@@ -105,12 +106,23 @@ export default function CaptureScreen({
   onOpenGallery,
   onTextMode,
   overlay = null,
+  sound = null,
 }: {
   visible: boolean;
   onClose: () => void;
   onCaptured: (asset: CapturedAsset) => void;
   onAddSound: () => void;
   soundName: string | null;
+  /**
+   * The chosen track, so the camera can play it while you record.
+   *
+   * It is heard, not captured: recordAsync takes the microphone, and playing a
+   * track into that microphone records the speaker as well as the room — the
+   * post would then carry the sound twice. So the take is muted while a sound
+   * is attached, and the sound reaches the post the way every other one does,
+   * through the composer. (See the note in startRecording.)
+   */
+  sound?: { url?: string | null; start?: number; end?: number } | null;
   onOpenGallery: () => void;
   onTextMode: () => void;
   /** sits above every camera control, inside the same Modal */
@@ -299,6 +311,16 @@ export default function CaptureScreen({
       }
     }
 
+    // A track is audible in the room while you perform to it, so an open
+    // microphone would record the speaker on top of the room and the post
+    // would carry the sound twice — once from the take, once attached. The
+    // take therefore stays muted and the track reaches the post as an
+    // attachment, the same route every other sound takes.
+    if (sound?.url) {
+      mute = true;
+      if (!muted) setAudioNote('Recording to your sound — the clip takes the track, not your mic.');
+    }
+
     try {
       setBusy(true);
       recordingRef.current = true;
@@ -330,7 +352,7 @@ export default function CaptureScreen({
     } finally {
       setBusy(false);
     }
-  }, [busy, duration, muted, onCaptured, micPermission, requestMicPermission]);
+  }, [busy, duration, muted, onCaptured, micPermission, requestMicPermission, sound?.url]);
 
   const stopRecording = useCallback(async () => {
     if (!recordingRef.current) return;
@@ -473,6 +495,16 @@ export default function CaptureScreen({
         {/* Retouch: a look, applied over the feed, recorded for the editor. */}
         {retouch && <View pointerEvents="none" style={styles.retouchVeil} />}
 
+        {/* The chosen sound, playing in sync with the take — so you can perform
+            to it rather than guess. Same component the feed and the preview use,
+            so the window/loop rules cannot drift between them. Renders nothing. */}
+        <SoundTrack
+          url={sound?.url ?? null}
+          start={sound?.start ?? 0}
+          end={sound?.end ?? null}
+          active={recording}
+        />
+
         {/* Crop guide — the shaded frame outside the chosen ratio */}
         {ratio !== '9:16' && (
           <View pointerEvents="none" style={StyleSheet.absoluteFill}>
@@ -513,11 +545,24 @@ export default function CaptureScreen({
             <Icon name="close" size={20} color={WHITE} />
           </Pressable>
 
-          <Pressable onPress={onAddSound} style={styles.soundPill} accessibilityLabel="Add a sound">
-            <Icon name="musical-notes" size={14} color={WHITE} />
+          {/* The chosen sound, at the top where you can see it while you shoot.
+              It turns accent-coloured and says "playing" for exactly as long as
+              the track is actually running (i.e. while recording), so the state
+              on screen is the state you can hear. */}
+          <Pressable
+            onPress={onAddSound}
+            style={[styles.soundPill, !!sound?.url && styles.soundPillOn]}
+            accessibilityLabel={soundName ? `Sound: ${soundName}. Change sound` : 'Add a sound'}
+          >
+            <Icon
+              name={recording && sound?.url ? 'volume-high' : 'musical-notes'}
+              size={14}
+              color={recording && sound?.url ? colors.accent : WHITE}
+            />
             <Text style={styles.soundPillText} numberOfLines={1}>
               {soundName ?? 'Add sound'}
             </Text>
+            {recording && !!sound?.url && <Text style={styles.soundPillLive}>playing</Text>}
           </Pressable>
 
           <Pressable onPress={flip} hitSlop={12} style={styles.iconBtn} accessibilityLabel="Flip camera">
@@ -956,7 +1001,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: HAIRLINE,
   },
-  soundPillText: { color: WHITE, fontSize: 13, fontWeight: '700' },
+  // a track is attached: the pill earns a hairline of accent so the viewfinder
+  // reads "you are performing to something" at a glance
+  soundPillOn: { borderColor: colors.accent },
+  soundPillText: { color: WHITE, fontSize: 13, fontWeight: '700', flexShrink: 1 },
+  soundPillLive: {
+    color: colors.accent,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
 
   // ---------------- rail ----------------
   railWrap: { position: 'absolute', right: 10 },

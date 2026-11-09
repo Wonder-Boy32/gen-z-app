@@ -18,6 +18,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import CaptureScreen, { type CapturedAsset } from '../screens/CaptureScreen';
 import CreateDropScreen from '../screens/CreateDropScreen';
+import SoundPickerModal, { type PickedSound } from '../components/create/SoundPickerModal';
 import { colors } from '../theme';
 import { useAndroidBack } from '../utils/useAndroidBack';
 import LaunchSheet from './LaunchSheet';
@@ -56,6 +57,14 @@ export default function CreateFlow({
   const [openOnMount, setOpenOnMount] = useState<'gallery' | 'sound' | null>(null);
   // "Continue your draft"
   const [resume, setResume] = useState(false);
+  // The sound belongs to the FLOW, not to the camera page.
+  //
+  // It used to live only in the composer, so picking one from the camera meant
+  // navigating into the composer — which is not where the user was, and not
+  // where they wanted to be. A sound chosen on the viewfinder is part of what
+  // you are about to shoot, so it is held above both pages and carried across.
+  const [sound, setSound] = useState<PickedSound | null>(null);
+  const [soundOpen, setSoundOpen] = useState(false);
 
   const hasIntent = !!(intent?.sound || intent?.replyTo || intent?.mediaUri);
 
@@ -70,6 +79,8 @@ export default function CreateFlow({
     setText(null);
     setOpenOnMount(null);
     setResume(false);
+    setSound(null);
+    setSoundOpen(false);
     setPage(hasIntent ? 'compose' : 'camera');
     setSheet(!hasIntent);
   }, [visible, hasIntent]);
@@ -144,7 +155,7 @@ export default function CreateFlow({
     setPage('compose');
   };
 
-  const composeWith = (what: 'gallery' | 'sound') => {
+  const composeWith = (what: 'gallery') => {
     setOpenOnMount(what);
     setPage('compose');
   };
@@ -155,11 +166,15 @@ export default function CreateFlow({
     <View style={styles.root}>
       {page === 'camera' && (
         <CaptureScreen
-          visible
+          // The camera steps aside for the sound sheet and comes back to the
+          // same page. It does NOT hand over to the composer: adding a sound is
+          // something you do *to* the camera, not a way to leave it.
+          visible={!soundOpen}
           onClose={onClose}
           onCaptured={captureThen}
-          onAddSound={() => composeWith('sound')}
-          soundName={null}
+          onAddSound={() => setSoundOpen(true)}
+          soundName={sound?.name ?? null}
+          sound={sound}
           onOpenGallery={() => composeWith('gallery')}
           onTextMode={() => {
             setSheet(false);
@@ -196,6 +211,8 @@ export default function CreateFlow({
           initialText={text}
           openOnMount={openOnMount}
           resumeDraft={resume}
+          // a sound picked on the camera travels with the clip into the composer
+          initialSoundPicked={sound}
           initialSound={intent?.sound ?? null}
           initialMediaUri={intent?.mediaUri ?? null}
           replyToDropId={intent?.replyTo ?? null}
@@ -203,6 +220,19 @@ export default function CreateFlow({
           onPosted={onPosted}
         />
       )}
+
+      {/* The sound sheet, at the flow root rather than inside the camera.
+          Which page it was opened from does not matter: the answer to a sound
+          is always the camera with that sound on it. */}
+      <SoundPickerModal
+        visible={soundOpen}
+        initial={sound}
+        onClose={() => setSoundOpen(false)}
+        onSelect={(s) => {
+          setSound(s);
+          setSoundOpen(false);
+        }}
+      />
     </View>
   );
 }
