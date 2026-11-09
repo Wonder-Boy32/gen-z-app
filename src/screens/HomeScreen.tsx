@@ -6,7 +6,7 @@ import AnonymousSendScreen from './AnonymousSendScreen';
 import NeonDock from '../components/ui/NeonDock';
 import type { Tab } from '../components/TabBar';
 import FeedScreen from './FeedScreen';
-import CreateDropScreen from './CreateDropScreen';
+import CreateFlow, { type CreateIntent } from '../create/CreateFlow';
 import ProfileScreen from './ProfileScreen';
 import ChatsScreen from './ChatsScreen';
 import DiscoverScreen from './DiscoverScreen';
@@ -64,16 +64,28 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
   const [pendingTag, setPendingTag] = useState<string | null>(null);
   const [pendingLocation, setPendingLocation] = useState<string | null>(null);
 
-  // create-intent routing: sound page / reply-with-drop / anon card -> create tab
-  const [createIntent, setCreateIntent] = useState<{ sound?: string; replyTo?: string; mediaUri?: string } | null>(null);
+  // CREATE IS NOT A TAB ANY MORE.
+  //
+  // It used to be: tapping + set tab='post', which unmounted whatever you were
+  // on and mounted a four-step wizard in the tab's slot. That made the + button
+  // a place, and "back" had to be re-derived at two levels.
+  //
+  // Now + opens the create flow as an overlay. The tabs underneath never
+  // change, so leaving the flow puts you back exactly where you were, and the
+  // flow owns its own navigation end to end (see src/create/flow.ts).
+  const [createOpen, setCreateOpen] = useState(false);
+  // create-intent routing: sound page / reply-with-drop / shared media
+  const [createIntent, setCreateIntent] = useState<CreateIntent | null>(null);
   // Explore is a page, not a tab: it is a detour from the feed, so it opens over
   // the tabs and closes back to whichever one you came from.
   const [exploreOpen, setExploreOpen] = useState(false);
 
-  const handleCreateIntent = (intent: { sound?: string; replyTo?: string; mediaUri?: string }) => {
+  const openCreate = (intent: CreateIntent | null = null) => {
     setCreateIntent(intent);
-    setTab('post');
+    setCreateOpen(true);
   };
+
+  const handleCreateIntent = (intent: CreateIntent) => openCreate(intent);
 
   const openFiltered = (user: string | null, audio: string | null, tag: string | null) => {
     setPendingUser(user);
@@ -101,7 +113,16 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
 
   const handlePosted = () => {
     setCreateIntent(null);
+    setCreateOpen(false);
     setFeedKey((k) => k + 1); // remount feed so it refetches
+    setTab('feed');
+  };
+
+  // "See what's happening now" in the launcher: the flow gets out of the way
+  // and drops you on the live feed, without pretending to be a cancel.
+  const handleSeeLive = () => {
+    setCreateIntent(null);
+    setCreateOpen(false);
     setTab('feed');
   };
 
@@ -174,7 +195,7 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
           initialHashtagMode={pendingTag}
           initialLocationMode={pendingLocation}
           focused={tab === 'feed'}
-           onJoinDrop={() => setTab('post')}
+           onJoinDrop={() => openCreate(null)}
            onCreateIntent={handleCreateIntent}
            openActivitySignal={openActivitySignal}
            onOpenExplore={() => setExploreOpen(true)}
@@ -188,22 +209,10 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
           onOpenUser={(id) => openFiltered(id, null, null)}
           onOpenAudio={(a) => openFiltered(null, a, null)}
           onOpenTag={(t) => openFiltered(null, null, t)}
-          onOpenLocation={openLocation}
-          onJoinDrop={() => setTab('post')}
-        />
+           onOpenLocation={openLocation}
+           onJoinDrop={() => openCreate(null)}
+         />
       </View>
-      {/* the create tab stays lazy-mounted (camera/audio init). It unmounts on
-          tab switch, so the draft is not held in component state: CreateDropScreen
-          flushes to AsyncStorage before it dies (debounce / app-background /
-          unmount / ✕) and hydrates back from it on the next mount. */}
-      {tab === 'post' && (
-        <CreateDropScreen
-          onPosted={handlePosted}
-          initialSound={createIntent?.sound ?? null}
-          replyToDropId={createIntent?.replyTo ?? null}
-          initialMediaUri={createIntent?.mediaUri ?? null}
-        />
-      )}
       <View style={[styles.content, tab !== 'chat' && styles.hiddenTab]}>
         <ChatsScreen
           onOpenUser={(id) => openFiltered(id, null, null)}
@@ -225,11 +234,34 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
           cover navigation, and hides itself when there is nothing to report */}
       <UploadBar />
 
+      {/* The create flow, above everything including the dock. Full-screen on
+          purpose: the camera has no business sharing the screen with a tab bar,
+          and the flow carries its own exits. */}
+      <CreateFlow
+        visible={createOpen}
+        intent={createIntent}
+        hasDraft={hasDraft}
+        onClose={() => {
+          setCreateIntent(null);
+          setCreateOpen(false);
+        }}
+        onPosted={handlePosted}
+        onSeeLive={handleSeeLive}
+      />
+
       {/* unread badge hidden while you're already in the Chat tab (WhatsApp style) */}
-      {!keyboardUp && (
+      {!keyboardUp && !createOpen && (
         <NeonDock
           tab={tab}
-          onChange={setTab}
+          onChange={(t) => {
+            // + is a verb, not a place: it opens the flow and leaves the tab
+            // underneath exactly as it was.
+            if (t === 'post') {
+              openCreate(null);
+              return;
+            }
+            setTab(t);
+          }}
           badges={{ chat: tab === 'chat' ? 0 : chatUnread }}
           hasDraft={hasDraft}
         />

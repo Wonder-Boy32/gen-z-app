@@ -104,6 +104,7 @@ export default function CaptureScreen({
   soundName,
   onOpenGallery,
   onTextMode,
+  overlay = null,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -112,6 +113,8 @@ export default function CaptureScreen({
   soundName: string | null;
   onOpenGallery: () => void;
   onTextMode: () => void;
+  /** sits above every camera control, inside the same Modal */
+  overlay?: React.ReactNode;
 }) {
   const insets = useInsets();
   const { width, height } = useWindowDimensions();
@@ -409,6 +412,12 @@ export default function CaptureScreen({
               <Text style={styles.permSkipText}>Not now</Text>
             </Pressable>
           </View>
+
+          {/* The overlay has to be here too, not only on the live camera. If
+              camera access is denied — permanently, from the system dialog —
+              this is the screen the user lands on, and without the launcher
+              they could never reach "Create a Drop" again from the + button. */}
+          {overlay}
         </View>
       </Modal>
     );
@@ -766,6 +775,12 @@ export default function CaptureScreen({
             <View style={styles.shutterSpacer} />
           </View>
         </View>
+
+        {/* Whatever the caller needs above the camera — the create launcher
+            sheet, for one. Rendered INSIDE this Modal on purpose: a sibling
+            <Modal> stacks by render order on Android, which is the race that
+            used to leave the sound sheet behind the camera. */}
+        {overlay}
       </View>
     </Modal>
   );

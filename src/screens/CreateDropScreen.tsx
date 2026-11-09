@@ -664,16 +664,44 @@ export default function CreateDropScreen({
   initialSound = null,
   replyToDropId = null,
   initialMediaUri = null,
+  initialStep,
+  initialCapture = null,
+  initialText = null,
+  openOnMount = null,
+  resumeDraft = false,
+  onExit,
 }: {
   onPosted: () => void;
   initialSound?: string | null;
   replyToDropId?: string | null;
   initialMediaUri?: string | null;
+  /**
+   * Which step to open on. The create flow always passes 'create' — the old
+   * 'hub' is now the launcher sheet in src/create/, so landing here at 'hub'
+   * would mean two hubs. The prop stays optional so nothing else breaks.
+   */
+  initialStep?: Step;
+  /** media handed over by the create flow's camera, or a shared file */
+  initialCapture?: CapturedAsset | null;
+  /** text written on the "Create a Drop" page */
+  initialText?: string | null;
+  /** a sheet to open as soon as this mounts (the camera's gallery / sound tools) */
+  openOnMount?: 'gallery' | 'sound' | null;
+  /** restore the saved draft and land in the composer */
+  resumeDraft?: boolean;
+  /**
+   * Leave the composer. In the new flow this returns to the camera, because the
+   * camera is the root of the flow — not the hub, and not the tab host.
+   */
+  onExit?: () => void;
 }) {
   // land on the hub, unless we were opened with an intent (sound pick,
   // reply-with-drop, shared media) in which case go straight to creating
   const [step, setStep] = useState<Step>(
-    replyToDropId || initialMediaUri || initialSound ? 'create' : 'hub'
+    initialStep ??
+      (replyToDropId || initialMediaUri || initialSound || initialCapture || initialText
+        ? 'create'
+        : 'hub')
   );
 
   // The Android back control is wired further down, to stepBack() — the same
@@ -1284,6 +1312,13 @@ export default function CreateDropScreen({
   const leaveDrafting = () => {
     flushDraft();
     player?.pause();
+    // Inside the create flow there is no hub to fall back to — the launcher
+    // sheet replaced it. Exiting returns to the camera, and the draft is
+    // already on disk, so the dock's dot is what tells the user it survived.
+    if (onExit) {
+      onExit();
+      return;
+    }
     setStep('hub');
   };
 
@@ -1304,12 +1339,29 @@ export default function CreateDropScreen({
    * the whole thing is still available on the preview and the hub.
    */
   const stepBack = useCallback(() => {
-    if (step === 'hub') return false; // entry level: let the tab host decide
+    if (step === 'hub') {
+      // entry level inside the composer
+      if (onExit) {
+        onExit();
+        return true;
+      }
+      return false; // standalone: let the host decide
+    }
     flushDraft();
     player?.pause();
-    setStep(step === 'preview' ? 'editor' : step === 'editor' ? 'create' : 'hub');
+    if (step === 'create') {
+      // Behind 'create' sits the camera in the flow, and the hub only when this
+      // component is used on its own. Same answer every time you press back.
+      if (onExit) {
+        onExit();
+        return true;
+      }
+      setStep('hub');
+      return true;
+    }
+    setStep(step === 'preview' ? 'editor' : 'create');
     return true;
-  }, [step, flushDraft, player]);
+  }, [step, flushDraft, player, onExit]);
 
   // Android back runs through the same function as the on-screen arrows.
   useAndroidBack(stepBack);
@@ -1416,6 +1468,22 @@ export default function CreateDropScreen({
     setDraftStatus('saved');
     setDraftSavedAt(local?.meta.updatedAt ?? Date.now());
   };
+
+  // "Continue your draft" from the launcher.
+  //
+  // The hub used to hold the only button that called loadDraft(). The launcher
+  // sheet replaced the hub, so the sheet now calls it — through this prop —
+  // otherwise a draft would be saved, announced by the dock's dot, and then
+  // impossible to open.
+  const resumedRef = useRef(false);
+  useEffect(() => {
+    if (!resumeDraft || resumedRef.current) return;
+    resumedRef.current = true;
+    void loadDraft();
+    // mount-only: loadDraft restores state, and re-running it would overwrite
+    // whatever the user has typed since
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const discardDraft = async () => {
     if (saveTimerRef.current) {
@@ -1712,8 +1780,14 @@ export default function CreateDropScreen({
 
   // an incoming intent must never land behind the hub
   useEffect(() => {
+    if (initialText) {
+      setMode('text');
+      setContent(initialText);
+      setStep('create');
+      return;
+    }
     if (replyToDropId || initialMediaUri || initialSound) setStep('create');
-  }, [replyToDropId, initialMediaUri, initialSound]);
+  }, [replyToDropId, initialMediaUri, initialSound, initialText]);
 
   // Trending tags are the community's own: any #tag anyone posts is
   // auto-indexed into hashtags by sync_hashtags(), so this list is live.
@@ -1903,6 +1977,33 @@ export default function CreateDropScreen({
       setAssets((prev) => [...prev, asset].slice(0, 6));
     }
   };
+
+  // A capture from the flow's own camera arrives as a prop instead of as a
+  // callback, but it has to land through the same door: a video must reach the
+  // editor and a photo must join the strip, and the cover picker must see it.
+  // Two entry points, one implementation.
+  const ingestedRef = useRef(false);
+  useEffect(() => {
+    if (!initialCapture || ingestedRef.current) return;
+    ingestedRef.current = true;
+    handleCaptured(initialCapture);
+    // mount-only on purpose: a re-render must not re-ingest the same file
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // The entry camera's gallery and sound tools land here, because this is the
+  // only place that owns those sheets. The delay clears the camera's own Modal
+  // dismissal; two Modals crossing mid-animation is what used to leave the
+  // picker behind the camera on Android.
+  useEffect(() => {
+    if (!openOnMount) return;
+    const t = setTimeout(() => {
+      if (openOnMount === 'sound') setSoundOpen(true);
+      else setPickerOpen(true);
+    }, 260);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const addTagToCaption = (tag: string) => {
     setCaption((c) => {
