@@ -43,7 +43,6 @@ import {
   Animated,
   AppState,
   Image,
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -59,7 +58,8 @@ import * as ImagePicker from 'expo-image-picker';
 import { colors, radius } from '../theme';
 import Icon from '../components/ui/Icon';
 import { useInsets } from '../utils/useInsets';
-import { concatClips } from '../utils/videoProcessor';
+import { concatClips, hasNativeFFmpeg, processPhotoFilter } from '../utils/videoProcessor';
+import { useAndroidBack } from '../utils/useAndroidBack';
 
 // The camera is media: it stays dark in both themes, the same way the video
 // wells do. These are deliberately not theme tokens.
@@ -91,13 +91,6 @@ export type CapturedAsset = {
   aspect?: number;
 };
 
-// There is no camera "mode" any more. The viewfinder shoots video; PHOTO opens
-// the phone's library and TEXT leaves for the text page. Both of those are
-// destinations, not shutter settings — modelling them as a mode is what made
-// the duration chips appear in front of a photo shutter, and what made PHOTO
-// look like it was going to take a picture instead of opening your photos.
-/** the two launchers that sit beside VIDEO at the bottom of the viewfinder */
-type Launcher = 'photo' | 'text';
 type ToolId = 'timer' | 'layout' | 'ratio' | 'retouch' | 'teleprompter' | 'flash';
 
 const RATIOS = [
@@ -123,6 +116,44 @@ const LAYOUTS = [
 ] as const;
 
 const TIMERS = [0, 3, 10] as const;
+
+/**
+ * PHOTO mode: the three ways the camera can be used.
+ *
+ * VIDEO and PHOTO are MODES of one camera session — the same CameraView stays
+ * mounted and only its `mode` prop changes, because tearing down and rebuilding
+ * the session is how a preview goes black. TEXT is not a camera mode: it leaves
+ * for the text page, which owns its own background and preview.
+ */
+type CameraMode = 'video' | 'photo';
+
+/**
+ * The Snapchat-style looks. `tint` is the *preview approximation* drawn over the
+ * live feed — expo-camera exposes no colour pipeline for the preview stream, so
+ * a true live grade is not possible in this stack. The grade itself is real: it
+ * is baked into the JPEG by processPhotoFilter (videoProcessor), and the review
+ * step shows the actual filtered file, not the approximation.
+ *
+ * Ids must match photoFilterToVf() in src/utils/videoProcessor.ts.
+ */
+const PHOTO_FILTERS: {
+  id: string;
+  label: string;
+  /** live-preview approximation; null = nothing to draw */
+  tint: string | null;
+  tintOpacity: number;
+}[] = [
+  { id: 'normal', label: 'Normal', tint: null, tintOpacity: 0 },
+  { id: 'natural', label: 'Natural', tint: '#FFE9C9', tintOpacity: 0.1 },
+  { id: 'warm', label: 'Warm', tint: '#FF9E3D', tintOpacity: 0.16 },
+  { id: 'cool', label: 'Cool', tint: '#4F8BFF', tintOpacity: 0.16 },
+  { id: 'vintage', label: 'Vintage', tint: '#C8A15A', tintOpacity: 0.2 },
+  { id: 'cinematic', label: 'Cinematic', tint: '#123A6B', tintOpacity: 0.22 },
+  { id: 'mono', label: 'B&W', tint: '#8A8A8A', tintOpacity: 0.18 },
+  { id: 'glow', label: 'Soft Glow', tint: '#FFF0E0', tintOpacity: 0.18 },
+  { id: 'vivid', label: 'Vivid', tint: '#FF2E88', tintOpacity: 0.1 },
+  { id: 'dreamy', label: 'Dreamy', tint: '#B49BFF', tintOpacity: 0.18 },
+];
 
 export default function CaptureScreen({
   visible,
@@ -160,7 +191,7 @@ export default function CaptureScreen({
    */
   onPickedMedia: (assets: CapturedAsset[]) => void;
   onTextMode: () => void;
-  /** sits above every camera control, inside the same Modal */
+  /** sits above every camera control, inside the same view */
   overlay?: React.ReactNode;
 }) {
   const insets = useInsets();
@@ -176,6 +207,19 @@ export default function CaptureScreen({
   const camRef = useRef<React.ComponentRef<typeof CameraView> | null>(null);
 
   const [facing, setFacing] = useState<'back' | 'front'>('back');
+  // One camera, two modes. Switching VIDEO ⇄ PHOTO must not remount the
+  // CameraView: a remount is a teardown of the sensor session, and on Android a
+  // preview that is torn down mid-life frequently comes back black.
+  const [mode, setMode] = useState<CameraMode>('video');
+  const [photoFilter, setPhotoFilter] = useState('normal');
+  // the shot that came back from takePictureAsync, with its graded file
+  const [shot, setShot] = useState<{ uri: string; width: number; height: number } | null>(null);
+  const [shooting, setShooting] = useState(false);
+  // A camera that fails to open used to look exactly like a camera pointed at a
+  // dark room: a black rectangle and no explanation. These two carry the reason
+  // and everything needed to retry.
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [cameraKey, setCameraKey] = useState(0);
   const [muted, setMuted] = useState(false);
   const [timer, setTimer] = useState<(typeof TIMERS)[number]>(0);
   const [ratio, setRatio] = useState<(typeof RATIOS)[number]['id']>('9:16');
@@ -255,17 +299,20 @@ export default function CaptureScreen({
     let alive = true;
     (async () => {
       try {
-        const perm = await MediaLibrary.getPermissionsAsync();
+        // Images only. The strip shows photographs, so asking for video (or for
+        // write access) would be a wider permission than the feature needs —
+        // and on Android 13+ the system grants images and video separately.
+        const perm = await MediaLibrary.getPermissionsAsync(false, ['photo']);
         let granted = perm.granted;
         if (!granted && perm.canAskAgain) {
-          const asked = await MediaLibrary.requestPermissionsAsync();
+          const asked = await MediaLibrary.requestPermissionsAsync(false, ['photo']);
           granted = asked.granted;
         }
         if (!granted || !alive) return;
         const page = await MediaLibrary.getAssetsAsync({
           first: 2,
           sortBy: ['creationTime'],
-          mediaType: ['photo', 'video'],
+          mediaType: ['photo'],
         });
         if (!alive) return;
         setRecent(
@@ -282,6 +329,45 @@ export default function CaptureScreen({
       alive = false;
     };
   }, [visible]);
+
+  // ---------------------------------------------------------------
+  // Camera permission — asked for once, when the camera opens
+  //
+  // The old order was backwards: the CameraView mounted on the first render,
+  // while the permission hook was still resolving (`permission === null`), so
+  // the native session was created with no CAMERA grant. Android refuses to
+  // open the device, expo-camera reports a mount error that nothing listened
+  // for, and the view stayed black even after the grant landed — the failed
+  // session is never retried by itself. That is the black screen.
+  //
+  // Now: never mount until the grant is in hand, and ask as soon as we know we
+  // can. `askedRef` keeps the system dialog from being fired in a loop when the
+  // user dismisses it without choosing.
+  // ---------------------------------------------------------------
+  const askedRef = useRef(false);
+  useEffect(() => {
+    if (!visible || !permission || permission.granted) return;
+    if (!permission.canAskAgain || askedRef.current) return;
+    askedRef.current = true;
+    void requestPermission();
+  }, [visible, permission, requestPermission]);
+
+  /**
+   * A stall is a third failure mode: the permission is granted, no mount error
+   * arrives, and onCameraReady never fires — leaving "Starting camera…" on
+   * screen forever. Eight seconds is longer than any real camera takes to come
+   * up, and after that the honest thing is to name the likely cause and offer
+   * the retry.
+   */
+  useEffect(() => {
+    if (!visible || !permission?.granted || ready || cameraError) return;
+    const id = setTimeout(() => {
+      setCameraError(
+        'The camera did not respond. If another app is using it, close that app and try again.'
+      );
+    }, 8000);
+    return () => clearTimeout(id);
+  }, [visible, permission, ready, cameraError]);
 
   // ---------------------------------------------------------------
   // Teleprompter — a looping scroll, with the two things that decide whether
@@ -347,13 +433,42 @@ export default function CaptureScreen({
   }, [recording, capMs, committedMs]);
 
   // Leaving the app mid-recording would otherwise leave a camera session open.
+  const [appActive, setAppActive] = useState(true);
   useEffect(() => {
     const sub = AppState.addEventListener('change', (s) => {
+      setAppActive(s === 'active');
       if (s !== 'active' && recordingRef.current) void stopRecording();
     });
     return () => sub.remove();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * Android back, now that the camera is a plain view again.
+   *
+   * While it was a <Modal> the back control came in through onRequestClose for
+   * free. It unwinds the most local thing first — the photo review, then an open
+   * tool panel, then a recording — and only then leaves the camera.
+   */
+  useAndroidBack(
+    () => {
+      if (shot) {
+        setShot(null);
+        return true;
+      }
+      if (tool) {
+        setTool(null);
+        return true;
+      }
+      if (recordingRef.current) {
+        void stopRecording();
+        return true;
+      }
+      closeCamera();
+      return true;
+    },
+    visible && !!permission?.granted
+  );
 
   const clearCountdown = () => {
     if (countdownRef.current) clearInterval(countdownRef.current);
@@ -472,11 +587,10 @@ export default function CaptureScreen({
       if (busy) return;
       setError(null);
       try {
-        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (!perm.granted) {
-          setError('Photo access is off — allow it to pick from your library.');
-          return;
-        }
+        // NO permission request here on purpose. On Android 13+ and iOS 14+ the
+        // library picker runs in the system process and hands back only the
+        // files the user taps — asking for READ_MEDIA_IMAGES first would demand
+        // access to the entire gallery to do a job that never needs it.
         const res = await ImagePicker.launchImageLibraryAsync({
           mediaTypes: kind === 'images' ? ['images'] : ['images', 'videos'],
           allowsMultipleSelection: true,
@@ -504,19 +618,121 @@ export default function CaptureScreen({
     [busy, onPickedMedia]
   );
 
+  /**
+   * A session that failed to open cannot be revived from JS: the native camera
+   * holds the failure, not us. Remounting with a new key is the only real retry,
+   * and it is why this button exists at all instead of a silent black view.
+   */
+  const retryCamera = () => {
+    setCameraError(null);
+    setReady(false);
+    setCameraKey((k) => k + 1);
+  };
+
+  /**
+   * PHOTO — the shutter takes a picture here, in this viewfinder.
+   *
+   * It does NOT open the phone's library (that is the gallery button, bottom
+   * left) and it does not unmount the camera. The shot lands in `shot`, which
+   * opens the review overlay, where it is either used or retaken.
+   *
+   * The look is baked into the file before review, so what the review shows is
+   * the photograph that will be posted — not a tint over it.
+   */
+  const takePhoto = useCallback(async () => {
+    if (!camRef.current || shooting) return;
+    setShooting(true);
+    setError(null);
+    try {
+      // No options cast: `takePictureAsync` is overloaded on `pictureRef`, and
+      // an `any` here silently picks the PictureRef overload, whose result has
+      // no `.uri` at all — the shot then "fails" with no image behind it.
+      const pic = await camRef.current.takePictureAsync({
+        quality: 0.92,
+        exif: false,
+      });
+      if (!pic?.uri) throw new Error('The camera returned no image.');
+
+      let uri: string = pic.uri;
+      if (photoFilter !== 'normal') {
+        if (hasNativeFFmpeg()) {
+          try {
+            uri = await processPhotoFilter(pic.uri, photoFilter);
+          } catch {
+            setError('That look could not be applied — the photo was saved ungraded.');
+          }
+        } else {
+          setError(
+            'Looks are baked with the video encoder, which this build does not have. Photo saved ungraded.'
+          );
+        }
+      }
+      setShot({ uri, width: pic.width ?? 0, height: pic.height ?? 0 });
+    } catch (e: any) {
+      setError(e?.message ?? 'The photo could not be captured.');
+    } finally {
+      setShooting(false);
+    }
+  }, [shooting, photoFilter]);
+
+  /** Use the shot: hand it to the composer as a normal captured asset. */
+  const acceptShot = () => {
+    if (!shot) return;
+    const s = shot;
+    setShot(null);
+    setError(null);
+    onCaptured({
+      uri: s.uri,
+      width: s.width,
+      height: s.height,
+      type: 'image',
+      fileName: `photo-${Date.now()}.jpg`,
+      mimeType: 'image/jpeg',
+      durationMs: null,
+    });
+  };
+
+  /**
+   * VIDEO ⇄ PHOTO without losing the camera.
+   *
+   * Allowed mid-nothing: a recording in flight and a take with clips both own
+   * the session, and switching under them would strand work. Everything else is
+   * a no-op beyond the `mode` prop.
+   */
+  const switchMode = (next: CameraMode) => {
+    if (next === mode) return;
+    if (recordingRef.current) {
+      setError('Stop recording before switching mode.');
+      return;
+    }
+    if (mode === 'video' && clips.length > 0) {
+      setError('Finish or delete your clips before switching to PHOTO.');
+      return;
+    }
+    setError(null);
+    setTool(null);
+    setMode(next);
+  };
+
   const fire = useCallback(() => {
+    if (mode === 'photo') {
+      void takePhoto();
+      return;
+    }
     if (recordingRef.current) {
       void stopRecording();
       return;
     }
     void startRecording();
-  }, [startRecording, stopRecording]);
+  }, [mode, startRecording, stopRecording, takePhoto]);
 
   const armShutter = useCallback(() => {
     if (recordingRef.current) {
       void stopRecording();
       return;
     }
+    // one shot at a time: a double-tap must not queue two captures
+    if (shooting) return;
     if (timer === 0) {
       fire();
       return;
@@ -536,7 +752,7 @@ export default function CaptureScreen({
         beep();
       }
     }, 1000);
-  }, [beep, fire, timer]);
+  }, [beep, fire, timer, shooting]);
 
   /**
    * Flip, but not mid-take.
@@ -657,13 +873,14 @@ export default function CaptureScreen({
     return `${m}:${String(s).padStart(2, '0')}`;
   };
 
+  if (!visible) return null;
+
   // ---------------------------------------------------------------
   // Permission gate — a real screen, not a silent black rectangle
   // ---------------------------------------------------------------
   if (permission && !permission.granted) {
     return (
-      <Modal visible={visible} animationType="slide" statusBarTranslucent onRequestClose={closeCamera}>
-        <View style={[styles.root, styles.permWrap]}>
+      <View style={[styles.root, styles.permWrap]}>
           <View style={styles.permCard}>
             <View style={styles.permIcon}>
               <Icon name="camera-outline" size={26} color={colors.accent} />
@@ -684,26 +901,99 @@ export default function CaptureScreen({
               camera access is denied — permanently, from the system dialog —
               this is the screen the user lands on, and without the launcher
               they could never reach "Create a Drop" again from the + button. */}
-          {overlay}
-        </View>
-      </Modal>
+        {overlay}
+      </View>
     );
   }
 
+  const granted = !!permission?.granted;
+  // Two honest loading states in one flag: the permission hook has not answered
+  // yet, or it has granted and the native session has not come up. Either way
+  // the alternative is an unlit rectangle with no explanation.
+  const starting = !cameraError && (!permission || (granted && !ready));
+  const filterTint = PHOTO_FILTERS.find((f) => f.id === photoFilter) ?? PHOTO_FILTERS[0];
+
   return (
-    <Modal visible={visible} animationType="slide" statusBarTranslucent onRequestClose={onClose}>
-      <View style={styles.root}>
+    <View style={styles.root}>
+      {/*
+        THE CAMERA — one instance, mounted for as long as this screen is.
+
+        Three rules live here, and each one is a black screen that was fixed:
+          1. It only mounts with a granted permission (`granted`), because a
+             session created before the grant fails and is never retried.
+          2. It is NOT inside a <Modal>. On Android the modal's dialog window
+             owns a different surface than the activity, and a preview attached
+             there can come back black or vanish when the modal is re-shown.
+          3. Its props change; its identity does not. VIDEO ⇄ PHOTO switches
+             `mode`, flipping switches `facing` — neither remounts the view.
+      */}
+      {granted && (
         <CameraView
+          key={cameraKey}
           ref={camRef as any}
           style={StyleSheet.absoluteFill}
           facing={facing}
-          mode="video"
+          mode={mode === 'photo' ? 'picture' : 'video'}
           mute={muted}
-          // torch is a rear-sensor property; asking for it on the selfie camera
-          // throws on some devices and is ignored on the rest
-          enableTorch={torch && facing === 'back'}
-          onCameraReady={() => setReady(true)}
+          // Hold the sensor only while the app is in front. Backgrounding with
+          // the session open is how a camera ends up "in use by another app"
+          // on Android and comes back black on the next open.
+          active={appActive}
+          // The torch is a rear-sensor property, and in PHOTO mode the shutter
+          // flash is the right tool — asking for the torch there throws on some
+          // devices and is ignored on the rest.
+          enableTorch={mode === 'video' && torch && facing === 'back'}
+          flash={mode === 'photo' && torch && facing === 'back' ? 'on' : 'off'}
+          onCameraReady={() => {
+            setReady(true);
+            setCameraError(null);
+          }}
+          // Without this the failure is invisible: no callback, no message, just
+          // a black rectangle that looks like a broken camera.
+          onMountError={(e: { message?: string }) => {
+            setReady(false);
+            setCameraError(e?.message ?? 'The camera could not start on this device.');
+          }}
         />
+      )}
+
+      {/* PHOTO look, as a preview approximation. expo-camera hands JS no colour
+          pipeline for the preview stream, so this is a tint — the real grade is
+          baked into the JPEG at capture and shown in the review step. It is
+          drawn under the chrome and never intercepts a touch. */}
+      {mode === 'photo' && !!filterTint.tint && (
+        <View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFill,
+            { backgroundColor: filterTint.tint, opacity: filterTint.tintOpacity },
+          ]}
+        />
+      )}
+
+      {/* Starting / failed camera. Both sit above the preview and below the
+          controls, so the shutter is never covered by an error. */}
+      {starting && (
+        <View style={styles.cameraState} pointerEvents="none">
+          <ActivityIndicator color={colors.accent} />
+          <Text style={styles.cameraStateText}>Starting camera…</Text>
+        </View>
+      )}
+      {!!cameraError && (
+        <View style={styles.cameraState}>
+          <View style={styles.cameraErrorCard}>
+            <Icon name="alert-circle-outline" size={24} color={colors.accent} />
+            <Text style={styles.cameraErrorTitle}>Camera unavailable</Text>
+            <Text style={styles.cameraErrorBody}>{cameraError}</Text>
+            <Pressable style={styles.permBtn} onPress={retryCamera} accessibilityLabel="Retry camera">
+              <Text style={styles.permBtnText}>Try again</Text>
+            </Pressable>
+            <Pressable onPress={closeCamera} hitSlop={10} style={styles.permSkip}>
+              <Text style={styles.permSkipText}>Close</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
 
         {/* Retouch. The veil is the preview of a grade that is handed to the
             composer and applied at export (videoProcessor 'retouch-soft' /
@@ -1137,84 +1427,158 @@ export default function CaptureScreen({
               user deserves to know before they post it. */}
           {!error && !!audioNote && <Text style={styles.note}>{audioNote}</Text>}
 
-          {/* Recording length. This is a VIDEO setting — 15s/60s/3m/10m is how
-              long the take runs, and it means nothing at all next to a photo,
-              which is why it is not shown in front of the library any more. */}
-          <View style={styles.durRow}>
-            {DURATIONS.map((d) => (
-              <Pressable
-                key={d.id}
-                onPress={() => (takeLocked ? lockedNudge() : setDuration(d.id))}
-                style={[
-                  styles.durChip,
-                  duration === d.id && styles.durChipOn,
-                  takeLocked && styles.lockedDim,
-                ]}
-                accessibilityLabel={`Record up to ${d.label}`}
+          {/* PHOTO looks. A horizontal carousel, above the shutter, where a
+              thumb reaches it. The chosen look is bordered; the tint over the
+              preview is an approximation and the note underneath says so,
+              because the real grade lands on the photo, not on the viewfinder. */}
+          {mode === 'photo' && (
+            <View style={styles.filterWrap}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.filterRow}
               >
-                <Text style={[styles.durText, duration === d.id && styles.durTextOn]}>
-                  {d.label}
+                {PHOTO_FILTERS.map((f) => {
+                  const on = photoFilter === f.id;
+                  return (
+                    <Pressable
+                      key={f.id}
+                      onPress={() => setPhotoFilter(f.id)}
+                      style={styles.filterItem}
+                      accessibilityState={{ selected: on }}
+                      accessibilityLabel={`${f.label} look`}
+                    >
+                      <View
+                        style={[
+                          styles.filterSwatch,
+                          on && styles.filterSwatchOn,
+                          f.tint ? { backgroundColor: f.tint } : styles.filterSwatchPlain,
+                        ]}
+                      />
+
+                      <Text style={[styles.filterLabel, on && styles.filterLabelOn]} numberOfLines={1}>
+                        {f.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+              <Text style={styles.filterNote}>
+                {photoFilter === 'normal'
+                  ? 'No look — the photo is posted as shot.'
+                  : 'Look is baked into the photo when you shoot.'}
+              </Text>
+            </View>
+          )}
+
+          {/* Recording length. This is a VIDEO setting — 15s/60s/3m/10m is how
+              long the take runs, and it means nothing at all next to a photo. */}
+          {mode === 'video' && (
+            <View style={styles.durRow}>
+              {DURATIONS.map((d) => (
+                <Pressable
+                  key={d.id}
+                  onPress={() => (takeLocked ? lockedNudge() : setDuration(d.id))}
+                  style={[
+                    styles.durChip,
+                    duration === d.id && styles.durChipOn,
+                    takeLocked && styles.lockedDim,
+                  ]}
+                  accessibilityLabel={`Record up to ${d.label}`}
+                >
+                  <Text style={[styles.durText, duration === d.id && styles.durTextOn]}>
+                    {d.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
+
+          {/* VIDEO and PHOTO are modes of THIS camera — the selection is the
+              state of the camera, so it is always visible and never more than
+              one. TEXT is a destination and wears a mode's clothes on purpose:
+              it is the third thing you can make, and it belongs in the same
+              row. */}
+          <View style={styles.modePills}>
+            {(
+              [
+                { id: 'video' as CameraMode, label: 'VIDEO' },
+                { id: 'photo' as CameraMode, label: 'PHOTO' },
+              ]
+            ).map((m) => (
+              <Pressable
+                key={m.id}
+                onPress={() => switchMode(m.id)}
+                style={[styles.modePill, mode === m.id && styles.modePillOn]}
+                accessibilityState={{ selected: mode === m.id }}
+                accessibilityLabel={`${m.label} mode`}
+              >
+                <Text style={[styles.modePillText, mode === m.id && styles.modePillTextOn]}>
+                  {m.label}
                 </Text>
               </Pressable>
             ))}
-          </View>
-
-          {/* VIDEO is the viewfinder you are looking through. PHOTO and TEXT are
-              destinations: one opens your library, the other leaves for the
-              text page. They are actions wearing a tab's clothes, and they sit
-              deliberately unselected because there is nothing to be selected —
-              pressing them leaves this screen. */}
-          <View style={styles.modePills}>
-            <View style={[styles.modePill, styles.modePillOn]}>
-              <Text style={[styles.modePillText, styles.modePillTextOn]}>VIDEO</Text>
-            </View>
-            {(['photo', 'text'] as Launcher[]).map((l) => (
-              <Pressable
-                key={l}
-                onPress={() => {
-                  setTool(null);
-                  if (l === 'text') onTextMode();
-                  else void openLibrary('images');
-                }}
-                style={styles.modePill}
-                accessibilityLabel={l === 'photo' ? 'Pick photos from your library' : 'Create a text drop'}
-              >
-                <Text style={styles.modePillText}>{l.toUpperCase()}</Text>
-              </Pressable>
-            ))}
+            <Pressable
+              onPress={() => {
+                setTool(null);
+                onTextMode();
+              }}
+              style={styles.modePill}
+              accessibilityLabel="Create a text drop"
+            >
+              <Text style={styles.modePillText}>TEXT</Text>
+            </Pressable>
           </View>
 
           <View style={styles.shutterRow}>
-            {/* gallery tiles first, so the shutter stays optically centred */}
+            {/* The gallery shortcut: two real recent photos in a layered card,
+                so it reads as "your media" rather than "an icon". It opens the
+                system picker; it is never a mode. */}
             <View style={styles.galleryRow}>
-              {recent.length > 0 ? (
-                recent.map((r, i) => (
-                  <Pressable
-                    key={`${r.uri}-${i}`}
-                    onPress={() => void openLibrary('any')}
-                    style={[styles.galTile, i === recent.length - 1 && styles.galTileActive]}
-                  >
-                    <Image source={{ uri: r.uri }} style={styles.galImg} />
-                    {r.isVideo && (
+              <Pressable
+                onPress={() => void openLibrary('any')}
+                style={styles.galBtn}
+                accessibilityLabel="Import a photo or video from your gallery"
+              >
+                {recent.length > 1 && (
+                  <View style={styles.galCardBack} pointerEvents="none">
+                    <Image source={{ uri: recent[1].uri }} style={styles.galBackImg} />
+                  </View>
+                )}
+                {recent.length > 0 ? (
+                  <View style={[styles.galCard, recent.length > 1 && styles.galCardStacked]}>
+                    <Image source={{ uri: recent[0].uri }} style={styles.galImg} />
+                    {recent[0].isVideo && (
                       <View style={styles.galPlay}>
                         <Icon name="play" size={9} color={WHITE} />
                       </View>
                     )}
-                  </Pressable>
-                ))
-              ) : (
-                <Pressable onPress={() => void openLibrary('any')} style={[styles.galTile, styles.galEmpty]}>
-                  <Icon name="images-outline" size={16} color={WHITE} />
-                </Pressable>
-              )}
+                  </View>
+                ) : (
+                  <View style={[styles.galCard, styles.galCardEmpty]}>
+                    <Icon name="images-outline" size={20} color={WHITE} />
+                    <Text style={styles.galEmptyText}>Import</Text>
+                  </View>
+                )}
+                <View style={styles.galBadge} pointerEvents="none">
+                  <Icon name="add" size={11} color={INK} />
+                </View>
+              </Pressable>
             </View>
 
             <Pressable
               onPress={armShutter}
-              disabled={!ready || busy}
+              disabled={!ready || busy || shooting}
               style={styles.shutterOuter}
+              accessibilityRole="button"
               accessibilityLabel={
-                recording ? 'Stop recording' : clips.length > 0 ? 'Record another clip' : 'Start recording'
+                mode === 'photo'
+                  ? 'Take a photo'
+                  : recording
+                    ? 'Stop recording'
+                    : clips.length > 0
+                      ? 'Record another clip'
+                      : 'Start recording'
               }
             >
               <View style={[styles.shutterRing, recording && styles.shutterRingRec]} />
@@ -1238,7 +1602,7 @@ export default function CaptureScreen({
                   },
                 ]}
               >
-                {busy && !recording ? (
+                {(busy && !recording) || shooting ? (
                   <ActivityIndicator color={INK} size="small" />
                 ) : recording ? (
                   <View style={styles.shutterStop} />
@@ -1279,13 +1643,53 @@ export default function CaptureScreen({
           </View>
         </View>
 
-        {/* Whatever the caller needs above the camera — the create launcher
-            sheet, for one. Rendered INSIDE this Modal on purpose: a sibling
-            <Modal> stacks by render order on Android, which is the race that
-            used to leave the sound sheet behind the camera. */}
-        {overlay}
-      </View>
-    </Modal>
+      {/* ---------- photo review ----------
+          This is the graded file, not the tinted preview: the look was baked
+          before the review opened, so Retake or Use decides between two real
+          photographs. The camera stays mounted underneath, which is why Retake
+          is instant. */}
+      {shot && (
+        <View style={styles.reviewRoot}>
+          <Image
+            source={{ uri: shot.uri }}
+            style={StyleSheet.absoluteFill}
+            resizeMode="contain"
+            accessibilityLabel="Photo preview"
+          />
+          <View style={[styles.reviewTop, { paddingTop: insets.top + 10 }]} pointerEvents="none">
+            <View style={styles.reviewBadge}>
+              <Icon name="sparkles-outline" size={12} color={WHITE} />
+              <Text style={styles.reviewBadgeText}>
+                {PHOTO_FILTERS.find((f) => f.id === photoFilter)?.label ?? 'Normal'}
+              </Text>
+            </View>
+          </View>
+          <View style={[styles.reviewBar, { paddingBottom: insets.bottom + 18 }]}>
+            <Pressable
+              onPress={() => setShot(null)}
+              style={styles.reviewGhost}
+              accessibilityLabel="Retake the photo"
+            >
+              <Icon name="refresh-outline" size={17} color={WHITE} />
+              <Text style={styles.reviewGhostText}>Retake</Text>
+            </Pressable>
+            <Pressable
+              onPress={acceptShot}
+              style={styles.reviewPrimary}
+              accessibilityLabel="Use this photo"
+            >
+              <Text style={styles.nextText}>Use photo</Text>
+              <Icon name="arrow-forward" size={15} color={INK} />
+            </Pressable>
+          </View>
+        </View>
+      )}
+
+      {/* Whatever the caller needs above the camera — the create launcher
+          sheet, for one. Rendered inside this view on purpose so it stacks
+          above the chrome instead of racing a sibling window on Android. */}
+      {overlay}
+    </View>
   );
 }
 
@@ -1331,6 +1735,88 @@ const styles = StyleSheet.create({
   permBtnText: { color: INK, fontWeight: '800', fontSize: 14 },
   permSkip: { marginTop: 14 },
   permSkipText: { color: colors.textFaint, fontSize: 13, fontWeight: '600' },
+
+  // ---------------- camera state ----------------
+  // "Starting…" and "could not start" are different states and neither is a
+  // black rectangle with no explanation.
+  cameraState: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  cameraStateText: { color: 'rgba(255,255,255,0.72)', fontSize: 12, fontWeight: '700' },
+  cameraErrorCard: {
+    width: '84%',
+    borderRadius: radius.lg,
+    padding: 20,
+    alignItems: 'center',
+    backgroundColor: GLASS,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    gap: 8,
+  },
+  cameraErrorTitle: { color: WHITE, fontSize: 15, fontWeight: '800' },
+  cameraErrorBody: {
+    color: 'rgba(255,255,255,0.66)',
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+
+  // ---------------- photo review ----------------
+  reviewRoot: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000' },
+  reviewTop: { position: 'absolute', top: 0, left: 0, right: 0, alignItems: 'center' },
+  reviewBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(7,4,15,0.6)',
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+  },
+  reviewBadgeText: { color: WHITE, fontSize: 11, fontWeight: '700' },
+  reviewBar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 22,
+    paddingTop: 16,
+    gap: 14,
+    backgroundColor: 'rgba(7,4,15,0.55)',
+  },
+  reviewGhost: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.28)',
+  },
+  reviewGhostText: { color: WHITE, fontSize: 14, fontWeight: '700' },
+  reviewPrimary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
+    borderRadius: radius.pill,
+    backgroundColor: colors.accent,
+  },
 
   // ---------------- overlays ----------------
   retouchVeil: {
@@ -1622,19 +2108,90 @@ const styles = StyleSheet.create({
   modePillText: { color: 'rgba(255,255,255,0.62)', fontSize: 12, fontWeight: '800', letterSpacing: 0.8 },
   modePillTextOn: { color: INK },
 
+  // ---------------- photo looks ----------------
+  filterWrap: { gap: 6 },
+  // paddingHorizontal gives the first and last swatch room to clear the screen
+  // edge, so the row does not look clipped when it is scrolled to either end.
+  filterRow: { gap: 12, paddingHorizontal: 4, paddingVertical: 2 },
+  filterItem: { width: 60, alignItems: 'center', gap: 5 },
+  filterSwatch: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: 'rgba(255,255,255,0.10)',
+  },
+  filterSwatchOn: { borderColor: colors.accent },
+  filterSwatchPlain: { backgroundColor: 'rgba(7,4,15,0.42)' },
+  filterLabel: {
+    color: 'rgba(255,255,255,0.62)',
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
+  filterLabelOn: { color: colors.accent },
+  filterNote: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 10,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+
   shutterRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   galleryRow: { flexDirection: 'row', gap: 8, width: 130 },
-  galTile: {
+  // The layered media button. A back card peek, a real front card, and a small
+  // "add" badge — the same visual grammar TikTok uses, so the shortcut is read
+  // as "your media" before any label is read.
+  galBtn: { width: 66, height: 66, justifyContent: 'center' },
+  galCardBack: {
+    position: 'absolute',
+    left: 14,
+    top: 0,
     width: 46,
     height: 58,
     borderRadius: radius.md,
     overflow: 'hidden',
-    backgroundColor: 'rgba(255,255,255,0.10)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.14)',
+    borderColor: 'rgba(255,255,255,0.18)',
+    transform: [{ rotate: '7deg' }],
   },
-  galTileActive: { borderColor: colors.accent, borderWidth: 1.5 },
-  galEmpty: { alignItems: 'center', justifyContent: 'center' },
+  galBackImg: { width: '100%', height: '100%', opacity: 0.75 },
+  galCard: {
+    position: 'absolute',
+    left: 0,
+    top: 4,
+    width: 52,
+    height: 62,
+    borderRadius: radius.md,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255,255,255,0.10)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.7)',
+  },
+  galCardStacked: { borderColor: WHITE },
+  galCardEmpty: { alignItems: 'center', justifyContent: 'center', gap: 4 },
+  galEmptyText: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+  },
+  galBadge: {
+    position: 'absolute',
+    right: 0,
+    bottom: 0,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: WHITE,
+    borderWidth: 2,
+    borderColor: INK,
+  },
   galImg: { width: '100%', height: '100%' },
   galPlay: {
     position: 'absolute',

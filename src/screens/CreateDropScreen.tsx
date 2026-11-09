@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -668,6 +668,7 @@ export default function CreateDropScreen({
   initialCapture = null,
   initialAssets = null,
   initialText = null,
+  initialTextBg = null,
   initialSoundPicked = null,
   openOnMount = null,
   resumeDraft = false,
@@ -696,6 +697,8 @@ export default function CreateDropScreen({
   initialAssets?: CapturedAsset[] | null;
   /** text written on the "Create a Drop" page */
   initialText?: string | null;
+  /** the card colour chosen on that page, so the Drop posts in it */
+  initialTextBg?: string | null;
   /** a sound chosen on the camera, carried in with the clip */
   initialSoundPicked?: PickedSound | null;
   /** a sheet to open as soon as this mounts (the camera's gallery / sound tools) */
@@ -1833,11 +1836,13 @@ export default function CreateDropScreen({
     if (initialText) {
       setMode('text');
       setContent(initialText);
+      // the colour chosen on the text page is the colour this posts in
+      if (initialTextBg) setTextColor(initialTextBg);
       setStep('create');
       return;
     }
     if (replyToDropId || initialMediaUri || initialSound) setStep('create');
-  }, [replyToDropId, initialMediaUri, initialSound, initialText]);
+  }, [replyToDropId, initialMediaUri, initialSound, initialText, initialTextBg]);
 
   // Trending tags are the community's own: any #tag anyone posts is
   // auto-indexed into hashtags by sync_hashtags(), so this list is live.

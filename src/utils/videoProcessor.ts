@@ -119,6 +119,86 @@ function cleanPath(p: string): string {
 }
 
 // ============================================================
+// Camera studio — photo filters
+// ============================================================
+// The ids here MUST match PHOTO_FILTERS in src/screens/CaptureScreen.tsx. They
+// are baked into the captured JPEG, not painted over a preview: a photo carries
+// its look with it into the composer, the upload, the feed.
+//
+// Only primitives this build is already proven to run (eq, colorbalance, hue,
+// unsharp) are used. A missing filter fails the capture outright, so an exotic
+// chain for a prettier name is not a trade worth making here.
+export function photoFilterToVf(id: string | null | undefined): string | null {
+  switch (id) {
+    case 'natural':
+      return 'eq=brightness=0.03:contrast=1.03:saturation=1.05';
+    case 'warm':
+      return 'colorbalance=rs=0.10:gs=0.02:bs=-0.10,eq=saturation=1.05';
+    case 'cool':
+      return 'colorbalance=rs=-0.08:gs=0.00:bs=0.10,eq=saturation=1.03';
+    case 'vintage':
+      return 'eq=saturation=0.72:contrast=0.94:brightness=0.05,colorbalance=rs=0.08:bs=-0.04';
+    case 'cinematic':
+      return 'eq=contrast=1.16:saturation=0.90:brightness=-0.03,colorbalance=rs=0.05:bs=0.07';
+    case 'mono':
+      return 'hue=s=0,eq=contrast=1.12';
+    case 'glow':
+      return 'eq=brightness=0.07:saturation=1.06,unsharp=7:7:-0.8';
+    case 'vivid':
+      return 'eq=saturation=1.35:contrast=1.10';
+    case 'dreamy':
+      return 'eq=brightness=0.06:saturation=1.12,colorbalance=rs=0.06:bs=0.08,unsharp=7:7:-0.5';
+    default:
+      return null;
+  }
+}
+
+/**
+ * Grades a captured JPEG to one of the camera studio looks and returns the new
+ * file. 'normal' (or an unknown id) returns the original uri untouched — no
+ * pointless re-encode, no quality loss for a no-op.
+ */
+export async function processPhotoFilter(
+  uri: string,
+  filterId: string | null | undefined
+): Promise<string> {
+  const vf = photoFilterToVf(filterId);
+  if (!vf) return uri;
+  if (!modulePresent()) throw new Error('video encoder unavailable');
+
+  const fs: any = await import('expo-file-system/legacy');
+  const dir = `${fs.cacheDirectory}drop-photo/`;
+  try {
+    await fs.makeDirectoryAsync(dir, { intermediates: true });
+  } catch {
+    // exists
+  }
+  const out = `${dir}shot-${Date.now()}.jpg`;
+
+  await exec(
+    [
+      '-y',
+      '-i',
+      cleanPath(uri),
+      // yuvj420p is the full-range JPEG pixel format; without it the grade comes
+      // back washed out on Android decoders
+      '-vf',
+      `${vf},format=yuvj420p`,
+      '-frames:v',
+      '1',
+      '-q:v',
+      '2',
+      cleanPath(out),
+    ],
+    60000
+  );
+
+  const meta = await probeMediaMeta(out);
+  if (meta && !meta.hasVideo) throw new Error('encoder produced no image output');
+  return out;
+}
+
+// ============================================================
 // Reading an ffmpeg failure
 // ============================================================
 //

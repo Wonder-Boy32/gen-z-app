@@ -13,6 +13,14 @@
       "expo-audio",
       "expo-dev-client",
       [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Gen Z to use your camera so you can record a moment.",
+          "microphonePermission": "Allow Gen Z to use your microphone so your videos have sound.",
+          "recordAudioAndroid": true
+        }
+      ],
+      [
         "expo-notifications",
         {
           "icon": "./assets/notif-icon.png",

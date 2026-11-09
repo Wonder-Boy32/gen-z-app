@@ -31,19 +31,29 @@ import { useInsets } from '../utils/useInsets';
 
 const LIMIT = 600;
 
+/**
+ * Card backgrounds. These are the same six the composer's text card already
+ * offers, so the colour chosen here is the colour that posts — not a preview of
+ * a palette the composer does not have.
+ */
+const CARD_COLORS = ['#0C1030', '#FF9A2E', '#8B5CF6', '#FF5C7C', '#34D399', '#1E2466'] as const;
+const isDarkCard = (c: string) => c === '#0C1030' || c === '#1E2466';
+
 export default function TextImagePage({
   onBack,
   onNext,
 }: {
   onBack: () => void;
-  /** hands the text to the composer, which renders and posts it */
-  onNext: (text: string) => void;
+  /** hands the text AND its card colour to the composer, which posts it */
+  onNext: (text: string, bg: string) => void;
 }) {
   const insets = useInsets();
   const [text, setText] = useState('');
+  const [bg, setBg] = useState<string>(CARD_COLORS[0]);
 
   const trimmed = text.trim();
   const ready = trimmed.length > 0;
+  const dark = isDarkCard(bg);
 
   return (
     <KeyboardAvoidingView
@@ -67,19 +77,42 @@ export default function TextImagePage({
       </View>
 
       <View style={styles.body}>
-        <View style={styles.card}>
+        {/* The card IS the preview: it is painted in the chosen background with
+            the text in the same contrast colour the composer will post, so
+            nothing about the final image is a surprise. */}
+        <View style={[styles.card, { backgroundColor: bg, borderColor: bg }]}>
           <TextInput
             value={text}
             onChangeText={(v) => setText(v.slice(0, LIMIT))}
             placeholder="Share your thoughts or questions to spark discussions"
-            placeholderTextColor={colors.textFaint}
-            style={styles.input}
+            placeholderTextColor={dark ? 'rgba(255,255,255,0.45)' : 'rgba(7,4,15,0.45)'}
+            style={[styles.input, { color: dark ? '#FFFFFF' : '#0C1030' }]}
             multiline
             autoFocus
             textAlignVertical="top"
             maxLength={LIMIT}
             selectionColor={colors.accent}
           />
+        </View>
+
+        <View style={styles.swatchRow}>
+          {CARD_COLORS.map((c) => {
+            const on = bg === c;
+            return (
+              <Pressable
+                key={c}
+                onPress={() => setBg(c)}
+                hitSlop={6}
+                style={[styles.swatch, { backgroundColor: c }, on && styles.swatchOn]}
+                accessibilityLabel={`Background ${c}`}
+                accessibilityState={{ selected: on }}
+              >
+                {on && (
+                  <Icon name="checkmark" size={14} color={isDarkCard(c) ? '#FFFFFF' : '#0C1030'} />
+                )}
+              </Pressable>
+            );
+          })}
         </View>
 
         <View style={styles.meta}>
@@ -91,7 +124,7 @@ export default function TextImagePage({
 
       <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 14) + 10 }]}>
         <Pressable
-          onPress={() => ready && onNext(trimmed)}
+          onPress={() => ready && onNext(trimmed, bg)}
           disabled={!ready}
           style={[styles.next, !ready && styles.nextOff]}
           accessibilityRole="button"
@@ -164,6 +197,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 16,
   },
+  swatchRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 12,
+    paddingBottom: 4,
+  },
+  swatch: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  swatchOn: { borderColor: colors.accent },
   input: {
     flex: 1,
     color: colors.text,

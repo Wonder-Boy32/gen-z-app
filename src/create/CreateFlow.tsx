@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // src/create/CreateFlow.tsx
 // ============================================================
 // The create flow. One page at a time, one switch, one back.
@@ -56,6 +56,9 @@ export default function CreateFlow({
   // a photo post is a strip, and one pill press can pick six.
   const [picked, setPicked] = useState<CapturedAsset[] | null>(null);
   const [text, setText] = useState<string | null>(null);
+  // the card colour picked on the text page, carried to the composer so the
+  // Drop posts in the colour it was written in
+  const [textBg, setTextBg] = useState<string | null>(null);
   // There is no "which sheet should the composer open on arrival" state any
   // more. The camera answers its own tools (sound sheet at this root, PHOTO in
   // the phone's library), so nothing has to be carried into the composer to be
@@ -83,6 +86,7 @@ export default function CreateFlow({
     setCapture(null);
     setPicked(null);
     setText(null);
+    setTextBg(null);
     setResume(false);
     setSound(null);
     setSoundOpen(false);
@@ -101,6 +105,7 @@ export default function CreateFlow({
     setCapture(null);
     setPicked(null);
     setText(null);
+    setTextBg(null);
     setResume(false);
   };
 
@@ -125,6 +130,19 @@ export default function CreateFlow({
   });
 
   /**
+   * Back, while the launcher sheet is over the camera.
+   *
+   * The sheet is a plain view, not a Modal, so nothing closes it for free — and
+   * without this the press fell through to the camera and shut the whole
+   * viewfinder while the sheet was still on screen. Registered only while the
+   * sheet is up, so it is the newest listener and runs first.
+   */
+  useAndroidBack(() => {
+    setSheet(false);
+    return true;
+  }, sheet);
+
+  /**
    * A switch with a `never` default, not an if-chain: add a fourth row to the
    * launcher and this stops compiling until it is handled. An unhandled choice
    * would silently do nothing, which is the worst possible outcome for a button.
@@ -146,6 +164,7 @@ export default function CreateFlow({
         // the text page starts empty by definition
         setCapture(null);
         setText(null);
+    setTextBg(null);
         setPage('text');
         return;
       default: {
@@ -180,10 +199,13 @@ export default function CreateFlow({
     <View style={styles.root}>
       {page === 'camera' && (
         <CaptureScreen
-          // The camera steps aside for the sound sheet and comes back to the
-          // same page. It does NOT hand over to the composer: adding a sound is
-          // something you do *to* the camera, not a way to leave it.
-          visible={!soundOpen}
+          // The camera STAYS MOUNTED under the sound sheet and comes back to
+          // the same page. It used to be hidden here (`visible={!soundOpen}`),
+          // which tore the sensor session down and rebuilt it on every add-sound
+          // trip — the preview came back black often enough to look broken.
+          // Adding a sound is something you do *to* the camera, not a way to
+          // leave it, and the sheet is its own Modal above everything.
+          visible
           onClose={onClose}
           onCaptured={captureThen}
           onAddSound={() => setSoundOpen(true)}
@@ -209,8 +231,9 @@ export default function CreateFlow({
       {page === 'text' && (
         <TextImagePage
           onBack={back}
-          onNext={(t) => {
+          onNext={(t, bg) => {
             setText(t);
+            setTextBg(bg);
             setPage('compose');
           }}
         />
@@ -224,6 +247,7 @@ export default function CreateFlow({
           initialCapture={capture}
           initialAssets={picked}
           initialText={text}
+          initialTextBg={textBg}
           resumeDraft={resume}
           // a sound picked on the camera travels with the clip into the composer
           initialSoundPicked={sound}
