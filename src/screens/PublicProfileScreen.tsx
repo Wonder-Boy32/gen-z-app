@@ -90,11 +90,18 @@ export default function PublicProfileScreen({
   username,
   onClose,
   onFollowChanged,
+  focused = true,
 }: {
   userId: string;
   username: string;
   onClose: () => void;
   onFollowChanged?: (userId: string, following: boolean, pending: boolean) => void;
+  /**
+   * Only meaningful when this is opened from a keep-alive tab (Discover):
+   * losing focus must silence the video pager opened inside it, or the clip
+   * plays on behind another tab.
+   */
+  focused?: boolean;
 }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [posts, setPosts] = useState<Post[]>([]);
@@ -568,7 +575,12 @@ export default function PublicProfileScreen({
 
         {viewer !== null && (
           <View style={styles.viewerWrap}>
-            <PostViewer posts={visiblePosts as any} index={viewer} onClose={() => setViewer(null)} />
+            <PostViewer
+              posts={visiblePosts as any}
+              index={viewer}
+              active={focused}
+              onClose={() => setViewer(null)}
+            />
           </View>
         )}
       </View>

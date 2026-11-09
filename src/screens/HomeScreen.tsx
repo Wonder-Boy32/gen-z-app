@@ -206,6 +206,7 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
       </View>
       <View style={[styles.content, tab !== 'discover' && styles.hiddenTab]}>
         <DiscoverScreen
+          focused={tab === 'discover'}
           onOpenUser={(id) => openFiltered(id, null, null)}
           onOpenAudio={(a) => openFiltered(null, a, null)}
           onOpenTag={(t) => openFiltered(null, null, t)}
@@ -223,6 +224,10 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
       </View>
       <View style={[styles.content, tab !== 'profile' && styles.hiddenTab]}>
         <ProfileScreen
+          // the profile is kept alive like the other tabs, so it has to be told
+          // when it is no longer the one on screen — an open video viewer would
+          // otherwise keep playing over the chat list
+          focused={tab === 'profile'}
           onOpenDropsFeed={(userId) => {
             setPendingUser(userId);
             setTab('feed');

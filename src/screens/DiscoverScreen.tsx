@@ -78,6 +78,14 @@ type Props = {
   /** Show every live drop posted from one place. Parallel to onOpenTag. */
   onOpenLocation: (place: string) => void;
   onJoinDrop: () => void;
+  /**
+   * Is Discover the tab on screen?
+   *
+   * Same reason as the profile: the tab host keeps every tab mounted, so a
+   * full-screen video viewer opened here outlived the tab switch and kept
+   * playing — sound included — behind the chat list.
+   */
+  focused?: boolean;
 };
 
 const engagement = (p: P) => p.likes_count + p.comments_count + p.views_count;
@@ -145,7 +153,14 @@ function timeLeft(expiresAt: string): { text: string; icon: IconName; urgent: bo
   return { text: `${Math.round(h)}h left`, icon: 'hourglass-outline', urgent: false };
 }
 
-export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onOpenLocation, onJoinDrop }: Props) {
+export default function DiscoverScreen({
+  onOpenUser,
+  onOpenAudio,
+  onOpenTag,
+  onOpenLocation,
+  onJoinDrop,
+  focused = true,
+}: Props) {
   const [posts, setPosts] = useState<P[]>([]);
   // 30-minute velocity for those posts, from utils/ranking — the same numbers the
   // Home feed ranks with. Creators are ordered by the SUM of this across their
@@ -168,6 +183,14 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onO
   const [openDrop, setOpenDrop] = useState<Drop | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [publicProfile, setPublicProfile] = useState<{ id: string; username: string } | null>(null);
+
+  // Leaving the tab closes the video pager, exactly as the profile does. The
+  // tab is hidden rather than unmounted, so without this the clip and its sound
+  // carried on playing over whatever tab you moved to.
+  useEffect(() => {
+    if (focused) return;
+    setViewer(null);
+  }, [focused]);
 
   // Android back control. This screen owns two full-screen overlays that are
   // plain conditional renders, NOT <Modal>s, so RN's onRequestClose never saw
@@ -930,6 +953,7 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onO
           <PostViewer
             posts={viewer.list as any}
             index={viewer.index}
+            active={focused}
             onClose={() => setViewer(null)}
           />
         </View>
@@ -951,6 +975,9 @@ export default function DiscoverScreen({ onOpenUser, onOpenAudio, onOpenTag, onO
         <PublicProfileScreen
           userId={publicProfile.id}
           username={publicProfile.username}
+          // the page stays open if you leave the tab, so it has to be told to
+          // keep quiet rather than be torn down
+          focused={focused}
           onClose={() => setPublicProfile(null)}
         />
       )}

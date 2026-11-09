@@ -99,9 +99,20 @@ const H48 = 48 * 3600 * 1000;
 export default function ProfileScreen({
   onOpenDropsFeed,
   onPostToFeed,
+  focused = true,
 }: {
   onOpenDropsFeed?: (userId: string) => void;
   onPostToFeed?: (uri: string) => void;
+  /**
+   * Is this the tab the user is looking at?
+   *
+   * The tab host keeps every tab mounted (`display:'none'`) so switching is
+   * instant, which also means nothing here unmounts when you leave. That is
+   * fine for a grid and wrong for a video: the viewer is a plain overlay, not
+   * a Modal, so it survived the tab switch and the clip kept playing — sound
+   * included — over the chat list. Losing focus closes the viewer.
+   */
+  focused?: boolean;
 }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [myId, setMyId] = useState<string | null>(null);
@@ -136,6 +147,17 @@ export default function ProfileScreen({
   const [anonCardOpen, setAnonCardOpen] = useState(false);
   const [peopleMode, setPeopleMode] = useState<'followers' | 'following' | null>(null);
   const [viewersOpen, setViewersOpen] = useState(false);
+
+  // Leaving the tab closes whatever the profile had open over itself.
+  //
+  // The viewer is the one that mattered: it plays a video with its sound, and
+  // because the tab only hides rather than unmounts, the clip went on playing
+  // behind the chat list and the profile still looked like the player when you
+  // came back. Dropping it here means the tab you return to is the profile.
+  useEffect(() => {
+    if (focused) return;
+    setViewer(null);
+  }, [focused]);
 
   // Android back control. Settings, the follower/following list and the viewers
   // list all replace this screen wholesale (early returns, not <Modal>s), so
@@ -746,7 +768,12 @@ export default function ProfileScreen({
 
       {viewer && (
         <View style={styles.viewerWrap}>
-          <PostViewer posts={viewer.list as any} index={viewer.index} onClose={() => setViewer(null)} />
+          <PostViewer
+            posts={viewer.list as any}
+            index={viewer.index}
+            active={focused}
+            onClose={() => setViewer(null)}
+          />
         </View>
       )}
 

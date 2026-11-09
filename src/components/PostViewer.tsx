@@ -24,9 +24,19 @@ type Props = {
   posts: ViewerPost[];
   index: number;
   onClose: () => void;
+  /**
+   * Is the screen that owns this viewer still the one on screen?
+   *
+   * `isActive` is what makes FeedPost play BOTH its video and its attached
+   * sound, and it was derived from the scroll position alone — so a viewer left
+   * mounted behind a hidden tab (the profile keeps every tab alive) went on
+   * decoding and playing audio with nothing visible. Threading focus through
+   * here reuses the existing pause path instead of adding a second one.
+   */
+  active?: boolean;
 };
 
-export default function PostViewer({ posts, index, onClose }: Props) {
+export default function PostViewer({ posts, index, onClose, active = true }: Props) {
   const { height } = useWindowDimensions();
   const insets = useInsets();
   const [current, setCurrent] = useState(index);
@@ -191,7 +201,7 @@ export default function PostViewer({ posts, index, onClose }: Props) {
     <View style={{ height: listH }}>
       <FeedPost
         post={item}
-        isActive={i === current}
+        isActive={active && i === current}
         preload={i === current + 1}
         height={listH}
         contentTop={0}
