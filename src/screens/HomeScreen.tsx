@@ -182,6 +182,21 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
     return () => sub.remove();
   }, []);
 
+  /**
+   * Is anything drawn OVER the tabs right now?
+   *
+   * The create flow, Explore and the anonymous overlay are siblings of the tab
+   * host, painted on top of it — the tab underneath is not hidden, and it is
+   * not unmounted. So the feed kept playing: tap + and the video you were
+   * watching carried on with its sound underneath the camera.
+   *
+   * "On screen" therefore means the tab is selected AND nothing is covering
+   * it. Every tab is told the same thing, so they cannot disagree about who
+   * owns the speakers.
+   */
+  const tabsCovered = createOpen || exploreOpen || !!anonDraft || !!anonRecipient;
+  const tabOnScreen = (t: Tab) => tab === t && !tabsCovered;
+
   return (
     <View style={styles.container}>
       {/* Keep-alive tabs: every main tab stays mounted and loads ONCE.
@@ -194,7 +209,7 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
           initialAudioMode={pendingAudio}
           initialHashtagMode={pendingTag}
           initialLocationMode={pendingLocation}
-          focused={tab === 'feed'}
+          focused={tabOnScreen('feed')}
            onJoinDrop={() => openCreate(null)}
            onCreateIntent={handleCreateIntent}
            openActivitySignal={openActivitySignal}
@@ -206,7 +221,7 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
       </View>
       <View style={[styles.content, tab !== 'discover' && styles.hiddenTab]}>
         <DiscoverScreen
-          focused={tab === 'discover'}
+          focused={tabOnScreen('discover')}
           onOpenUser={(id) => openFiltered(id, null, null)}
           onOpenAudio={(a) => openFiltered(null, a, null)}
           onOpenTag={(t) => openFiltered(null, null, t)}
@@ -227,7 +242,7 @@ export default function HomeScreen({ openActivitySignal = 0 }: { openActivitySig
           // the profile is kept alive like the other tabs, so it has to be told
           // when it is no longer the one on screen — an open video viewer would
           // otherwise keep playing over the chat list
-          focused={tab === 'profile'}
+          focused={tabOnScreen('profile')}
           onOpenDropsFeed={(userId) => {
             setPendingUser(userId);
             setTab('feed');
