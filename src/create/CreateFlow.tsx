@@ -283,8 +283,11 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     // above Explore (60) and the anon overlay (50), and above UploadBar so an
-    // in-flight upload's progress pill cannot float over the viewfinder
+    // in-flight upload's progress pill cannot float over the viewfinder.
+    // `elevation` carries the same order on Android, where zIndex alone is not
+    // always enough once any sibling in the tree sets its own elevation.
     zIndex: 90,
+    elevation: 90,
     backgroundColor: colors.bg,
   },
 });

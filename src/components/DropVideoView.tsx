@@ -353,7 +353,32 @@ export default function DropVideoView({
   return (
     <View style={[styles.fill, style]}>
       <View style={[styles.fill, rotation !== 0 ? { transform: [{ rotate: `${rotation}deg` }] } : null]}>
-        <VideoView player={player} style={styles.fill} contentFit={contentFit} nativeControls={false} />
+        {/*
+          TextureView, NOT the default SurfaceView.
+
+          A SurfaceView is composited by the window manager in a layer of its
+          own: it is not clipped to its parent's bounds and it is NOT covered by
+          an opaque React view drawn above it. That is precisely how a video in
+          the home feed stayed painted across the middle of the camera screen —
+          the camera could render, and the feed's surface still showed on top of
+          it (and kept showing even when the video was paused, because a paused
+          surface keeps its last frame).
+
+          A TextureView is an ordinary view: it is clipped, it respects stacking
+          order, and anything drawn after it covers it. expo-video documents
+          exactly this case — "use textureView where the SurfaceView causes
+          issues, for example overlapping video views".
+
+          The price is a little more power per decoded frame. Correctness on
+          every screen that can be overlapped is worth it.
+        */}
+        <VideoView
+          player={player}
+          style={styles.fill}
+          contentFit={contentFit}
+          nativeControls={false}
+          surfaceType="textureView"
+        />
         {effectTint && <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: effectTint }]} />}
         {filterTint && <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: filterTint }]} />}
         {filterGlow && <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: filterGlow }]} />}
