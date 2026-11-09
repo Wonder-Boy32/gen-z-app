@@ -539,11 +539,20 @@ export function PhoneModal({ visible, onClose }: { visible: boolean; onClose: ()
     try {
       const { error: e } = await supabase.auth.verifyOtp({ phone: phone.trim(), token: code.trim(), type: 'sms' });
       if (e) throw e;
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        await supabase.from('profiles').update({ phone: phone.trim(), phone_verified: true }).eq('id', user.id);
-        await rpc('security_log', { p_event: 'phone_verified' }).catch(() => {});
+      // verifyOtp is the proof. It stamps auth.users.phone_confirmed_at, and
+      // link_verified_phone() copies that down to the profile — the client no
+      // longer writes phone_verified itself, because profiles.phone_verified is
+      // a protected column now. Nothing to send: the RPC reads the caller's own
+      // auth row, so the number cannot be substituted on the way through.
+      const linked = await rpc('link_verified_phone');
+      if (!linked?.ok) {
+        throw new Error(
+          linked?.error === 'phone_not_verified'
+            ? 'That code did not confirm this number. Try again.'
+            : 'Could not save the verified number.'
+        );
       }
+      await rpc('security_log', { p_event: 'phone_verified' }).catch(() => {});
       Alert.alert('Phone verified', 'Your phone number is now a recovery option.');
       setPhone(''); setCode(''); setStage('enter');
       onClose();

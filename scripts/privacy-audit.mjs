@@ -423,6 +423,91 @@ async function makePost(ownerId, fields) {
     );
   }
 
+  // ------------------------------------------------ P17 phone_verified is a server fact
+  //
+  // The app used to `.update({ phone_verified: true })` after verifyOtp, so the
+  // flag was the client's word. A fresh account could PATCH it to true with no
+  // SMS at all. Now the columns are guard-held and link_verified_phone() derives
+  // them from auth.users.phone_confirmed_at.
+  {
+    const before = await svc(`/rest/v1/profiles?select=phone,phone_verified&id=eq.${A.id}`);
+
+    // 1. The direct PATCH the old client used to send, with no OTP behind it.
+    const forge = await api(`/rest/v1/profiles?id=eq.${A.id}`, {
+      method: 'PATCH',
+      token: A.token,
+      headers: { Prefer: 'return=representation' },
+      body: JSON.stringify({ phone: '+2348000000000', phone_verified: true }),
+    });
+
+    // 2. The RPC must also refuse, because no OTP has been completed.
+    const link = await api('/rest/v1/rpc/link_verified_phone', {
+      method: 'POST',
+      token: A.token,
+      body: '{}',
+    });
+
+    // 3. The insert path, in case the update guard were the only thing standing.
+    const insert = await svcInsert('profiles', {
+      id: A.id,
+      username: `${RUN}.forged`,
+      phone: '+2348000000001',
+      phone_verified: true,
+    });
+
+    const after = await svc(`/rest/v1/profiles?select=phone,phone_verified&id=eq.${A.id}`);
+    const now = rows(after)[0] || {};
+    const was = rows(before)[0] || {};
+    const unchanged =
+      now.phone === was.phone && now.phone_verified === was.phone_verified && !now.phone_verified;
+
+    // 4. And it must not be a brick wall. A lock that also blocks the real flow
+    // is just an outage. The admin API setting phone + phone_confirm stands in
+    // for what verifyOtp() does — there is no way to receive a real SMS here,
+    // and this is exactly the state it leaves behind: phone, phone_confirmed_at.
+    const confirm = await api(`/auth/v1/admin/users/${A.id}`, {
+      method: 'PUT',
+      headers: SVC,
+      body: JSON.stringify({ phone: '+2348000000000', phone_confirm: true }),
+    });
+    const linked = await api('/rest/v1/rpc/link_verified_phone', {
+      method: 'POST',
+      token: A.token,
+      body: '{}',
+    });
+    const promoted = await svc(`/rest/v1/profiles?select=phone,phone_verified&id=eq.${A.id}`);
+    const row = rows(promoted)[0] || {};
+
+    // 5. Still locked afterwards: a verified user cannot rewrite their own number.
+    const relock = await api(`/rest/v1/profiles?id=eq.${A.id}`, {
+      method: 'PATCH',
+      token: A.token,
+      headers: { Prefer: 'return=representation' },
+      body: JSON.stringify({ phone: '+2348999999999', phone_verified: false }),
+    });
+    const settled = await svc(`/rest/v1/profiles?select=phone,phone_verified&id=eq.${A.id}`);
+    const final = rows(settled)[0] || {};
+
+    check(
+      'P17',
+      'a user cannot mark a phone verified without the SMS',
+      unchanged &&
+        link.json?.ok === false &&
+        confirm.ok &&
+        linked.json?.ok === true &&
+        row.phone === '+2348000000000' &&
+        row.phone_verified === true &&
+        final.phone === '+2348000000000',
+      `forged PATCH ${forge.status} -> stored phone=${JSON.stringify(now.phone)} ` +
+        `verified=${JSON.stringify(now.phone_verified)} (unchanged); ` +
+        `insert ${insert.status}; ` +
+        `RPC before OTP -> ${JSON.stringify(link.json)}; ` +
+        `RPC after OTP -> ${JSON.stringify(linked.json)}, profile now ` +
+        `${JSON.stringify(row.phone)}/${row.phone_verified}; ` +
+        `relock PATCH ${relock.status} -> still ${JSON.stringify(final.phone)}`
+    );
+  }
+
   // ------------------------------------------------ report
   const failed = results.filter((r) => !r.passed);
   console.log(`\n  ${results.length - failed.length}/${results.length} passed`);
