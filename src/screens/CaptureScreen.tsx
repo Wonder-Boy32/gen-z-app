@@ -47,7 +47,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import * as MediaLibrary from 'expo-media-library';
 import { colors, radius } from '../theme';
 import Icon from '../components/ui/Icon';
@@ -120,6 +120,12 @@ export default function CaptureScreen({
   const { width, height } = useWindowDimensions();
 
   const [permission, requestPermission] = useCameraPermissions();
+  // Separate from the camera on purpose: they are separate Android permissions,
+  // and a user can reasonably grant one and refuse the other.
+  const [micPermission, requestMicPermission] = useMicrophonePermissions();
+  // A one-line note in the camera's error slot when a clip records silent.
+  // Cleared the moment the user takes another shot or toggles mute.
+  const [audioNote, setAudioNote] = useState<string | null>(null);
   const camRef = useRef<React.ComponentRef<typeof CameraView> | null>(null);
 
   const [facing, setFacing] = useState<'back' | 'front'>('back');
@@ -264,6 +270,35 @@ export default function CaptureScreen({
   const startRecording = useCallback(async () => {
     if (!camRef.current || busy || recordingRef.current) return;
     setError(null);
+    setAudioNote(null);
+
+    /**
+     * MICROPHONE, ASKED FOR.
+     *
+     * `android.permission.RECORD_AUDIO` is declared in app.json, but declaring
+     * is not granting: since Android 6 it is a runtime permission, and nothing
+     * ever requested it. `recordAsync({ mute: false })` then failed with
+     * "Missing permissions: android.permission.RECORD_AUDIO" and no video was
+     * recorded at all — a camera that only ever takes photos, which is not what
+     * the VIDEO pill promises.
+     *
+     * Two ways out that are both wrong: silently recording silent video (the
+     * user does not find out until playback), or refusing to record. So: ask,
+     * and if refused, record muted and SAY SO, once, in the camera's own error
+     * line. The take is still there; only the audio is not.
+     */
+    let mute = muted;
+    if (!muted) {
+      let mic = micPermission;
+      if (!mic?.granted && mic?.canAskAgain !== false) {
+        mic = await requestMicPermission();
+      }
+      if (!mic?.granted) {
+        mute = true;
+        setAudioNote('Microphone is off — this clip records silent.');
+      }
+    }
+
     try {
       setBusy(true);
       recordingRef.current = true;
@@ -272,7 +307,7 @@ export default function CaptureScreen({
       setRecording(true);
       const result = await camRef.current.recordAsync({
         maxDuration: duration,
-        mute: muted,
+        mute,
       } as any);
       // recordAsync resolves when stopRecording() is called or maxDuration hits
       recordingRef.current = false;
@@ -295,7 +330,7 @@ export default function CaptureScreen({
     } finally {
       setBusy(false);
     }
-  }, [busy, duration, muted, onCaptured]);
+  }, [busy, duration, muted, onCaptured, micPermission, requestMicPermission]);
 
   const stopRecording = useCallback(async () => {
     if (!recordingRef.current) return;
@@ -495,7 +530,11 @@ export default function CaptureScreen({
           <View style={styles.rail}>
             {/* mute sits above the fold: it is a state, not a tool */}
             <Pressable
-              onPress={() => setMuted((m) => !m)}
+              onPress={() => {
+                setMuted((m) => !m);
+                // unmuting is the user asking for sound — drop the stale note
+                setAudioNote(null);
+              }}
               style={styles.railAction}
               hitSlop={6}
               accessibilityLabel={muted ? 'Unmute microphone' : 'Mute microphone'}
@@ -682,6 +721,9 @@ export default function CaptureScreen({
         {/* ---------- bottom ---------- */}
         <View style={[styles.bottom, { paddingBottom: insets.bottom + 14 }]}>
           {!!error && <Text style={styles.error}>{error}</Text>}
+          {/* Not an error — the clip was recorded. It just has no sound, and the
+              user deserves to know before they post it. */}
+          {!error && !!audioNote && <Text style={styles.note}>{audioNote}</Text>}
 
           {/* mode row — the reference's PHOTO/TEXT tabs, plus video */}
           <View style={styles.modeRow}>
@@ -1068,6 +1110,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   error: { color: colors.danger, fontSize: 12, fontWeight: '600', textAlign: 'center' },
+  note: { color: colors.accentStrong, fontSize: 12, fontWeight: '600', textAlign: 'center' },
 
   modeRow: { gap: 10 },
   durRow: { flexDirection: 'row', justifyContent: 'center', gap: 16 },
