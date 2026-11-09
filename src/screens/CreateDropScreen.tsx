@@ -666,6 +666,7 @@ export default function CreateDropScreen({
   initialMediaUri = null,
   initialStep,
   initialCapture = null,
+  initialAssets = null,
   initialText = null,
   initialSoundPicked = null,
   openOnMount = null,
@@ -684,6 +685,15 @@ export default function CreateDropScreen({
   initialStep?: Step;
   /** media handed over by the create flow's camera, or a shared file */
   initialCapture?: CapturedAsset | null;
+  /**
+   * Photos picked from the phone's library on the camera.
+   *
+   * Plural, and a separate prop from initialCapture on purpose: the camera
+   * records one clip at a time, but a library pick is a strip of up to six and
+   * they all have to arrive together — ingesting six single captures would
+   * append them one stale state at a time.
+   */
+  initialAssets?: CapturedAsset[] | null;
   /** text written on the "Create a Drop" page */
   initialText?: string | null;
   /** a sound chosen on the camera, carried in with the clip */
@@ -699,13 +709,16 @@ export default function CreateDropScreen({
   onExit?: () => void;
 }) {
   // land on the hub, unless we were opened with an intent (sound pick,
-  // reply-with-drop, shared media) in which case go straight to creating
-  const [step, setStep] = useState<Step>(
-    initialStep ??
-      (replyToDropId || initialMediaUri || initialSound || initialCapture || initialText
-        ? 'create'
-        : 'hub')
-  );
+  // reply-with-drop, shared media, photos from the library) in which case go
+  // straight to creating
+  const arrivedWithIntent =
+    !!replyToDropId ||
+    !!initialMediaUri ||
+    !!initialSound ||
+    !!initialCapture ||
+    !!initialAssets?.length ||
+    !!initialText;
+  const [step, setStep] = useState<Step>(initialStep ?? (arrivedWithIntent ? 'create' : 'hub'));
 
   // The Android back control is wired further down, to stepBack() — the same
   // function the on-screen back arrows call, so the two can never disagree
@@ -1977,8 +1990,8 @@ export default function CreateDropScreen({
    * ImagePicker asset, so the missing fields are filled here rather than
    * scattered through four call sites.
    */
-  const handleCaptured = (a: CapturedAsset) => {
-    const asset = {
+  const toPickedAsset = (a: CapturedAsset): ImagePicker.ImagePickerAsset =>
+    ({
       uri: a.uri,
       width: a.width,
       height: a.height,
@@ -1992,7 +2005,10 @@ export default function CreateDropScreen({
       fileSize: undefined,
       file: undefined,
       pairedVideoAsset: null,
-    } as unknown as ImagePicker.ImagePickerAsset;
+    }) as unknown as ImagePicker.ImagePickerAsset;
+
+  const handleCaptured = (a: CapturedAsset) => {
+    const asset = toPickedAsset(a);
 
     setMode('media');
     setCameraOpen(false);
@@ -2006,16 +2022,48 @@ export default function CreateDropScreen({
     }
   };
 
+  /**
+   * A library pick: up to six files at once.
+   *
+   * One setAssets, not one per file. handleCaptured closes over `prev`, so
+   * calling it in a loop would append each item to the same stale array and
+   * five of the six would vanish. A video in the pick wins and goes to the
+   * editor alone, which is the same rule a recording follows.
+   */
+  const handlePicked = (list: CapturedAsset[]) => {
+    if (list.length === 0) return;
+    const mapped = list.map(toPickedAsset);
+    const video = mapped.find((m) => m.type === 'video');
+    setMode('media');
+    setCameraOpen(false);
+    if (video) {
+      setAssets([video]);
+      setStep('editor');
+      return;
+    }
+    setAssets((prev) => [...prev, ...mapped].slice(0, 6));
+    // photos land on the create step so the strip, collage and caption are all
+    // in front of the user — not on a blank editor
+    setStep('create');
+  };
+
   // A capture from the flow's own camera arrives as a prop instead of as a
   // callback, but it has to land through the same door: a video must reach the
   // editor and a photo must join the strip, and the cover picker must see it.
   // Two entry points, one implementation.
   const ingestedRef = useRef(false);
   useEffect(() => {
-    if (!initialCapture || ingestedRef.current) return;
-    ingestedRef.current = true;
-    handleCaptured(initialCapture);
-    // mount-only on purpose: a re-render must not re-ingest the same file
+    if (ingestedRef.current) return;
+    if (initialCapture) {
+      ingestedRef.current = true;
+      handleCaptured(initialCapture);
+      return;
+    }
+    if (initialAssets && initialAssets.length > 0) {
+      ingestedRef.current = true;
+      handlePicked(initialAssets);
+    }
+    // mount-only on purpose: a re-render must not re-ingest the same files
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -3313,10 +3361,10 @@ export default function CreateDropScreen({
           setSoundOpen(true);
         }}
         soundName={sound?.name ?? null}
-        onOpenGallery={() => {
-          setCameraOpen(false);
-          setPickerOpen(true);
-        }}
+        // PHOTO on this camera opens the phone's library and drops the result
+        // straight into the strip — handlePicked closes the camera for good,
+        // because the user has already chosen what they came here for.
+        onPickedMedia={handlePicked}
         onTextMode={() => {
           setCameraOpen(false);
           setMode('text');

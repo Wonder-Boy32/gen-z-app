@@ -52,9 +52,14 @@ export default function CreateFlow({
   const [page, setPage] = useState<CreatePage>('camera');
   const [sheet, setSheet] = useState(false);
   const [capture, setCapture] = useState<CapturedAsset | null>(null);
+  // photos chosen from the phone's library on the camera. Plural on purpose:
+  // a photo post is a strip, and one pill press can pick six.
+  const [picked, setPicked] = useState<CapturedAsset[] | null>(null);
   const [text, setText] = useState<string | null>(null);
-  // which sheet the composer should open on arrival, if any
-  const [openOnMount, setOpenOnMount] = useState<'gallery' | 'sound' | null>(null);
+  // There is no "which sheet should the composer open on arrival" state any
+  // more. The camera answers its own tools (sound sheet at this root, PHOTO in
+  // the phone's library), so nothing has to be carried into the composer to be
+  // acted on once it gets there.
   // "Continue your draft"
   const [resume, setResume] = useState(false);
   // The sound belongs to the FLOW, not to the camera page.
@@ -76,8 +81,8 @@ export default function CreateFlow({
   useEffect(() => {
     if (!visible) return;
     setCapture(null);
+    setPicked(null);
     setText(null);
-    setOpenOnMount(null);
     setResume(false);
     setSound(null);
     setSoundOpen(false);
@@ -94,8 +99,8 @@ export default function CreateFlow({
    */
   const resetCarried = () => {
     setCapture(null);
+    setPicked(null);
     setText(null);
-    setOpenOnMount(null);
     setResume(false);
   };
 
@@ -152,11 +157,20 @@ export default function CreateFlow({
 
   const captureThen = (a: CapturedAsset) => {
     setCapture(a);
+    setPicked(null);
     setPage('compose');
   };
 
-  const composeWith = (what: 'gallery') => {
-    setOpenOnMount(what);
+  /**
+   * The library answered. That IS the navigation: the photos come back from the
+   * phone's picker and the composer opens with them already attached, so the
+   * only page the user ever sees after choosing is the one they were going to
+   * any way.
+   */
+  const pickedThen = (assets: CapturedAsset[]) => {
+    if (assets.length === 0) return;
+    setCapture(null);
+    setPicked(assets);
     setPage('compose');
   };
 
@@ -175,7 +189,7 @@ export default function CreateFlow({
           onAddSound={() => setSoundOpen(true)}
           soundName={sound?.name ?? null}
           sound={sound}
-          onOpenGallery={() => composeWith('gallery')}
+          onPickedMedia={pickedThen}
           onTextMode={() => {
             setSheet(false);
             setPage('text');
@@ -208,8 +222,8 @@ export default function CreateFlow({
           // hub now, and it already knows what the user came for.
           initialStep="create"
           initialCapture={capture}
+          initialAssets={picked}
           initialText={text}
-          openOnMount={openOnMount}
           resumeDraft={resume}
           // a sound picked on the camera travels with the clip into the composer
           initialSoundPicked={sound}

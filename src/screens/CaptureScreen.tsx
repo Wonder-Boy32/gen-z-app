@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // src/screens/CaptureScreen.tsx
 // ============================================================
 // The camera surface for the create flow.
@@ -50,6 +50,7 @@ import {
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import SoundTrack from '../components/SoundTrack';
 import * as MediaLibrary from 'expo-media-library';
+import * as ImagePicker from 'expo-image-picker';
 import { colors, radius } from '../theme';
 import Icon from '../components/ui/Icon';
 import { useInsets } from '../utils/useInsets';
@@ -71,7 +72,13 @@ export type CapturedAsset = {
   durationMs: number | null;
 };
 
-type Mode = 'video' | 'photo' | 'text';
+// There is no camera "mode" any more. The viewfinder shoots video; PHOTO opens
+// the phone's library and TEXT leaves for the text page. Both of those are
+// destinations, not shutter settings — modelling them as a mode is what made
+// the duration chips appear in front of a photo shutter, and what made PHOTO
+// look like it was going to take a picture instead of opening your photos.
+/** the two launchers that sit beside VIDEO at the bottom of the viewfinder */
+type Launcher = 'photo' | 'text';
 type ToolId = 'timer' | 'layout' | 'ratio' | 'retouch' | 'teleprompter';
 
 const RATIOS = [
@@ -83,7 +90,8 @@ const RATIOS = [
 
 const DURATIONS = [
   { id: 15, label: '15s' },
-  { id: 60, label: '60s' },
+  { id: 30, label: '30s' },
+  { id: 60, label: '1m' },
   { id: 180, label: '3m' },
   { id: 600, label: '10m' },
 ] as const;
@@ -103,7 +111,7 @@ export default function CaptureScreen({
   onCaptured,
   onAddSound,
   soundName,
-  onOpenGallery,
+  onPickedMedia,
   onTextMode,
   overlay = null,
   sound = null,
@@ -123,7 +131,15 @@ export default function CaptureScreen({
    * through the composer. (See the note in startRecording.)
    */
   sound?: { url?: string | null; start?: number; end?: number } | null;
-  onOpenGallery: () => void;
+  /**
+   * What came back from the phone's library.
+   *
+   * The camera opens the library itself and hands the result straight to the
+   * flow, which is the whole point of the PHOTO pill: tap it and you are in
+   * your photos, pick as many as you like, and you land in the composer with
+   * them attached. Nothing in between.
+   */
+  onPickedMedia: (assets: CapturedAsset[]) => void;
   onTextMode: () => void;
   /** sits above every camera control, inside the same Modal */
   overlay?: React.ReactNode;
@@ -141,7 +157,6 @@ export default function CaptureScreen({
   const camRef = useRef<React.ComponentRef<typeof CameraView> | null>(null);
 
   const [facing, setFacing] = useState<'back' | 'front'>('back');
-  const [mode, setMode] = useState<Mode>('video');
   const [muted, setMuted] = useState(false);
   const [timer, setTimer] = useState<(typeof TIMERS)[number]>(0);
   const [ratio, setRatio] = useState<(typeof RATIOS)[number]['id']>('9:16');
@@ -363,46 +378,59 @@ export default function CaptureScreen({
     }
   }, []);
 
-  const takePhoto = useCallback(async () => {
-    if (!camRef.current || busy) return;
-    setError(null);
-    try {
-      setBusy(true);
-      // expo-camera returns a PictureRef (a reference to the native image), not
-      // a uri. It has to be written to the cache before anything else in the
-      // app can read it — the uploader, the cover picker and the collage all
-      // take file paths.
-      const pic = await camRef.current.takePictureAsync({ quality: 0.92 } as any);
-      const saved = await pic.savePictureAsync({ quality: 0.92 });
-      if (saved?.uri) {
-        onCaptured({
-          uri: saved.uri,
-          width: saved.width ?? pic.width ?? 0,
-          height: saved.height ?? pic.height ?? 0,
-          type: 'image',
-          fileName: `capture-${Date.now()}.jpg`,
-          mimeType: 'image/jpeg',
-          durationMs: null,
+  /**
+   * PHOTO — the phone's library, directly.
+   *
+   * This is expo-image-picker's system picker, not the composer's "Add media"
+   * sheet: the pill is pressed on the viewfinder, so the viewfinder has to be
+   * what answers it. Multi-select is on because a photo post is a strip of up
+   * to six, and picking them one at a time from a modal was three taps to do
+   * what Android's own picker does in one.
+   */
+  const openLibrary = useCallback(
+    async (kind: 'images' | 'any') => {
+      if (busy) return;
+      setError(null);
+      try {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) {
+          setError('Photo access is off — allow it to pick from your library.');
+          return;
+        }
+        const res = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: kind === 'images' ? ['images'] : ['images', 'videos'],
+          allowsMultipleSelection: true,
+          // the composer keeps a strip of six; asking for more only to drop
+          // the extras on arrival would be a lie
+          selectionLimit: 6,
+          quality: 0.9,
         });
+        if (res.canceled || res.assets.length === 0) return;
+        onPickedMedia(
+          res.assets.map((a) => ({
+            uri: a.uri,
+            width: a.width ?? 0,
+            height: a.height ?? 0,
+            type: a.type === 'video' ? 'video' : 'image',
+            fileName: a.fileName ?? `library-${Date.now()}`,
+            mimeType: a.mimeType ?? (a.type === 'video' ? 'video/mp4' : 'image/jpeg'),
+            durationMs: a.duration ?? null,
+          }))
+        );
+      } catch (e: any) {
+        setError(e?.message ?? 'Could not open your photos');
       }
-    } catch (e: any) {
-      setError(e?.message ?? 'Could not take the photo');
-    } finally {
-      setBusy(false);
-    }
-  }, [busy, onCaptured]);
+    },
+    [busy, onPickedMedia]
+  );
 
   const fire = useCallback(() => {
-    if (mode === 'photo') {
-      void takePhoto();
-      return;
-    }
     if (recordingRef.current) {
       void stopRecording();
       return;
     }
     void startRecording();
-  }, [mode, startRecording, stopRecording, takePhoto]);
+  }, [startRecording, stopRecording]);
 
   const armShutter = useCallback(() => {
     if (recordingRef.current) {
@@ -487,7 +515,7 @@ export default function CaptureScreen({
           ref={camRef as any}
           style={StyleSheet.absoluteFill}
           facing={facing}
-          mode={mode === 'video' ? 'video' : 'picture'}
+          mode="video"
           mute={muted}
           onCameraReady={() => setReady(true)}
         />
@@ -759,7 +787,7 @@ export default function CaptureScreen({
         {countdown !== null && (
           <View pointerEvents="none" style={styles.countWrap}>
             <Text style={styles.countNum}>{countdown}</Text>
-            <Text style={styles.countHint}>{mode === 'photo' ? 'Hold still' : 'Get ready'}</Text>
+            <Text style={styles.countHint}>Get ready</Text>
           </View>
         )}
 
@@ -770,46 +798,47 @@ export default function CaptureScreen({
               user deserves to know before they post it. */}
           {!error && !!audioNote && <Text style={styles.note}>{audioNote}</Text>}
 
-          {/* mode row — the reference's PHOTO/TEXT tabs, plus video */}
-          <View style={styles.modeRow}>
-            {mode !== 'video' && (
-              <View style={styles.durRow}>
-                {DURATIONS.map((d) => (
-                  <Pressable
-                    key={d.id}
-                    onPress={() => setDuration(d.id)}
-                    style={[styles.durChip, duration === d.id && styles.durChipOn]}
-                  >
-                    <Text style={[styles.durText, duration === d.id && styles.durTextOn]}>
-                      {d.label}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            )}
-            <View style={styles.modePills}>
-              {(['video', 'photo', 'text'] as Mode[]).map((m) => {
-                const on = mode === m;
-                return (
-                  <Pressable
-                    key={m}
-                    onPress={() => {
-                      if (m === 'text') {
-                        onTextMode();
-                        return;
-                      }
-                      setMode(m);
-                      setTool(null);
-                    }}
-                    style={[styles.modePill, on && styles.modePillOn]}
-                  >
-                    <Text style={[styles.modePillText, on && styles.modePillTextOn]}>
-                      {m.toUpperCase()}
-                    </Text>
-                  </Pressable>
-                );
-              })}
+          {/* Recording length. This is a VIDEO setting — 15s/60s/3m/10m is how
+              long the take runs, and it means nothing at all next to a photo,
+              which is why it is not shown in front of the library any more. */}
+          <View style={styles.durRow}>
+            {DURATIONS.map((d) => (
+              <Pressable
+                key={d.id}
+                onPress={() => setDuration(d.id)}
+                style={[styles.durChip, duration === d.id && styles.durChipOn]}
+                accessibilityLabel={`Record up to ${d.label}`}
+              >
+                <Text style={[styles.durText, duration === d.id && styles.durTextOn]}>
+                  {d.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {/* VIDEO is the viewfinder you are looking through. PHOTO and TEXT are
+              destinations: one opens your library, the other leaves for the
+              text page. They are actions wearing a tab's clothes, and they sit
+              deliberately unselected because there is nothing to be selected —
+              pressing them leaves this screen. */}
+          <View style={styles.modePills}>
+            <View style={[styles.modePill, styles.modePillOn]}>
+              <Text style={[styles.modePillText, styles.modePillTextOn]}>VIDEO</Text>
             </View>
+            {(['photo', 'text'] as Launcher[]).map((l) => (
+              <Pressable
+                key={l}
+                onPress={() => {
+                  setTool(null);
+                  if (l === 'text') onTextMode();
+                  else void openLibrary('images');
+                }}
+                style={styles.modePill}
+                accessibilityLabel={l === 'photo' ? 'Pick photos from your library' : 'Create a text drop'}
+              >
+                <Text style={styles.modePillText}>{l.toUpperCase()}</Text>
+              </Pressable>
+            ))}
           </View>
 
           <View style={styles.shutterRow}>
@@ -819,7 +848,7 @@ export default function CaptureScreen({
                 recent.map((r, i) => (
                   <Pressable
                     key={`${r.uri}-${i}`}
-                    onPress={onOpenGallery}
+                    onPress={() => void openLibrary('any')}
                     style={[styles.galTile, i === recent.length - 1 && styles.galTileActive]}
                   >
                     <Image source={{ uri: r.uri }} style={styles.galImg} />
@@ -831,7 +860,7 @@ export default function CaptureScreen({
                   </Pressable>
                 ))
               ) : (
-                <Pressable onPress={onOpenGallery} style={[styles.galTile, styles.galEmpty]}>
+                <Pressable onPress={() => void openLibrary('any')} style={[styles.galTile, styles.galEmpty]}>
                   <Icon name="images-outline" size={16} color={WHITE} />
                 </Pressable>
               )}
@@ -841,16 +870,10 @@ export default function CaptureScreen({
               onPress={armShutter}
               disabled={!ready || busy}
               style={styles.shutterOuter}
-              accessibilityLabel={mode === 'photo' ? 'Take photo' : recording ? 'Stop recording' : 'Start recording'}
+              accessibilityLabel={recording ? 'Stop recording' : 'Start recording'}
             >
               <View style={[styles.shutterRing, recording && styles.shutterRingRec]} />
-              <View
-                style={[
-                  styles.shutterInner,
-                  recording && styles.shutterInnerRec,
-                  mode === 'photo' && styles.shutterInnerPhoto,
-                ]}
-              >
+              <View style={[styles.shutterInner, recording && styles.shutterInnerRec]}>
                 {busy && !recording ? (
                   <ActivityIndicator color={INK} size="small" />
                 ) : recording ? (
@@ -1230,7 +1253,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   shutterInnerRec: { backgroundColor: colors.accentSoft },
-  shutterInnerPhoto: { backgroundColor: WHITE },
+
   shutterStop: { width: 22, height: 22, borderRadius: 5, backgroundColor: colors.danger },
   shutterSpacer: { width: 130 },
 });
