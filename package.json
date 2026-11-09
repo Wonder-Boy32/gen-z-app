@@ -5,6 +5,7 @@
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
+    "dev": "expo start --dev-client",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "postinstall": "node scripts/ensure-rn-android.js && node scripts/patch-ffmpeg-expo.js",
@@ -14,6 +15,7 @@
     "migrate:media": "node scripts/migrate-private-media.mjs",
     "cleanup:media": "node scripts/cleanup-orphan-media.mjs",
     "test:rls": "node scripts/rls-test.mjs",
+    "build:dev": "node scripts/preflight-env.js && eas build --platform android --profile development",
     "build:preview": "node scripts/preflight-env.js && eas build --platform android --profile preview",
     "build:prod": "node scripts/preflight-env.js && eas build --platform android --profile production",
     "verify:sql": "python scripts/sql-verify/verify.py",
