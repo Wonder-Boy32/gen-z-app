@@ -97,6 +97,13 @@ handing someone a build that works with no laptop nearby.
   and dismissing that prompt silently blocks it.
 - **The dev app is stale.** If it opens to a blank screen, shake the phone and
   pick *Reload*, or press `r` in Metro.
+- **`Port 8081 is being used by another process`.** An earlier Metro is still
+  holding it — usually one whose terminal was closed without `Ctrl+C`. Expo
+  offers 8082; accepting works, but the phone only remembers the last address
+  it saw, so prefer freeing 8081. Find it with
+  `netstat -ano | findstr :8081`, take the PID from the last column, and
+  `taskkill /PID <pid> /F`. Note `Get-NetTCPConnection` can miss it entirely —
+  trust `netstat`.
 - **Wrong build installed.** A `preview` or `production` APK has no dev client
   and cannot talk to Metro at all. Check the app name/icon of what you
   installed.
