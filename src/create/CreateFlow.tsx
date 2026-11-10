@@ -284,10 +284,12 @@ const styles = StyleSheet.create({
     bottom: 0,
     // above Explore (60) and the anon overlay (50), and above UploadBar so an
     // in-flight upload's progress pill cannot float over the viewfinder.
-    // `elevation` carries the same order on Android, where zIndex alone is not
-    // always enough once any sibling in the tree sets its own elevation.
+    //
+    // Deliberately NO `elevation` here. An elevated, opaque ancestor can be
+    // composited above a child SurfaceView on Android, which is a way to make a
+    // working camera preview look black. zIndex orders the siblings, which is
+    // all this overlay needs.
     zIndex: 90,
-    elevation: 90,
     backgroundColor: colors.bg,
   },
 });

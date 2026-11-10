@@ -43,6 +43,7 @@ import {
   Animated,
   AppState,
   Image,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -154,6 +155,34 @@ const PHOTO_FILTERS: {
   { id: 'vivid', label: 'Vivid', tint: '#FF2E88', tintOpacity: 0.1 },
   { id: 'dreamy', label: 'Dreamy', tint: '#B49BFF', tintOpacity: 0.18 },
 ];
+
+/**
+ * The camera gets its own Android window.
+ *
+ * This is not cosmetic. expo-camera's native preview is a CameraX `PreviewView`
+ * in its default PERFORMANCE mode, which is a SurfaceView — it is composited in
+ * a layer *underneath* the app window, not inside the normal view tree. That
+ * composes reliably in a dedicated window. Sitting it in the tab host's window
+ * next to the feed's video surfaces is what produced "I see nothing": the
+ * session is live and reports `onCameraReady`, but its surface never shows.
+ *
+ * `33bb2e7` — the last build where the user actually recorded video — had this
+ * component inside an RN `<Modal>` for unrelated reasons, and that is the only
+ * structural difference between then and now. Everything else (mode, facing,
+ * mute) was already identical. Restoring the dedicated window, deliberately.
+ */
+function CameraWindow({ children, onRequestClose }: { children: React.ReactNode; onRequestClose: () => void }) {
+  return (
+    <Modal
+      visible
+      animationType="none"
+      statusBarTranslucent
+      onRequestClose={onRequestClose}
+    >
+      {children}
+    </Modal>
+  );
+}
 
 export default function CaptureScreen({
   visible,
@@ -880,6 +909,7 @@ export default function CaptureScreen({
   // ---------------------------------------------------------------
   if (permission && !permission.granted) {
     return (
+      <CameraWindow onRequestClose={closeCamera}>
       <View style={[styles.root, styles.permWrap]}>
           <View style={styles.permCard}>
             <View style={styles.permIcon}>
@@ -903,6 +933,7 @@ export default function CaptureScreen({
               they could never reach "Create a Drop" again from the + button. */}
         {overlay}
       </View>
+      </CameraWindow>
     );
   }
 
@@ -914,6 +945,7 @@ export default function CaptureScreen({
   const filterTint = PHOTO_FILTERS.find((f) => f.id === photoFilter) ?? PHOTO_FILTERS[0];
 
   return (
+    <CameraWindow onRequestClose={closeCamera}>
     <View style={styles.root}>
       {/*
         THE CAMERA — one instance, mounted for as long as this screen is.
@@ -921,9 +953,10 @@ export default function CaptureScreen({
         Three rules live here, and each one is a black screen that was fixed:
           1. It only mounts with a granted permission (`granted`), because a
              session created before the grant fails and is never retried.
-          2. It is NOT inside a <Modal>. On Android the modal's dialog window
-             owns a different surface than the activity, and a preview attached
-             there can come back black or vanish when the modal is re-shown.
+          2. It lives in its own Android window (see `CameraWindow`). The native
+             preview is a SurfaceView, composited under the app window; in the
+             tab host's window its layer never surfaced even with the session
+             live and `onCameraReady` firing.
           3. Its props change; its identity does not. VIDEO ⇄ PHOTO switches
              `mode`, flipping switches `facing` — neither remounts the view.
       */}
@@ -1690,6 +1723,7 @@ export default function CaptureScreen({
           above the chrome instead of racing a sibling window on Android. */}
       {overlay}
     </View>
+    </CameraWindow>
   );
 }
 
