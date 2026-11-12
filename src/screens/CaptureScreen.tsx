@@ -265,6 +265,10 @@ export default function CaptureScreen({
   const [torch, setTorch] = useState(false);
 
   const [ready, setReady] = useState(false);
+  // How many times the native layer has reported the session up. A live
+  // counter, not a boolean, because "ready then reset then ready again" and
+  // "never ready at all" look identical on screen but mean opposite things.
+  const [readyHits, setReadyHits] = useState(0);
   const [busy, setBusy] = useState(false);
   const [recording, setRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -979,6 +983,7 @@ export default function CaptureScreen({
           flash={mode === 'photo' && torch && facing === 'back' ? 'on' : 'off'}
           onCameraReady={() => {
             setReady(true);
+            setReadyHits((n) => n + 1);
             setCameraError(null);
           }}
           // Without this the failure is invisible: no callback, no message, just
@@ -1718,6 +1723,18 @@ export default function CaptureScreen({
         </View>
       )}
 
+      {/* DIAGNOSTIC — dev only, temporarily here to answer one question that
+          cannot be answered from the outside: is the native session failing
+          (readyHits 0), or is it up and simply not drawing (readyHits > 0)?
+          Remove once the preview is confirmed on device. */}
+      {__DEV__ && (
+        <View style={styles.diag} pointerEvents="none">
+          <Text style={styles.diagText}>
+            {`perm=${granted ? 'ok' : 'no'} ready=${ready ? 1 : 0} hits=${readyHits} err=${cameraError ? cameraError.slice(0, 40) : '-'} face=${facing} mode=${mode} r=${retouch} ratio=${ratio}`}
+          </Text>
+        </View>
+      )}
+
       {/* Whatever the caller needs above the camera — the create launcher
           sheet, for one. Rendered inside this view on purpose so it stacks
           above the chrome instead of racing a sibling window on Android. */}
@@ -1729,6 +1746,19 @@ export default function CaptureScreen({
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: INK },
+
+  // Temporary: see the DIAGNOSTIC block in the render.
+  diag: {
+    position: 'absolute',
+    left: 8,
+    right: 8,
+    bottom: 4,
+    paddingVertical: 3,
+    paddingHorizontal: 6,
+    borderRadius: 6,
+    backgroundColor: 'rgba(0,0,0,0.72)',
+  },
+  diagText: { color: '#8EF0B0', fontSize: 9, fontFamily: 'monospace' },
 
   // ---------------- permission ----------------
   permWrap: { alignItems: 'center', justifyContent: 'center', padding: 28 },
