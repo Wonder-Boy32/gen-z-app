@@ -967,12 +967,13 @@ export default function CaptureScreen({
       */}
       {granted && (
         <CameraView
+          // BISECT: `active`, `enableTorch` and `flash` removed — the only
+          // native-affecting props added since 33bb2e7. `key` and `onLayout`
+          // stay because they are RN-level, not camera-session config, and
+          // `key` is how "Try again" remounts.
           key={cameraKey}
           ref={camRef as any}
           style={StyleSheet.absoluteFill}
-          // A live session that reports ready into a 0×0 box draws nothing and
-          // looks exactly like a broken camera, so the laid-out size is part of
-          // the diagnostic.
           onLayout={(e) => {
             const { width, height } = e.nativeEvent.layout;
             setCamBox(`${Math.round(width)}x${Math.round(height)}`);
@@ -980,15 +981,6 @@ export default function CaptureScreen({
           facing={facing}
           mode={mode === 'photo' ? 'picture' : 'video'}
           mute={muted}
-          // Hold the sensor only while the app is in front. Backgrounding with
-          // the session open is how a camera ends up "in use by another app"
-          // on Android and comes back black on the next open.
-          active={appActive}
-          // The torch is a rear-sensor property, and in PHOTO mode the shutter
-          // flash is the right tool — asking for the torch there throws on some
-          // devices and is ignored on the rest.
-          enableTorch={mode === 'video' && torch && facing === 'back'}
-          flash={mode === 'photo' && torch && facing === 'back' ? 'on' : 'off'}
           onCameraReady={() => {
             setReady(true);
             setReadyHits((n) => n + 1);
