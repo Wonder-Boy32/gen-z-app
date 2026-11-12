@@ -269,6 +269,7 @@ export default function CaptureScreen({
   // counter, not a boolean, because "ready then reset then ready again" and
   // "never ready at all" look identical on screen but mean opposite things.
   const [readyHits, setReadyHits] = useState(0);
+  const [camBox, setCamBox] = useState('?');
   const [busy, setBusy] = useState(false);
   const [recording, setRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -969,6 +970,13 @@ export default function CaptureScreen({
           key={cameraKey}
           ref={camRef as any}
           style={StyleSheet.absoluteFill}
+          // A live session that reports ready into a 0×0 box draws nothing and
+          // looks exactly like a broken camera, so the laid-out size is part of
+          // the diagnostic.
+          onLayout={(e) => {
+            const { width, height } = e.nativeEvent.layout;
+            setCamBox(`${Math.round(width)}x${Math.round(height)}`);
+          }}
           facing={facing}
           mode={mode === 'photo' ? 'picture' : 'video'}
           mute={muted}
@@ -1730,7 +1738,7 @@ export default function CaptureScreen({
       {__DEV__ && (
         <View style={styles.diag} pointerEvents="none">
           <Text style={styles.diagText}>
-            {`perm=${granted ? 'ok' : 'no'} ready=${ready ? 1 : 0} hits=${readyHits} err=${cameraError ? cameraError.slice(0, 40) : '-'} face=${facing} mode=${mode} r=${retouch} ratio=${ratio}`}
+            {`perm=${granted ? 'ok' : 'no'} ready=${ready ? 1 : 0} hits=${readyHits} box=${camBox} err=${cameraError ? cameraError.slice(0, 34) : '-'} face=${facing} mode=${mode} r=${retouch} ratio=${ratio}`}
           </Text>
         </View>
       )}
