@@ -51,6 +51,7 @@ import Icon from '../components/ui/Icon';
 import { colors } from '../theme';
 import { useFaceDetectorOutput } from 'react-native-vision-camera-face-detector';
 import { LOOKS, LOOK_SHADER, findLook, uniformsFor, type LookId } from './looks';
+import type { CapturedAsset } from '../screens/CaptureScreen';
 import { drawFaceOverlays, packFace, FACE_STRIDE, type ArEffect } from './arOverlay';
 
 const WHITE = '#FFFFFF';
@@ -66,7 +67,8 @@ const AR_ITEMS: { id: ArEffect; label: string; icon: string }[] = [
 export interface GenzCameraProps {
   visible: boolean;
   onClose: () => void;
-  onCaptured: (asset: { uri: string; kind: 'photo' | 'video'; ms?: number }) => void;
+  /** Same asset shape CaptureScreen emits, so CreateFlow needs no adapter. */
+  onCaptured: (asset: CapturedAsset) => void;
   onPickedMedia?: () => void;
   onAddSound?: () => void;
   soundName?: string | null;
@@ -102,6 +104,9 @@ export default function GenzCamera({
   const videoOutput = useVideoOutput({ enableAudio: true });
   const recorderRef = useRef<Awaited<ReturnType<typeof videoOutput.createRecorder>> | null>(null);
   const startedAtRef = useRef(0);
+  // Last laid-out size of the preview, used for video assets: the recorder path
+  // returns a file, not dimensions, and a 0x0 asset breaks aspect maths downstream.
+  const layoutRef = useRef({ width: 0, height: 0 });
 
   // Uniforms ride a shared value so the frame worklet reads current values
   // without re-creating the callback on every look change (which would drop the
@@ -181,10 +186,21 @@ export default function GenzCamera({
     try {
       const snapshot = camRef.current?.takeSnapshot();
       if (!snapshot) throw new Error('The camera has not produced a frame yet.');
+      const info = snapshot.getImageInfo();
       const base64 = snapshot.encodeToBase64();
-      const file = new File(Paths.cache, `genz-${Date.now()}.png`);
+      const fileName = `genz-${Date.now()}.png`;
+      const file = new File(Paths.cache, fileName);
       file.write(base64, { encoding: 'base64' });
-      onCaptured({ uri: file.uri, kind: 'photo' });
+      onCaptured({
+        uri: file.uri,
+        width: info.width,
+        height: info.height,
+        type: 'image',
+        fileName,
+        mimeType: 'image/png',
+        durationMs: null,
+        aspect: info.height > 0 ? info.width / info.height : undefined,
+      });
     } catch (e: any) {
       setError(e?.message ?? 'Could not capture the photo.');
     } finally {
@@ -214,7 +230,18 @@ export default function GenzCamera({
       await rec.startRecording(
         (path) => {
           setRecording(false);
-          if (path) onCaptured({ uri: `file://${path}`, kind: 'video', ms: Date.now() - startedAtRef.current });
+          if (!path) return;
+          const { width, height } = layoutRef.current;
+          onCaptured({
+            uri: path.startsWith('file://') ? path : `file://${path}`,
+            width,
+            height,
+            type: 'video',
+            fileName: path.split(/[\\/]/).pop() || `genz-${Date.now()}.mp4`,
+            mimeType: 'video/mp4',
+            durationMs: Date.now() - startedAtRef.current,
+            aspect: height > 0 ? width / height : undefined,
+          });
         },
         (e) => {
           setRecording(false);
@@ -275,7 +302,15 @@ export default function GenzCamera({
   return (
     <View style={styles.root}>
       <GestureDetector gesture={pinch}>
-        <View style={StyleSheet.absoluteFill}>
+        <View
+          style={StyleSheet.absoluteFill}
+          onLayout={(e) => {
+            layoutRef.current = {
+              width: Math.round(e.nativeEvent.layout.width),
+              height: Math.round(e.nativeEvent.layout.height),
+            };
+          }}
+        >
           <SkiaCamera
             ref={camRef}
             style={StyleSheet.absoluteFill}
@@ -597,5 +632,6 @@ const styles = StyleSheet.create({
   timerBox: { width: 42, alignItems: 'flex-end' },
   timerText: { color: WHITE, fontSize: 12, fontWeight: '800', fontVariant: ['tabular-nums'] },
 });
+
 
 

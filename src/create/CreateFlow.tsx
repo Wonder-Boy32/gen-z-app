@@ -17,11 +17,27 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import CaptureScreen, { type CapturedAsset } from '../screens/CaptureScreen';
+import GenzCamera from '../camera/GenzCamera';
 import CreateDropScreen from '../screens/CreateDropScreen';
 import SoundPickerModal, { type PickedSound } from '../components/create/SoundPickerModal';
 import { colors } from '../theme';
 import { useAndroidBack } from '../utils/useAndroidBack';
 import LaunchSheet from './LaunchSheet';
+
+/**
+ * Which camera opens. Off by default on purpose.
+ *
+ * The VisionCamera screen has live GPU looks and landmark AR that the
+ * expo-camera one cannot do, but it does not yet have TEXT mode or gallery
+ * import. Defaulting it on would silently remove two features the app already
+ * ships, so the swap is opt-in:
+ *
+ *   EXPO_PUBLIC_CAMERA_V2=1
+ *
+ * Delete that line and the old camera is back. Both read the same
+ * CapturedAsset shape, so nothing downstream knows which one produced it.
+ */
+const CAMERA_V2 = process.env.EXPO_PUBLIC_CAMERA_V2 === '1';
 import TextImagePage from './TextImagePage';
 import { BACK_FROM, type CreatePage, type LauncherChoice } from './flow';
 
@@ -197,7 +213,25 @@ export default function CreateFlow({
 
   return (
     <View style={styles.root}>
-      {page === 'camera' && (
+      {page === 'camera' && CAMERA_V2 && (
+        <GenzCamera
+          visible
+          onClose={onClose}
+          onCaptured={captureThen}
+          onAddSound={() => setSoundOpen(true)}
+          soundName={sound?.name ?? null}
+          overlay={
+            sheet ? (
+              <LaunchSheet
+                hasDraft={hasDraft}
+                onChoose={choose}
+                onDismiss={() => setSheet(false)}
+              />
+            ) : null
+          }
+        />
+      )}
+      {page === 'camera' && !CAMERA_V2 && (
         <CaptureScreen
           // The camera STAYS MOUNTED under the sound sheet and comes back to
           // the same page. It used to be hidden here (`visible={!soundOpen}`),
