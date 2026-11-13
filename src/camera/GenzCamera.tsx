@@ -49,10 +49,19 @@ import { File, Paths } from 'expo-file-system';
 
 import Icon from '../components/ui/Icon';
 import { colors } from '../theme';
+import { useFaceDetectorOutput } from 'react-native-vision-camera-face-detector';
 import { LOOKS, LOOK_SHADER, findLook, uniformsFor, type LookId } from './looks';
+import { drawFaceOverlays, packFace, FACE_STRIDE, type ArEffect } from './arOverlay';
 
 const WHITE = '#FFFFFF';
 const INK = '#060A16';
+
+const AR_ITEMS: { id: ArEffect; label: string; icon: string }[] = [
+  { id: 'none', label: 'None', icon: 'close-circle-outline' },
+  { id: 'ears', label: 'Ears', icon: 'paw-outline' },
+  { id: 'glasses', label: 'Shades', icon: 'glasses-outline' },
+  { id: 'nose', label: 'Nose', icon: 'ellipse-outline' },
+];
 
 export interface GenzCameraProps {
   visible: boolean;
@@ -87,6 +96,7 @@ export default function GenzCamera({
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  const [ar, setAr] = useState<ArEffect>('none');
 
   const camRef = useRef<SkiaCameraRef>(null);
   const videoOutput = useVideoOutput({ enableAudio: true });
@@ -102,6 +112,46 @@ export default function GenzCamera({
   // Paint is created once. Allocating it per frame would churn the GPU heap at
   // 30fps and stutter on a mid-range device.
   const paint = useMemo(() => Skia.Paint(), []);
+
+  // ---- AR overlays -------------------------------------------------------
+  // Face data crosses from the detector's thread to the render worklet through
+  // a shared value, as a flat number array. Objects and HybridObjects cannot
+  // cross that boundary safely.
+  const faces = useSharedValue<number[]>([]);
+  const arRef = useSharedValue<ArEffect>('none');
+
+  // Overlay paints are coloured on the JS thread, never inside the worklet.
+  const paintMain = useMemo(() => Skia.Paint(), []);
+  const paintAccent = useMemo(() => Skia.Paint(), []);
+
+  useEffect(() => {
+    arRef.value = ar;
+    const main =
+      ar === 'ears' ? '#FF9F45' : ar === 'glasses' ? '#1B1B24' : ar === 'nose' ? '#FF3B5C' : '#FFFFFF';
+    const accent =
+      ar === 'ears' ? '#FFD9B0' : ar === 'glasses' ? '#4F8BFF' : ar === 'nose' ? '#FFFFFF' : '#FFFFFF';
+    paintMain.setColor(Skia.Color(main));
+    paintAccent.setColor(Skia.Color(accent));
+  }, [ar, arRef, paintMain, paintAccent]);
+
+  const faceDetectorOutput = useFaceDetectorOutput({
+    // Fast is the right trade here: this runs per frame on a phone, and the
+    // accurate model costs enough to drop the preview on mid-range hardware.
+    performanceMode: 'fast',
+    onFacesDetected: (detected) => {
+      const first = detected?.[0];
+      if (!first) {
+        if (faces.value.length) faces.value = [];
+        return;
+      }
+      // One face, stored flat. Wrapping it again would make it number[][] and
+      // the worklet reads it as a flat block.
+      faces.value = packFace(first as any) ?? [];
+    },
+    onError: () => {
+      // A detection failure must not take the camera down with it.
+    },
+  });
 
   useEffect(() => {
     uniforms.value = uniformsFor(activeLook, 1080, 1920);
@@ -231,7 +281,7 @@ export default function GenzCamera({
             style={StyleSheet.absoluteFill}
             device={facing}
             isActive
-            outputs={[videoOutput]}
+            outputs={[videoOutput, faceDetectorOutput]}
             zoom={zoom}
             torchMode={torch && facing === 'back' ? 'on' : 'off'}
             onStarted={() => {
@@ -255,6 +305,21 @@ export default function GenzCamera({
                 const shader = LOOK_SHADER.makeShaderWithChildren(uniforms.value, [imageShader]);
                 paint.setShader(shader);
                 canvas.drawImage(frameTexture, 0, 0, paint);
+
+                // Overlays draw AFTER the graded frame, in the same canvas, so
+                // they land in the photo snapshot rather than floating in a
+                // separate View above the preview.
+                if (arRef.value !== 'none' && faces.value.length >= FACE_STRIDE) {
+                  drawFaceOverlays(
+                    canvas as any,
+                    faces.value,
+                    frame.width,
+                    frame.height,
+                    arRef.value,
+                    paintMain,
+                    paintAccent,
+                  );
+                }
               });
               frame.dispose();
             }}
@@ -321,6 +386,27 @@ export default function GenzCamera({
         >
           <Icon name="grid-outline" size={17} color={grid ? INK : WHITE} />
         </Pressable>
+      </View>
+
+      {/* AR row. Small, above the looks: effects are a second decision, not a
+          competing one, and they compose with whatever look is chosen. */}
+      <View style={[styles.arRow, { bottom: insets.bottom + 196 }]}>
+        {AR_ITEMS.map((a) => {
+          const on = a.id === ar;
+          return (
+            <Pressable
+              key={a.id}
+              onPress={() => setAr(a.id)}
+              style={[styles.arChip, on && styles.arChipOn]}
+              accessibilityRole="button"
+              accessibilityLabel={a.label}
+              accessibilityState={{ selected: on }}
+            >
+              <Icon name={a.icon as any} size={14} color={on ? INK : WHITE} />
+              <Text style={[styles.arChipText, on && styles.arChipTextOn]}>{a.label}</Text>
+            </Pressable>
+          );
+        })}
       </View>
 
       {/* carousel */}
@@ -451,6 +537,27 @@ const styles = StyleSheet.create({
   },
   railBtnOn: { backgroundColor: colors.accent },
   railBtnOff: { opacity: 0.35 },
+
+  arRow: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  arChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    height: 32,
+    borderRadius: 999,
+    backgroundColor: 'rgba(6,10,22,0.58)',
+  },
+  arChipOn: { backgroundColor: colors.accent },
+  arChipText: { color: WHITE, fontSize: 11, fontWeight: '700' },
+  arChipTextOn: { color: INK },
 
   tray: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   trayRow: { paddingHorizontal: 14, gap: 12, alignItems: 'center' },
