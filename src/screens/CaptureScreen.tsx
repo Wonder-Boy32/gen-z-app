@@ -272,6 +272,10 @@ export default function CaptureScreen({
   const [camBox, setCamBox] = useState('?');
   const [busy, setBusy] = useState(false);
   const [recording, setRecording] = useState(false);
+  // A paused take is still one take: the encoder is held open at its current
+  // position, so resuming continues the same file instead of starting another
+  // clip that would need joining later.
+  const [paused, setPaused] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -303,6 +307,18 @@ export default function CaptureScreen({
 
   const recordingRef = useRef(false);
   const startedAtRef = useRef(0);
+  // Pause bookkeeping. `pausedAtRef` is when the current pause began (0 while
+  // running); `pausedTotalRef` is everything already paused in this clip. The
+  // clip clock subtracts both, so a ten-second pause does not become ten
+  // seconds of black in the finished video.
+  const pausedRef = useRef(false);
+  const pausedAtRef = useRef(0);
+  const pausedTotalRef = useRef(0);
+  const clipMsNow = () => {
+    const now = Date.now();
+    const held = pausedAtRef.current ? now - pausedAtRef.current : 0;
+    return Math.max(0, now - startedAtRef.current - pausedTotalRef.current - held);
+  };
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const ratioValue = useMemo(() => RATIOS.find((r) => r.id === ratio)?.r ?? 9 / 16, [ratio]);
@@ -428,9 +444,11 @@ export default function CaptureScreen({
     return () => loop.stop();
   }, [prompterOn, script, visible, prompterY, prompterSpeed, prompterSize]);
 
-  // The breath under the shutter while a clip is running.
+  // The breath under the shutter while a clip is running — and only while it is
+  // actually running. A paused take that keeps pulsing is a lie told in
+  // animation, so pausing stops the breath too.
   useEffect(() => {
-    if (!recording) {
+    if (!recording || paused) {
       pulse.stopAnimation();
       pulse.setValue(0);
       return;
@@ -443,7 +461,7 @@ export default function CaptureScreen({
     );
     loop.start();
     return () => loop.stop();
-  }, [recording, pulse]);
+  }, [recording, paused, pulse]);
 
   // ---------------------------------------------------------------
   // Recording clock
@@ -458,9 +476,11 @@ export default function CaptureScreen({
   useEffect(() => {
     if (!recording) return;
     const id = setInterval(() => {
-      const ms = Date.now() - startedAtRef.current;
+      const ms = clipMsNow();
       setElapsed(ms);
-      if (committedMs + ms >= capMs) void stopRecording();
+      // Frozen while paused, so this cannot fire mid-pause and end the take
+      // behind the user's back.
+      if (!pausedRef.current && committedMs + ms >= capMs) void stopRecording();
     }, 100);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -569,6 +589,10 @@ export default function CaptureScreen({
       setBusy(true);
       recordingRef.current = true;
       startedAtRef.current = Date.now();
+      pausedRef.current = false;
+      pausedAtRef.current = 0;
+      pausedTotalRef.current = 0;
+      setPaused(false);
       setElapsed(0);
       setRecording(true);
       const result = await camRef.current.recordAsync({
@@ -578,9 +602,16 @@ export default function CaptureScreen({
         mute,
       } as any);
       // recordAsync resolves when stopRecording() is called or maxDuration hits
+      // Measured BEFORE the pause refs are cleared: stopping while paused is
+      // legal, and the hold has to be subtracted or the clip gains the time the
+      // encoder was not running.
+      const ms = clipMsNow();
       recordingRef.current = false;
       setRecording(false);
-      const ms = Date.now() - startedAtRef.current;
+      setPaused(false);
+      pausedRef.current = false;
+      pausedAtRef.current = 0;
+      pausedTotalRef.current = 0;
       if (result?.uri) {
         // A clip JOINS the session instead of ending it. This is the whole
         // difference between a camera that shoots a take and one that shoots a
@@ -604,6 +635,53 @@ export default function CaptureScreen({
       camRef.current?.stopRecording();
     } catch {
       // already stopped
+    }
+  }, []);
+
+  /**
+   * PAUSE / RESUME — the real thing, not a hidden stop.
+   *
+   * expo-camera exposes `toggleRecordingAsync()`, which holds the encoder open
+   * at its current position: resuming continues the same file. That matters
+   * because the alternative — stopping and starting a second clip — produces
+   * two files that only look continuous after ffmpeg joins them, and the join
+   * is a re-encode.
+   *
+   * Three refusals are checked rather than assumed:
+   *   1. the method exists at all (older native builds do not have it),
+   *   2. the native build reports the feature as available,
+   *   3. the call itself succeeds — state only flips after it resolves, so a
+   *      rejected pause cannot leave the UI claiming the take is held while the
+   *      encoder is still running.
+   */
+  const togglePause = useCallback(async () => {
+    const cam = camRef.current as any;
+    if (!recordingRef.current || !cam?.toggleRecordingAsync) {
+      setError('This camera build cannot pause a recording.');
+      return;
+    }
+    try {
+      const features = cam.getSupportedFeatures?.();
+      if (features && features.toggleRecordingAsyncAvailable === false) {
+        setError('This device cannot pause a recording.');
+        return;
+      }
+      await cam.toggleRecordingAsync();
+      if (pausedRef.current) {
+        if (pausedAtRef.current) {
+          pausedTotalRef.current += Date.now() - pausedAtRef.current;
+          pausedAtRef.current = 0;
+        }
+        pausedRef.current = false;
+        setPaused(false);
+      } else {
+        pausedAtRef.current = Date.now();
+        pausedRef.current = true;
+        setPaused(true);
+      }
+      setError(null);
+    } catch (e: any) {
+      setError(e?.message ?? 'Could not pause the recording.');
     }
   }, []);
 
@@ -761,8 +839,11 @@ export default function CaptureScreen({
   }, [mode, startRecording, stopRecording, takePhoto]);
 
   const armShutter = useCallback(() => {
+    // While a take is running the shutter holds it, it does not end it. Ending
+    // is the explicit Stop in the right column, because "the big button stopped
+    // my recording when I wanted a pause" loses takes.
     if (recordingRef.current) {
-      void stopRecording();
+      void togglePause();
       return;
     }
     // one shot at a time: a double-tap must not queue two captures
@@ -786,7 +867,7 @@ export default function CaptureScreen({
         beep();
       }
     }, 1000);
-  }, [beep, fire, timer, shooting]);
+  }, [beep, fire, timer, shooting, togglePause]);
 
   /**
    * Flip, but not mid-take.
@@ -1419,11 +1500,13 @@ export default function CaptureScreen({
         {(recording || clips.length > 0) && (
           <View style={[styles.hud, { top: insets.top + 62 }]} pointerEvents="none">
             <View style={styles.hudTopRow}>
-              <View style={[styles.hudDot, !recording && styles.hudDotIdle]} />
+              <View style={[styles.hudDot, (!recording || paused) && styles.hudDotIdle]} />
               <Text style={styles.hudText}>
                 {fmtElapsed(Math.min(capMs, committedMs + (recording ? elapsed : 0)))}
                 <Text style={styles.hudTextDim}> / {fmtElapsed(capMs)}</Text>
               </Text>
+              {/* The clock alone cannot say that time is standing still. */}
+              {recording && paused && <Text style={styles.hudPaused}>PAUSED</Text>}
               {clips.length > 0 && (
                 <Text style={styles.hudClips}>
                   {clips.length} {clips.length === 1 ? 'clip' : 'clips'}
@@ -1630,7 +1713,9 @@ export default function CaptureScreen({
                 mode === 'photo'
                   ? 'Take a photo'
                   : recording
-                    ? 'Stop recording'
+                    ? paused
+                      ? 'Resume recording'
+                      : 'Pause recording'
                     : clips.length > 0
                       ? 'Record another clip'
                       : 'Start recording'
@@ -1660,13 +1745,36 @@ export default function CaptureScreen({
                 {(busy && !recording) || shooting ? (
                   <ActivityIndicator color={INK} size="small" />
                 ) : recording ? (
-                  <View style={styles.shutterStop} />
+                  paused ? (
+                    // Held. A triangle says "press to continue" — the same
+                    // shape a transport control uses, so it needs no label.
+                    <Icon name="play" size={22} color={INK} />
+                  ) : (
+                    <View style={styles.pauseGlyph}>
+                      <View style={styles.pauseBar} />
+                      <View style={styles.pauseBar} />
+                    </View>
+                  )
                 ) : null}
               </Animated.View>
             </Pressable>
 
             {/* Right column: undo the last clip, and get out with the take. */}
             <View style={styles.shutterSpacer}>
+              {/* THE ONLY WAY TO END A TAKE. The shutter pauses now, so this has
+                  to be visible for the whole recording — including while paused,
+                  which is exactly when someone decides they are done. */}
+              {recording && (
+                <Pressable
+                  onPress={() => void stopRecording()}
+                  style={[styles.nextBtn, paused && styles.stopBtnEmphatic]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Stop recording"
+                >
+                  <Icon name="stop" size={13} color={INK} />
+                  <Text style={styles.nextText}>Stop</Text>
+                </Pressable>
+              )}
               {clips.length > 0 && !recording && (
                 <>
                   <Pressable
@@ -2108,6 +2216,7 @@ const styles = StyleSheet.create({
   hudDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.danger },
   // between takes: the take exists, the camera is just not running
   hudDotIdle: { backgroundColor: 'rgba(255,255,255,0.5)' },
+  hudPaused: { color: colors.accent, fontSize: 10, fontWeight: '900', letterSpacing: 0.8 },
   hudText: { color: WHITE, fontSize: 12, fontWeight: '800', fontVariant: ['tabular-nums'] },
   hudTextDim: { color: 'rgba(255,255,255,0.5)', fontWeight: '700' },
   hudClips: {
@@ -2312,6 +2421,12 @@ const styles = StyleSheet.create({
   shutterInnerRec: { backgroundColor: colors.accentSoft },
 
   shutterStop: { width: 22, height: 22, borderRadius: 5, backgroundColor: colors.danger },
+  // Pause: two bars, sized to sit inside the shutter like a transport icon.
+  pauseGlyph: { flexDirection: 'row', gap: 4, alignItems: 'center', justifyContent: 'center' },
+  pauseBar: { width: 5, height: 18, borderRadius: 2, backgroundColor: INK },
+  // While paused, Stop is the thing the eye should find, so it carries the
+  // accent instead of sitting flat next to a play button.
+  stopBtnEmphatic: { backgroundColor: colors.accent },
   shutterSpacer: {
     width: 130,
     alignItems: 'flex-end',
