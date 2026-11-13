@@ -981,6 +981,23 @@ export default function CaptureScreen({
           facing={facing}
           mode={mode === 'photo' ? 'picture' : 'video'}
           mute={muted}
+          // FIX for "VIDEO hangs, PHOTO works".
+          //
+          // expo-camera's defaults are videoQuality=VIDEO1080P
+          // (ExpoCameraView.kt:183) and videoStabilizationMode=AUTO (:195),
+          // and AUTO counts as enabled, so createVideoCapture() calls
+          // setVideoStabilizationEnabled(true). CameraX refuses to bind a
+          // VideoCapture that asks for stabilisation the device cannot do, and
+          // a failed VideoCapture takes the whole UseCaseGroup down with it —
+          // preview included. That is the asymmetry on this device: the
+          // PICTURE group builds imageCapture only and binds fine, the VIDEO
+          // group builds videoCapture and never binds.
+          //
+          // Off, and 720p rather than 1080p, so the use case asks for the
+          // least the hardware can offer. Both are real registered props (see
+          // CameraViewModule.kt), unlike `active` and `flash`.
+          videoQuality="720p"
+          videoStabilizationMode="off"
           onCameraReady={() => {
             setReady(true);
             setReadyHits((n) => n + 1);
