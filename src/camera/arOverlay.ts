@@ -1,25 +1,25 @@
 /**
- * AR OVERLAYS — drawn from ML Kit landmarks, not from fixed screen positions.
+ * LENS ENGINE — vector art anchored to ML Kit landmarks.
  *
- * The face detector hands us, per face: the landmark points, the bounding box,
- * and pitch/roll/yaw. That is enough to attach things to the face and have them
- * stay attached when the head turns, tilts, or moves closer.
+ * The previous version drew filled circles near the ears. That is a debug
+ * overlay, not a lens. Snapchat lenses read as lenses because they are
+ * *drawn* — shaped fur with an inner ear, a muzzle with a nose and whiskers,
+ * a frame with lenses that catch light.
  *
- * Coordinates arrive in FRAME pixels. Everything is converted to a fraction of
- * the frame first, so the same numbers work at whatever resolution the session
- * negotiates — a 720p preview and a 1080p one draw the same overlay.
+ * So the shapes here are Skia Paths built once at module scope, then placed
+ * per frame with translate/scale from the face landmarks. Paths are host
+ * objects and survive capture into the render worklet, which is why this works
+ * without building geometry every frame on the GPU thread.
  *
- * Yaw shifts the overlay slightly against the direction of the turn. The
- * landmarks already move, but the far-side ear foreshortens to nothing before
- * the head is fully sideways; a small counter-shift keeps the pair reading as
- * attached instead of collapsing into one blob.
+ * Authoring space is 100 units, centred on (0,0), +y downward. Each lens is a
+ * function that takes the already-resolved anchors and draws in that space, so
+ * the maths that attaches the art to a face lives in exactly one place.
  *
- * Colours are NOT set in here. The worklet receives Paint objects whose colour
- * was already assigned on the JS thread, because hex-to-Skia-colour conversion
- * is not something to rely on inside the worklet runtime.
+ * Coordinates arrive in FRAME pixels and are normalised to 0..1 before crossing
+ * the worklet boundary, so the same numbers work at any preview resolution.
  */
 
-export type ArEffect = 'none' | 'ears' | 'glasses' | 'nose';
+export type ArEffect = 'none' | 'dog' | 'shades' | 'bunny';
 
 /** Flat order: ears(2) eyes(4) nose(2) box(4) yaw(1). */
 export const FACE_STRIDE = 15;
@@ -32,7 +32,6 @@ interface RawFace {
   frameHeight: number;
 }
 
-/** Normalises one detected face into a flat number array a worklet can hold. */
 export function packFace(f: RawFace): number[] | null {
   const lm = f.landmarks;
   if (!lm?.LEFT_EAR || !lm.RIGHT_EAR || !lm.LEFT_EYE || !lm.RIGHT_EYE || !lm.NOSE_BASE) {
@@ -59,20 +58,80 @@ export function packFace(f: RawFace): number[] | null {
   ];
 }
 
-type AnyCanvas = { drawCircle: (x: number, y: number, r: number, p: any) => void };
+// ---------------------------------------------------------------------------
+// Art. Built once. Never per frame.
+// ---------------------------------------------------------------------------
+
+type PathFactory = () => any;
+
+/** Builds the lens art, given a Path constructor from Skia on the JS thread. */
+export function buildLensArt(Skia: any) {
+  const earOuter = Skia.Path.Make();
+  // A leaf: pointed tip, wide rounded base.
+  earOuter.moveTo(0, -100);
+  earOuter.quadTo(58, -30, 44, 46);
+  earOuter.quadTo(0, 78, -44, 46);
+  earOuter.quadTo(-58, -30, 0, -100);
+  earOuter.close();
+
+  const earInner = Skia.Path.Make();
+  earInner.moveTo(0, -58);
+  earInner.quadTo(30, -14, 22, 26);
+  earInner.quadTo(0, 42, -22, 26);
+  earInner.quadTo(-30, -14, 0, -58);
+  earInner.close();
+
+  const muzzle = Skia.Path.Make();
+  muzzle.addCircle(0, 0, 62);
+
+  const nose = Skia.Path.Make();
+  nose.moveTo(-22, -10);
+  nose.quadTo(0, -24, 22, -10);
+  nose.quadTo(0, 22, -22, -10);
+  nose.close();
+
+  const lensGlass = Skia.Path.Make();
+  lensGlass.addCircle(0, 0, 46);
+
+  const frame = Skia.Path.Make();
+  frame.addCircle(0, 0, 52);
+
+  const whisker = Skia.Path.Make();
+  whisker.moveTo(0, 0);
+  whisker.lineTo(78, -14);
+
+  return { earOuter, earInner, muzzle, nose, lensGlass, frame, whisker } as Record<string, any>;
+}
+
+export type LensArt = ReturnType<typeof buildLensArt>;
+
+type AnyCanvas = {
+  save: () => void;
+  restore: () => void;
+  translate: (x: number, y: number) => void;
+  scale: (sx: number, sy: number) => void;
+  rotate: (deg: number) => void;
+  drawPath: (p: any, paint: any) => void;
+  drawCircle: (x: number, y: number, r: number, paint: any) => void;
+};
 
 /**
- * Draws one face's overlay inside the Skia render worklet.
- * `paintMain` / `paintAccent` arrive pre-coloured.
+ * Draws one face's lens. Runs inside the Skia render worklet.
+ * Paints arrive pre-coloured; nothing here converts a colour.
  */
-export function drawFaceOverlays(
+export function drawFaceLens(
   canvas: AnyCanvas,
+  art: LensArt,
   face: number[],
   width: number,
   height: number,
   effect: ArEffect,
-  paintMain: any,
-  paintAccent: any,
+  fur: any,
+  furDark: any,
+  pink: any,
+  dark: any,
+  glass: any,
+  white: any,
 ): void {
   'worklet';
   const earLx = face[0] * width;
@@ -90,30 +149,87 @@ export function drawFaceOverlays(
 
   const eyeGap = Math.max(1, Math.abs(eyeRx - eyeLx));
   const faceSize = Math.max(boxH, eyeGap);
+  // Yaw nudges the art against the turn so the far side does not collapse onto
+  // the near side before the head is fully sideways.
   const shift = (yaw / 45) * eyeGap * 0.12;
 
-  if (effect === 'ears') {
-    const r = faceSize * 0.22;
-    const lift = faceSize * 0.34;
-    canvas.drawCircle(earLx + shift, earLy - lift, r, paintMain);
-    canvas.drawCircle(earRx + shift, earRy - lift, r, paintMain);
-    canvas.drawCircle(earLx + shift, earLy - lift, r * 0.5, paintAccent);
-    canvas.drawCircle(earRx + shift, earRy - lift, r * 0.5, paintAccent);
+  if (effect === 'dog' || effect === 'bunny') {
+    // Art is authored in a 100-unit box, so one scale factor sizes everything.
+    const s = (faceSize * (effect === 'bunny' ? 0.30 : 0.26)) / 100;
+    const lift = faceSize * 0.30;
+
+    // ---- left ear
+    canvas.save();
+    canvas.translate(earLx + shift, earLy - lift);
+    canvas.scale(s, s);
+    canvas.drawPath(art.earOuter, effect === 'bunny' ? white : fur);
+    canvas.drawPath(art.earInner, pink);
+    canvas.restore();
+
+    // ---- right ear, mirrored
+    canvas.save();
+    canvas.translate(earRx + shift, earRy - lift);
+    canvas.scale(-s, s);
+    canvas.drawPath(art.earOuter, effect === 'bunny' ? white : fur);
+    canvas.drawPath(art.earInner, pink);
+    canvas.restore();
+
+    // ---- muzzle, sitting on the mouth line
+    const ms = (faceSize * 0.34) / 100;
+    canvas.save();
+    canvas.translate(noseX + shift, noseY + faceSize * 0.06);
+    canvas.scale(ms, ms);
+    canvas.drawPath(art.muzzle, effect === 'bunny' ? white : furDark);
+    canvas.restore();
+
+    // ---- nose + whiskers
+    canvas.save();
+    canvas.translate(noseX + shift, noseY);
+    canvas.scale(ms, ms);
+    canvas.drawPath(art.nose, dark);
+    canvas.restore();
+
+    const ws = (faceSize * 0.42) / 100;
+    for (let i = 0; i < 2; i++) {
+      const flip = i === 0 ? 1 : -1;
+      canvas.save();
+      canvas.translate(noseX + shift, noseY + faceSize * 0.05);
+      canvas.scale(ws * flip, ws);
+      canvas.rotate(-6);
+      canvas.drawPath(art.whisker, white);
+      canvas.restore();
+
+      canvas.save();
+      canvas.translate(noseX + shift, noseY + faceSize * 0.05);
+      canvas.scale(ws * flip, ws);
+      canvas.rotate(8);
+      canvas.drawPath(art.whisker, white);
+      canvas.restore();
+    }
     return;
   }
 
-  if (effect === 'glasses') {
-    const r = eyeGap * 0.3;
-    canvas.drawCircle(eyeLx + shift, eyeLy, r, paintMain);
-    canvas.drawCircle(eyeRx + shift, eyeRy, r, paintMain);
-    canvas.drawCircle(eyeLx + shift, eyeLy, r * 0.55, paintAccent);
-    canvas.drawCircle(eyeRx + shift, eyeRy, r * 0.55, paintAccent);
-    return;
-  }
+  if (effect === 'shades') {
+    const r = eyeGap * 0.62;
+    const lensS = r / 52;
 
-  if (effect === 'nose') {
-    const r = faceSize * 0.13;
-    canvas.drawCircle(noseX + shift, noseY, r, paintMain);
-    canvas.drawCircle(noseX + shift - r * 0.3, noseY - r * 0.3, r * 0.28, paintAccent);
+    // Frame band across the bridge, then each lens.
+    canvas.save();
+    canvas.translate((eyeLx + eyeRx) / 2 + shift, (eyeLy + eyeRy) / 2);
+    canvas.scale(lensS, lensS);
+    canvas.drawPath(art.frame, dark);
+    canvas.restore();
+
+    for (let i = 0; i < 2; i++) {
+      const ex = (i === 0 ? eyeLx : eyeRx) + shift;
+      const ey = i === 0 ? eyeLy : eyeRy;
+      canvas.save();
+      canvas.translate(ex, ey);
+      canvas.scale(lensS, lensS);
+      canvas.drawPath(art.lensGlass, glass);
+      // specular catch, the thing that makes a lens read as glass
+      canvas.drawCircle(-16, -18, 10, white);
+      canvas.restore();
+    }
   }
 }

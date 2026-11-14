@@ -52,16 +52,16 @@ import { colors } from '../theme';
 import { useFaceDetectorOutput } from 'react-native-vision-camera-face-detector';
 import { LOOKS, LOOK_SHADER, findLook, uniformsFor, type LookId } from './looks';
 import type { CapturedAsset } from '../screens/CaptureScreen';
-import { drawFaceOverlays, packFace, FACE_STRIDE, type ArEffect } from './arOverlay';
+import { buildLensArt, drawFaceLens, packFace, FACE_STRIDE, type ArEffect } from './arOverlay';
 
 const WHITE = '#FFFFFF';
 const INK = '#060A16';
 
-const AR_ITEMS: { id: ArEffect; label: string; icon: string }[] = [
-  { id: 'none', label: 'None', icon: 'close-circle-outline' },
-  { id: 'ears', label: 'Ears', icon: 'paw-outline' },
-  { id: 'glasses', label: 'Shades', icon: 'glasses-outline' },
-  { id: 'nose', label: 'Nose', icon: 'ellipse-outline' },
+const AR_ITEMS: { id: ArEffect; label: string }[] = [
+  { id: 'none', label: 'None' },
+  { id: 'dog', label: 'Dog' },
+  { id: 'shades', label: 'Shades' },
+  { id: 'bunny', label: 'Bunny' },
 ];
 
 export interface GenzCameraProps {
@@ -104,6 +104,8 @@ export default function GenzCamera({
   const videoOutput = useVideoOutput({ enableAudio: true });
   const recorderRef = useRef<Awaited<ReturnType<typeof videoOutput.createRecorder>> | null>(null);
   const startedAtRef = useRef(0);
+  // True when the last press became a hold, so onPress does not fire a photo.
+  const heldRef = useRef(false);
   // Last laid-out size of the preview, used for video assets: the recorder path
   // returns a file, not dimensions, and a 0x0 asset breaks aspect maths downstream.
   const layoutRef = useRef({ width: 0, height: 0 });
@@ -125,19 +127,27 @@ export default function GenzCamera({
   const faces = useSharedValue<number[]>([]);
   const arRef = useSharedValue<ArEffect>('none');
 
-  // Overlay paints are coloured on the JS thread, never inside the worklet.
-  const paintMain = useMemo(() => Skia.Paint(), []);
-  const paintAccent = useMemo(() => Skia.Paint(), []);
+  // Lens art is built once on the JS thread. Building Paths per frame on the
+  // GPU thread would allocate at 30fps and stall the preview.
+  const art = useMemo(() => buildLensArt(Skia), []);
+
+  // Paints are coloured on the JS thread; the worklet only draws with them.
+  const paintFur = useMemo(() => Skia.Paint(), []);
+  const paintFurDark = useMemo(() => Skia.Paint(), []);
+  const paintPink = useMemo(() => Skia.Paint(), []);
+  const paintDark = useMemo(() => Skia.Paint(), []);
+  const paintGlass = useMemo(() => Skia.Paint(), []);
+  const paintWhite = useMemo(() => Skia.Paint(), []);
 
   useEffect(() => {
     arRef.value = ar;
-    const main =
-      ar === 'ears' ? '#FF9F45' : ar === 'glasses' ? '#1B1B24' : ar === 'nose' ? '#FF3B5C' : '#FFFFFF';
-    const accent =
-      ar === 'ears' ? '#FFD9B0' : ar === 'glasses' ? '#4F8BFF' : ar === 'nose' ? '#FFFFFF' : '#FFFFFF';
-    paintMain.setColor(Skia.Color(main));
-    paintAccent.setColor(Skia.Color(accent));
-  }, [ar, arRef, paintMain, paintAccent]);
+    paintFur.setColor(Skia.Color('#8A5A34'));
+    paintFurDark.setColor(Skia.Color('#E8D3BC'));
+    paintPink.setColor(Skia.Color('#FF9FAB'));
+    paintDark.setColor(Skia.Color('#241B16'));
+    paintGlass.setColor(Skia.Color('#101018'));
+    paintWhite.setColor(Skia.Color('#FFFFFF'));
+  }, [ar, arRef, paintFur, paintFurDark, paintPink, paintDark, paintGlass, paintWhite]);
 
   const faceDetectorOutput = useFaceDetectorOutput({
     // Fast is the right trade here: this runs per frame on a phone, and the
@@ -345,14 +355,19 @@ export default function GenzCamera({
                 // they land in the photo snapshot rather than floating in a
                 // separate View above the preview.
                 if (arRef.value !== 'none' && faces.value.length >= FACE_STRIDE) {
-                  drawFaceOverlays(
+                  drawFaceLens(
                     canvas as any,
+                    art,
                     faces.value,
                     frame.width,
                     frame.height,
                     arRef.value,
-                    paintMain,
-                    paintAccent,
+                    paintFur,
+                    paintFurDark,
+                    paintPink,
+                    paintDark,
+                    paintGlass,
+                    paintWhite,
                   );
                 }
               });
@@ -432,13 +447,27 @@ export default function GenzCamera({
             <Pressable
               key={a.id}
               onPress={() => setAr(a.id)}
-              style={[styles.arChip, on && styles.arChipOn]}
+              style={styles.lensWrap}
               accessibilityRole="button"
-              accessibilityLabel={a.label}
+              accessibilityLabel={`${a.label} lens`}
               accessibilityState={{ selected: on }}
             >
-              <Icon name={a.icon as any} size={14} color={on ? INK : WHITE} />
-              <Text style={[styles.arChipText, on && styles.arChipTextOn]}>{a.label}</Text>
+              <View style={[styles.lensThumb, on && styles.lensThumbOn]}>
+                <Icon
+                  name={
+                    (a.id === 'none'
+                      ? 'ban-outline'
+                      : a.id === 'dog'
+                        ? 'paw'
+                        : a.id === 'shades'
+                          ? 'glasses-outline'
+                          : 'happy-outline') as any
+                  }
+                  size={20}
+                  color={on ? INK : WHITE}
+                />
+              </View>
+              <Text style={[styles.lensText, on && styles.lensTextOn]}>{a.label}</Text>
             </Pressable>
           );
         })}
@@ -472,9 +501,22 @@ export default function GenzCamera({
         </Pressable>
 
         <Pressable
-          onPress={() => void (recording ? toggleRecord() : capturePhoto())}
-          onLongPress={() => void toggleRecord()}
-          delayLongPress={220}
+          onPress={() => {
+            // RN fires onPress on release even after a long press, so the hold
+            // has to be consumed here or every recording would end with a
+            // stray photo.
+            if (heldRef.current) {
+              heldRef.current = false;
+              return;
+            }
+            if (recording) void toggleRecord();
+            else void capturePhoto();
+          }}
+          onLongPress={() => {
+            heldRef.current = true;
+            void toggleRecord();
+          }}
+          delayLongPress={260}
           disabled={busy || !ready}
           style={styles.shutterOuter}
           accessibilityRole="button"
@@ -581,18 +623,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
   },
-  arChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 12,
-    height: 32,
+  // Circular lens thumbnails, the way Snapchat's lens tray reads: art first,
+  // name underneath, selected state as a ring rather than a filled pill.
+  lensWrap: { alignItems: 'center', gap: 5, width: 58 },
+  lensThumb: {
+    width: 46,
+    height: 46,
     borderRadius: 999,
-    backgroundColor: 'rgba(6,10,22,0.58)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(6,10,22,0.6)',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.18)',
   },
-  arChipOn: { backgroundColor: colors.accent },
-  arChipText: { color: WHITE, fontSize: 11, fontWeight: '700' },
-  arChipTextOn: { color: INK },
+  lensThumbOn: { backgroundColor: colors.accent, borderColor: WHITE },
+  lensText: { color: 'rgba(255,255,255,0.72)', fontSize: 9.5, fontWeight: '700' },
+  lensTextOn: { color: WHITE },
 
   tray: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   trayRow: { paddingHorizontal: 14, gap: 12, alignItems: 'center' },
@@ -632,6 +678,12 @@ const styles = StyleSheet.create({
   timerBox: { width: 42, alignItems: 'flex-end' },
   timerText: { color: WHITE, fontSize: 12, fontWeight: '800', fontVariant: ['tabular-nums'] },
 });
+
+
+
+
+
+
 
 
 
