@@ -94,6 +94,11 @@ export default function GenzCamera({
 
   const [facing, setFacing] = useState<'front' | 'back'>('front');
   const [torch, setTorch] = useState(false);
+  // What actually reaches the native camera. Held back briefly so rapid taps —
+  // or a tap landing at the same moment as a facing change — coalesce into one
+  // call. CameraX throws OperationCanceledException ("There is a new
+  // enableTorch being set") when a second request supersedes an in-flight one.
+  const [torchMode, setTorchMode] = useState<'off' | 'on'>('off');
   const [look, setLook] = useState<LookId>('none');
   const [grid, setGrid] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -193,6 +198,19 @@ export default function GenzCamera({
       void cameraPermission.requestPermission();
     }
   }, [visible, cameraPermission]);
+
+  // One settled torch value, applied after the settings stop changing.
+  useEffect(() => {
+    const next = torch && facing === 'back' ? 'on' : 'off';
+    const id = setTimeout(() => setTorchMode(next), 260);
+    return () => clearTimeout(id);
+  }, [torch, facing]);
+
+  // Front has no torch, so a stale "on" would be pushed onto the next camera
+  // after a flip — one more racing request for no benefit.
+  useEffect(() => {
+    if (facing === 'front') setTorch(false);
+  }, [facing]);
 
   useEffect(() => {
     if (!recording) return;
@@ -372,7 +390,7 @@ export default function GenzCamera({
             isActive
             outputs={videoEnabled ? [videoOutput, faceDetectorOutput] : [faceDetectorOutput]}
             zoom={zoom}
-            torchMode={torch && facing === 'back' ? 'on' : 'off'}
+            torchMode={torchMode}
             onStarted={() => {
               setReady(true);
               setError(null);
@@ -769,6 +787,7 @@ const styles = StyleSheet.create({
   timerBox: { width: 42, alignItems: 'flex-end' },
   timerText: { color: WHITE, fontSize: 12, fontWeight: '800', fontVariant: ['tabular-nums'] },
 });
+
 
 
 
