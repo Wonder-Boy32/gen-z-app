@@ -471,12 +471,6 @@ export default function GenzCamera({
         <Pressable onPress={onClose} style={styles.round} accessibilityLabel="Close the camera">
           <Icon name="close" size={20} color={WHITE} />
         </Pressable>
-        <Pressable onPress={onAddSound} style={styles.soundPill} accessibilityLabel="Add a sound">
-          <Icon name="musical-notes" size={14} color={WHITE} />
-          <Text style={styles.soundText} numberOfLines={1}>
-            {soundName ?? 'Add sound'}
-          </Text>
-        </Pressable>
         <Pressable
           onPress={() => setFacing((f) => (f === 'front' ? 'back' : 'front'))}
           style={styles.round}
@@ -503,11 +497,21 @@ export default function GenzCamera({
         >
           <Icon name="grid-outline" size={17} color={grid ? INK : WHITE} />
         </Pressable>
+        {/* Sound and Text moved off the top bar and into the rail. A wide pill
+            with a label was the single biggest source of clutter. */}
+        <Pressable onPress={onAddSound} style={styles.railBtn} accessibilityLabel="Add a sound">
+          <Icon name="musical-notes" size={17} color={soundName ? colors.accent : WHITE} />
+        </Pressable>
+        {onTextMode && (
+          <Pressable onPress={onTextMode} style={styles.railBtn} accessibilityLabel="Create a text drop">
+            <Icon name={'text' as any} size={17} color={WHITE} />
+          </Pressable>
+        )}
       </View>
 
       {/* AR row. Small, above the looks: effects are a second decision, not a
           competing one, and they compose with whatever look is chosen. */}
-      <View style={[styles.arRow, { bottom: insets.bottom + 196 }]}>
+      <View style={[styles.arRow, { bottom: insets.bottom + 44 }]}>
         {AR_ITEMS.map((a) => {
           const on = a.id === ar;
           return (
@@ -534,7 +538,6 @@ export default function GenzCamera({
                   color={on ? INK : WHITE}
                 />
               </View>
-              <Text style={[styles.lensText, on && styles.lensTextOn]}>{a.label}</Text>
             </Pressable>
           );
         })}
@@ -546,13 +549,12 @@ export default function GenzCamera({
             <View style={styles.lensThumb}>
               <Icon name={'text' as any} size={18} color={WHITE} />
             </View>
-            <Text style={styles.lensText}>Text</Text>
           </Pressable>
         )}
       </View>
 
       {/* carousel */}
-      <View style={[styles.tray, { paddingBottom: insets.bottom + 138 }]}>
+      <View style={[styles.tray, { bottom: insets.bottom + 112 }]}>
         {filterUnavailable ? (
           <Text style={styles.filtersOff}>
             Filters are unavailable — this device&apos;s GPU rejected the shader. The camera still records.
@@ -564,7 +566,6 @@ export default function GenzCamera({
               return (
                 <Pressable key={l.id} onPress={() => setLook(l.id)} style={styles.swatchWrap}>
                   <View style={[styles.swatch, { backgroundColor: l.swatch }, on && styles.swatchOn]} />
-                  <Text style={[styles.swatchText, on && styles.swatchTextOn]}>{l.label}</Text>
                 </Pressable>
               );
             })}
@@ -704,20 +705,21 @@ const styles = StyleSheet.create({
   },
   noteText: { color: '#FFD9A0', fontSize: 11, lineHeight: 15, textAlign: 'center' },
 
+  // Lenses sit in the bottom row beside the shutter, the way Snapchat puts
+  // them — not in a band of their own.
   arRow: {
     position: 'absolute',
-    left: 0,
-    right: 0,
+    right: 12,
     flexDirection: 'row',
-    justifyContent: 'center',
+    alignItems: 'center',
     gap: 8,
   },
   // Circular lens thumbnails, the way Snapchat's lens tray reads: art first,
   // name underneath, selected state as a ring rather than a filled pill.
-  lensWrap: { alignItems: 'center', gap: 5, width: 58 },
+  lensWrap: { alignItems: 'center' },
   lensThumb: {
-    width: 46,
-    height: 46,
+    width: 40,
+    height: 40,
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
@@ -730,9 +732,9 @@ const styles = StyleSheet.create({
   lensTextOn: { color: WHITE },
 
   tray: { position: 'absolute', left: 0, right: 0, bottom: 0 },
-  trayRow: { paddingHorizontal: 14, gap: 12, alignItems: 'center' },
-  swatchWrap: { alignItems: 'center', gap: 6, width: 62 },
-  swatch: { width: 44, height: 44, borderRadius: 999, borderWidth: 2, borderColor: 'transparent' },
+  trayRow: { paddingHorizontal: 18, gap: 12, alignItems: 'center' },
+  swatchWrap: { alignItems: 'center' },
+  swatch: { width: 26, height: 26, borderRadius: 999, borderWidth: 2, borderColor: 'transparent' },
   swatchOn: { borderColor: colors.accent },
   swatchText: { color: 'rgba(255,255,255,0.72)', fontSize: 10, fontWeight: '700' },
   swatchTextOn: { color: WHITE },
@@ -767,6 +769,8 @@ const styles = StyleSheet.create({
   timerBox: { width: 42, alignItems: 'flex-end' },
   timerText: { color: WHITE, fontSize: 12, fontWeight: '800', fontVariant: ['tabular-nums'] },
 });
+
+
 
 
 
