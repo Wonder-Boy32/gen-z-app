@@ -102,6 +102,14 @@ export default function GenzCamera({
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [ar, setAr] = useState<ArEffect>('none');
+  // SkiaCamera drives its preview from a CameraFrameOutput of its own. Adding
+  // a CameraVideoOutput AND a face detector asks the device for three camera
+  // surfaces, which many Android devices refuse with
+  // CameraUseCaseCannotBeCombinedException. So recording is treated as
+  // optional: if the combination is rejected we drop the video output and keep
+  // lens tracking, rather than crashing the whole camera.
+  const [videoEnabled, setVideoEnabled] = useState(true);
+  const [recordNote, setRecordNote] = useState<string | null>(null);
 
   const camRef = useRef<SkiaCameraRef>(null);
   const videoOutput = useVideoOutput({ enableAudio: true });
@@ -223,6 +231,11 @@ export default function GenzCamera({
 
   const toggleRecord = useCallback(async () => {
     if (busy) return;
+    if (!videoEnabled) {
+      // Say why rather than swallowing the press.
+      setRecordNote('Recording is off on this device while lens tracking is on.');
+      return;
+    }
     if (recording) {
       try {
         await recorderRef.current?.stopRecording();
@@ -267,7 +280,7 @@ export default function GenzCamera({
     } finally {
       setBusy(false);
     }
-  }, [busy, recording, videoOutput, onCaptured]);
+  }, [busy, recording, videoEnabled, videoOutput, onCaptured]);
 
   const zoom = useSharedValue(1);
   const startZoom = useSharedValue(1);
@@ -357,14 +370,29 @@ export default function GenzCamera({
             style={StyleSheet.absoluteFill}
             device={facing}
             isActive
-            outputs={[videoOutput, faceDetectorOutput]}
+            outputs={videoEnabled ? [videoOutput, faceDetectorOutput] : [faceDetectorOutput]}
             zoom={zoom}
             torchMode={torch && facing === 'back' ? 'on' : 'off'}
             onStarted={() => {
               setReady(true);
               setError(null);
             }}
-            onError={(e) => setError(e?.message ?? 'The camera could not start.')}
+            onError={(e) => {
+              const msg = e?.message ?? '';
+              // The device refused the surface combination. Drop recording and
+              // keep the lenses, which is the feature this screen exists for.
+              const tooManyUseCases =
+                /use case|surface combination|CannotBeCombined|IllegalArgument/i.test(msg);
+              if (tooManyUseCases && videoEnabled) {
+                setVideoEnabled(false);
+                setRecordNote(
+                  'This device cannot record while lens tracking is on. Photos and lenses still work.',
+                );
+                setReady(false);
+                return;
+              }
+              setError(msg || 'The camera could not start.');
+            }}
             onFrame={(frame, render) => {
               'worklet';
               render(({ canvas, frameTexture }) => {
@@ -418,6 +446,14 @@ export default function GenzCamera({
       {!!error && (
         <View style={styles.loading} pointerEvents="none">
           <Text style={styles.errorText}>{error}</Text>
+        </View>
+      )}
+
+      {/* Recording unavailable is a limitation to state, not to hide. The
+          shutter still snaps photos, so this sits above it as a note. */}
+      {!!recordNote && (
+        <View style={[styles.notePill, { bottom: insets.bottom + 244 }]} pointerEvents="none">
+          <Text style={styles.noteText}>{recordNote}</Text>
         </View>
       )}
 
@@ -657,6 +693,17 @@ const styles = StyleSheet.create({
   railBtnOn: { backgroundColor: colors.accent },
   railBtnOff: { opacity: 0.35 },
 
+  notePill: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: 'rgba(6,10,22,0.78)',
+  },
+  noteText: { color: '#FFD9A0', fontSize: 11, lineHeight: 15, textAlign: 'center' },
+
   arRow: {
     position: 'absolute',
     left: 0,
@@ -720,6 +767,7 @@ const styles = StyleSheet.create({
   timerBox: { width: 42, alignItems: 'flex-end' },
   timerText: { color: WHITE, fontSize: 12, fontWeight: '800', fontVariant: ['tabular-nums'] },
 });
+
 
 
 
