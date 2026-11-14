@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Platform, StyleSheet, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from './src/supabase/client';
 import WelcomeScreen from './src/screens/WelcomeScreen';
@@ -48,10 +49,16 @@ const TEMP_USERNAME = /^[a-z0-9._-]+-[0-9a-f]{6}$/;
 // children get correct insets on the FIRST frame instead of rendering once at
 // zero and then jumping.
 export default function App() {
+  // GestureHandlerRootView has to be the outermost view for any GestureDetector
+  // to receive touches. Nothing in the app used gestures before the camera's
+  // pinch-to-zoom, so this was never needed — without it GestureDetector throws
+  // at render rather than silently ignoring the gesture.
   return (
-    <SafeAreaProvider initialMetrics={initialWindowMetrics}>
-      <AppInner />
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+        <AppInner />
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 
@@ -475,3 +482,4 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 });
+
