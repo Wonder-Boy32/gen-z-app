@@ -46,6 +46,7 @@ import {
   useVideoOutput,
 } from 'react-native-vision-camera';
 import { File, Paths } from 'expo-file-system';
+import * as ImagePicker from 'expo-image-picker';
 
 import Icon from '../components/ui/Icon';
 import { colors } from '../theme';
@@ -69,7 +70,8 @@ export interface GenzCameraProps {
   onClose: () => void;
   /** Same asset shape CaptureScreen emits, so CreateFlow needs no adapter. */
   onCaptured: (asset: CapturedAsset) => void;
-  onPickedMedia?: () => void;
+  onPickedMedia?: (assets: CapturedAsset[]) => void;
+  onTextMode?: () => void;
   onAddSound?: () => void;
   soundName?: string | null;
   overlay?: React.ReactNode;
@@ -81,6 +83,7 @@ export default function GenzCamera({
   onCaptured,
   onPickedMedia,
   onAddSound,
+  onTextMode,
   soundName,
   overlay = null,
 }: GenzCameraProps) {
@@ -282,6 +285,34 @@ export default function GenzCamera({
     [zoom, startZoom],
   );
 
+  /**
+   * Gallery import. The system photo picker needs no permission request for
+   * the files the user actually taps, so asking for the whole library would be
+   * a wider gate than the task requires.
+   */
+  const openLibrary = useCallback(async () => {
+    try {
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images', 'videos'],
+        allowsMultipleSelection: true,
+        quality: 1,
+      });
+      if (res.canceled || !res.assets?.length) return;
+      const assets: CapturedAsset[] = res.assets.map((a) => ({
+        uri: a.uri,
+        width: a.width ?? 0,
+        height: a.height ?? 0,
+        type: a.type === 'video' ? 'video' : 'image',
+        fileName: a.fileName ?? `import-${Date.now()}`,
+        mimeType: a.mimeType ?? (a.type === 'video' ? 'video/mp4' : 'image/jpeg'),
+        durationMs: (a as unknown as { duration?: number | null }).duration ?? null,
+        aspect: a.width && a.height ? a.width / a.height : undefined,
+      }));
+      onPickedMedia?.(assets);
+    } catch (e: any) {
+      setError(e?.message ?? 'Could not open the library.');
+    }
+  }, [onPickedMedia]);
   if (!visible) return null;
 
   if (!cameraPermission.hasPermission) {
@@ -471,6 +502,17 @@ export default function GenzCamera({
             </Pressable>
           );
         })}
+
+        {/* TEXT lives in the lens tray rather than as a mode chip: it is a way
+            to fill the frame, not a different camera. */}
+        {onTextMode && (
+          <Pressable onPress={onTextMode} style={styles.lensWrap} accessibilityLabel="Create a text drop">
+            <View style={styles.lensThumb}>
+              <Icon name={'text' as any} size={18} color={WHITE} />
+            </View>
+            <Text style={styles.lensText}>Text</Text>
+          </Pressable>
+        )}
       </View>
 
       {/* carousel */}
@@ -496,7 +538,7 @@ export default function GenzCamera({
 
       {/* shutter */}
       <View style={[styles.shutterRow, { paddingBottom: insets.bottom + 26 }]}>
-        <Pressable onPress={onPickedMedia} style={styles.round} accessibilityLabel="Import from gallery">
+        <Pressable onPress={() => void openLibrary()} style={styles.round} accessibilityLabel="Import from gallery">
           <Icon name="images-outline" size={19} color={WHITE} />
         </Pressable>
 
@@ -678,6 +720,10 @@ const styles = StyleSheet.create({
   timerBox: { width: 42, alignItems: 'flex-end' },
   timerText: { color: WHITE, fontSize: 12, fontWeight: '800', fontVariant: ['tabular-nums'] },
 });
+
+
+
+
 
 
 

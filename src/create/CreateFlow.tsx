@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // src/create/CreateFlow.tsx
 // ============================================================
 // The create flow. One page at a time, one switch, one back.
@@ -32,12 +32,14 @@ import LaunchSheet from './LaunchSheet';
  * import. Defaulting it on would silently remove two features the app already
  * ships, so the swap is opt-in:
  *
- *   EXPO_PUBLIC_CAMERA_V2=1
+ *   EXPO_PUBLIC_CAMERA_V2=0
  *
- * Delete that line and the old camera is back. Both read the same
- * CapturedAsset shape, so nothing downstream knows which one produced it.
+ * It now defaults ON: the two gaps that justified hiding it (gallery import and
+ * TEXT mode) are closed, so it no longer withholds a feature the app ships.
+ * Both screens read the same CapturedAsset shape, so nothing downstream knows
+ * which one produced the file.
  */
-const CAMERA_V2 = process.env.EXPO_PUBLIC_CAMERA_V2 === '1';
+const CAMERA_V2 = process.env.EXPO_PUBLIC_CAMERA_V2 !== '0';
 import TextImagePage from './TextImagePage';
 import { BACK_FROM, type CreatePage, type LauncherChoice } from './flow';
 
@@ -220,6 +222,11 @@ export default function CreateFlow({
           onCaptured={captureThen}
           onAddSound={() => setSoundOpen(true)}
           soundName={sound?.name ?? null}
+          onPickedMedia={pickedThen}
+          onTextMode={() => {
+            setSheet(false);
+            setPage('text');
+          }}
           overlay={
             sheet ? (
               <LaunchSheet
@@ -327,3 +334,4 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
   },
 });
+
